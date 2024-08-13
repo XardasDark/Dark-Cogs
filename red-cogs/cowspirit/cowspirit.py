@@ -7,7 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 
 
-class MyCog(commands.Cog):
+class WhiteSpirit(commands.Cog):
     """My custom cog to send embedded messages at specific times."""
 
     def __init__(self, bot: Red):
