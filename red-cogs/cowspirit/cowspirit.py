@@ -69,6 +69,25 @@ class MyCog(commands.Cog):
         self.scheduler.add_job(self.send_kzarka_embed, CronTrigger(day_of_week='sun', hour=12, minute=0, timezone="CET"))
         self.scheduler.add_job(self.send_kzarka_embed, CronTrigger(day_of_week='sun', hour=22, minute=15, timezone="CET"))
 
+        # Nouver
+        self.scheduler.add_job(self.send_nouver_embed, CronTrigger(day_of_week='mon', hour=19, minute=15, timezone="CET"))
+        self.scheduler.add_job(self.send_nouver_embed, CronTrigger(day_of_week='tue', hour=9, minute=0, timezone="CET"))
+        self.scheduler.add_job(self.send_nouver_embed, CronTrigger(day_of_week='wed', hour=12, minute=0, timezone="CET"))
+        self.scheduler.add_job(self.send_nouver_embed, CronTrigger(day_of_week='thu', hour=0, minute=15, timezone="CET"))
+        self.scheduler.add_job(self.send_nouver_embed, CronTrigger(day_of_week='thu', hour=9, minute=0, timezone="CET"))
+        self.scheduler.add_job(self.send_nouver_embed, CronTrigger(day_of_week='fri', hour=19, minute=0, timezone="CET"))
+        self.scheduler.add_job(self.send_nouver_embed, CronTrigger(day_of_week='sat', hour=14, minute=0, timezone="CET"))
+        self.scheduler.add_job(self.send_nouver_embed, CronTrigger(day_of_week='sun', hour=16, minute=0, timezone="CET"))
+
+        # Offin
+        self.scheduler.add_job(self.send_offin_embed, CronTrigger(day_of_week='mon', hour=14, minute=0, timezone="CET"))
+        self.scheduler.add_job(self.send_offin_embed, CronTrigger(day_of_week='wed', hour=16, minute=0, timezone="CET"))
+        self.scheduler.add_job(self.send_offin_embed, CronTrigger(day_of_week='sat', hour=12, minute=0, timezone="CET"))
+
+        # Quint & Muraka
+        self.scheduler.add_job(self.send_quint_muraka_embed, CronTrigger(day_of_week='tue', hour=22, minute=15, timezone="CET"))
+        self.scheduler.add_job(self.send_quint_muraka_embed, CronTrigger(day_of_week='thu', hour=22, minute=15, timezone="CET"))
+
     async def send_garmoth_embed(self):
         """Send Garmoth embed message to the specified channel."""
         channel = self.bot.get_channel(self.channel_id)
@@ -114,6 +133,42 @@ class MyCog(commands.Cog):
             location_value = "In den Tiefen des Serendia-Schreins im Süden von Serendia\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-36.738884124394296&lng=16.040039062500004&M=Kzarka#7/-36.858/15.194)"
             loot_value = "Kzarka Hauptwaffe"
             image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/kzarka.jpg"
+            embed = self.create_embed(title, description, location_value, loot_value, image_url)
+            await channel.send(embed=embed)
+
+    async def send_nouver_embed(self):
+        """Send Nouver embed message to the specified channel."""
+        channel = self.bot.get_channel(self.channel_id)
+        if channel:
+            title = "Nouver ist erschienen!"
+            description = "Die Spuren von Nouver wurden nach einem heftigen Sandsturm entdeckt"
+            location_value = "Südöstlich des Sandkornbasars, innerhalb der Wüste\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-16.741427547003596&lng=90.96679687500001&M=Nouver#6/-16.815/88.484)"
+            loot_value = "Nouver Sekundärwaffe"
+            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/nouver.jpg"
+            embed = self.create_embed(title, description, location_value, loot_value, image_url)
+            await channel.send(embed=embed)
+
+    async def send_offin_embed(self):
+        """Send Offin embed message to the specified channel."""
+        channel = self.bot.get_channel(self.channel_id)
+        if channel:
+            title = "Offin ist erschienen!"
+            description = "Offin ist erwacht. Offin absorbiert kontinuierlich die Energie der Geister"
+            location_value = "Im Holo Wald nördlich von Grana\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-50.02185841773444&lng=-39.39697265625001&M=Offin#7/-50.173/-39.518)"
+            loot_value = "Offin Hauptwaffe"
+            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/offin.jpg"
+            embed = self.create_embed(title, description, location_value, loot_value, image_url)
+            await channel.send(embed=embed)
+
+    async def send_quint_muraka_embed(self):
+        """Send Quint & Muraka embed message to the specified channel."""
+        channel = self.bot.get_channel(self.channel_id)
+        if channel:
+            title = "Quint und Muraka sind erschienen!"
+            description = "Der König der Oger und der erste Troll sind dabei, der Welt zu erscheinen"
+            location_value = "Quint: Erscheint westlich vom Quintenhügel/östlich vom Epheriaport. Muraka erscheint westlich vom Manshawald/Kaiasee\n[Öffne Karte - Quint](https://www.blackdesertfoundry.com/map/?lat=-17.5602465032949&lng=-25.598144531250004&M=Quint#7/-17.188/-25.576)\n[Öffne Karte - Muraka](https://www.blackdesertfoundry.com/map/?lat=-27.994401411046148&lng=-33.07983398437501&M=Muraka#7/-27.951/-33.102)"
+            loot_value = "Ogerring / Mutantenverstärker"
+            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/quintmuraka.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
 
