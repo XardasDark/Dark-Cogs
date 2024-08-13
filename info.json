@@ -1,0 +1,8 @@
+{
+    "author" : ["XardasDark"],
+    "install_msg" : "Thanks for installing my repo!",
+    "name" : "Dark-Cogs",
+    "short" : "General bot cogs.",
+    "description" : "Utility and fun cogs developed by XardasDark.",
+    "tags" : ["utility"]
+}
