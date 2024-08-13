@@ -87,6 +87,11 @@ class MyCog(commands.Cog):
         # Quint & Muraka
         self.scheduler.add_job(self.send_quint_muraka_embed, CronTrigger(day_of_week='tue', hour=22, minute=15, timezone="CET"))
         self.scheduler.add_job(self.send_quint_muraka_embed, CronTrigger(day_of_week='thu', hour=22, minute=15, timezone="CET"))
+        
+        # Vell
+        self.scheduler.add_job(self.send_vell_embed, CronTrigger(day_of_week='wed', hour=19, minute=0, timezone="CET"))
+        self.scheduler.add_job(self.send_vell_embed, CronTrigger(day_of_week='sun', hour=16, minute=0, timezone="CET"))
+
 
     async def send_garmoth_embed(self):
         """Send Garmoth embed message to the specified channel."""
@@ -171,6 +176,19 @@ class MyCog(commands.Cog):
             image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/quintmuraka.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
+            
+    async def send_vell_embed(self):
+        """Send Vell embed message to the specified channel."""
+        channel = self.bot.get_channel(self.channel_id)
+        if channel:
+            title = "Vell ist erschienen!"
+            description = "Vell neutralisiert den Siegelstein mit seinem kataklysmischen Zorn"
+            location_value = "Vell's Realm im nördlichen Meer\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=64.92819764459557&lng=8.096923828125002&M=Vell#4/49.07/-25.22)"
+            loot_value = "Vell's Herz <:vell:1203017198491410462>\nVell's Konzentrierte Magie"
+            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/vell.jpg"
+            embed = self.create_embed(title, description, location_value, loot_value, image_url)
+            await channel.send(embed=embed)
+
 
     def create_embed(self, title, description, location_value, loot_value, image_url):
         """Helper function to create an embedded message."""
