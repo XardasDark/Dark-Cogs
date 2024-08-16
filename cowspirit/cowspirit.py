@@ -16,6 +16,11 @@ class CowSpirit(commands.Cog):
         self.scheduler = AsyncIOScheduler()
         self.scheduler_running = False  # Track whether the scheduler is active
         self.schedule_jobs()
+        
+    async def foo(self, ctx):
+        """Description of myfirstcom visible with [p]help myfirstcom"""
+        # Your code will go here
+        await ctx.send("My first cog!")
 
     async def cowspirit(self, ctx):
         """Toggle the boss notification scheduler."""
