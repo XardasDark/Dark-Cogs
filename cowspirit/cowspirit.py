@@ -16,6 +16,7 @@ class CowSpirit(commands.Cog):
         self.scheduler = AsyncIOScheduler()
         self.scheduler_running = False  # Track whether the scheduler is active
         self.schedule_jobs()
+        self.scheduler.start()
     
     @commands.command()    
     async def foo(self, ctx):
