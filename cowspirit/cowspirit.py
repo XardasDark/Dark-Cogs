@@ -113,7 +113,7 @@ class CowSpirit(commands.Cog):
             description = "Hoch oben auf dem Bergkamm befehlen Karandas Flügel den Harpyien zu brüllen"
             location_value = "Höchster Gipfel des Karanda Kammes im nordöstlichen Calpheon\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-13.944729974920167&lng=-4.910888671875001&M=Karanda#6/-13.635/-5.251)"
             loot_value = "Karandas Herz\nLöwenzahn Erweckungswaffe"
-            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/karanda.jpg"
+            image_url = "media/img/karanda.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
 
@@ -125,7 +125,7 @@ class CowSpirit(commands.Cog):
             description = "Das Herz des alten Kutum schlägt in der Scharlachsandkammer"
             location_value = "Am Boden der Scharlachsandkammer nordöstlich vom Felß-Außenposten\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-2.284550660236957&lng=69.89501953125001&M=Kutum#7/-2.136/69.521)"
             loot_value = "Kutums Herz\nKutum Sekundärwaffe"
-            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/kutum.jpg"
+            image_url = "media/img/kutum.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
 
@@ -137,7 +137,7 @@ class CowSpirit(commands.Cog):
             description = "Das Gebrüll von Kzarka, dem Herrn der Verderbnis, bringt ganz Serendia zum Beben"
             location_value = "In den Tiefen des Serendia-Schreins im Süden von Serendia\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-36.738884124394296&lng=16.040039062500004&M=Kzarka#7/-36.858/15.194)"
             loot_value = "Kzarka Hauptwaffe"
-            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/kzarka.jpg"
+            image_url = "media/img/kzarka.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
 
@@ -149,7 +149,7 @@ class CowSpirit(commands.Cog):
             description = "Die Spuren von Nouver wurden nach einem heftigen Sandsturm entdeckt"
             location_value = "Südöstlich des Sandkornbasars, innerhalb der Wüste\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-16.741427547003596&lng=90.96679687500001&M=Nouver#6/-16.815/88.484)"
             loot_value = "Nouver Sekundärwaffe"
-            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/nouver.jpg"
+            image_url = "media/img/nouver.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
 
@@ -161,7 +161,7 @@ class CowSpirit(commands.Cog):
             description = "Offin ist erwacht. Offin absorbiert kontinuierlich die Energie der Geister"
             location_value = "Im Holo Wald nördlich von Grana\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-50.02185841773444&lng=-39.39697265625001&M=Offin#7/-50.173/-39.518)"
             loot_value = "Offin Hauptwaffe"
-            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/offin.jpg"
+            image_url = "media/img/offin.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
 
@@ -173,7 +173,7 @@ class CowSpirit(commands.Cog):
             description = "Der König der Oger und der erste Troll sind dabei, der Welt zu erscheinen"
             location_value = "Quint: Erscheint westlich vom Quintenhügel/östlich vom Epheriaport. Muraka erscheint westlich vom Manshawald/Kaiasee\n[Öffne Karte - Quint](https://www.blackdesertfoundry.com/map/?lat=-17.5602465032949&lng=-25.598144531250004&M=Quint#7/-17.188/-25.576)\n[Öffne Karte - Muraka](https://www.blackdesertfoundry.com/map/?lat=-27.994401411046148&lng=-33.07983398437501&M=Muraka#7/-27.951/-33.102)"
             loot_value = "Ogerring / Mutantenverstärker"
-            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/quintmuraka.jpg"
+            image_url = "media/img/quintmuraka.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
             
@@ -185,7 +185,7 @@ class CowSpirit(commands.Cog):
             description = "Vell neutralisiert den Siegelstein mit seinem kataklysmischen Zorn"
             location_value = "Vell's Realm im nördlichen Meer\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=64.92819764459557&lng=8.096923828125002&M=Vell#4/49.07/-25.22)"
             loot_value = "Vell's Herz <:vell:1203017198491410462>\nVell's Konzentrierte Magie"
-            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/vell.jpg"
+            image_url = "media/img/vell.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
 
@@ -200,7 +200,7 @@ class CowSpirit(commands.Cog):
         )
         embed.set_author(
             name="Boss Timer", 
-            icon_url="https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/hourglass.png"
+            icon_url="media/img/hourglass.png"
         )
         embed.add_field(
             name="Standort 📍", 
