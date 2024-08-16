@@ -14,8 +14,19 @@ class CowSpirit(commands.Cog):
         self.bot = bot
         self.channel_id = 1199322485297000528
         self.scheduler = AsyncIOScheduler()
+        self.scheduler_running = False  # Track whether the scheduler is active
         self.schedule_jobs()
-        self.scheduler.start()
+
+    async def cowspirit(self, ctx):
+        """Toggle the boss notification scheduler."""
+        if self.scheduler_running:
+            self.scheduler.pause()  # Pause the scheduler
+            self.scheduler_running = False
+            await ctx.send("Boss notifications deactivated.")
+        else:
+            self.scheduler.resume()  # Resume the scheduler
+            self.scheduler_running = True
+            await ctx.send("Boss notifications activated.")
 
     def schedule_jobs(self):
         """Schedule all the jobs for different bosses."""

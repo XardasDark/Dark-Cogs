@@ -1,7 +1,7 @@
 {
     "name": "CowSpirit",
-    "short": "Muuh!.",
-    "description": "Muuh!.",
+    "short": "Muuh!",
+    "description": "Muuh!",
     "end_user_data_statement": "This cog does not persistently store any data or metadata about users.",
     "install_msg": "Thanks for installing CowSpirit! Get started with `[p]help CowSpirit`.",
     "author": [

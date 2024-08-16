@@ -34,5 +34,4 @@ with open(Path(__file__).parent / "info.json") as fp:
 
 
 async def setup(bot: Red) -> None:
-    cow_spirit = CowSpirit(bot)
-    await bot.add_cog(cow_spirit)
+    await bot.add_cog(CowSpirit(bot))
