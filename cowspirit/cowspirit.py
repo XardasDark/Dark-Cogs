@@ -13,6 +13,7 @@ class CowSpirit(commands.Cog):
     def __init__(self, bot: Red):
         self.bot = bot
         self.channel_id = 1274113015427502192
+        self.role_id = 1274141906913202186
         self.scheduler = AsyncIOScheduler()
         self.scheduler_running = False  # Track whether the scheduler is active
         self.schedule_jobs()
@@ -54,6 +55,18 @@ class CowSpirit(commands.Cog):
                 await ctx.send("Boss notifications deactivated.")
             else:
                 await ctx.send("The scheduler is already deactivated.")
+        elif status.lower() == "test":
+            """Send a test message immediately to verify functionality."""
+            channel = self.bot.get_channel(self.channel_id)
+            await channel.send("Guten Loot 🍀! " f"<@&{self.role_id}>")
+            if channel:
+                title = "Test ist erschienen!"
+                description = "Test Desc"
+                location_value = "Test, Drieghan\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-47.68018294648414&lng=8.415527343750002&M=Garmoth#7/-47.372/8.690)"
+                loot_value = "Vell's Herz <:garmothheart:1199730542325796934>"
+                image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/kzarka.jpg"
+                embed = self.create_embed(title, description, location_value, loot_value, image_url)
+                await ctx.send(embed=embed)
         else:
             # Invalid argument provided, display usage information
             await ctx.send("Invalid command. Use 'cowspirit schedule [true/false]' to activate or deactivate the scheduler.")
@@ -133,10 +146,10 @@ class CowSpirit(commands.Cog):
         self.scheduler.add_job(self.send_vell_embed, CronTrigger(day_of_week='wed', hour=19, minute=0, timezone="CET"),misfire_grace_time=60)
         self.scheduler.add_job(self.send_vell_embed, CronTrigger(day_of_week='sun', hour=16, minute=0, timezone="CET"),misfire_grace_time=60)
 
-
     async def send_garmoth_embed(self):
         """Send Garmoth embed message to the specified channel."""
         channel = self.bot.get_channel(self.channel_id)
+        await channel.send("Guten Loot! " f"<@&{self.role_id}>")
         if channel:
             title = "Garmoth ist erschienen!"
             description = "Garmoth's Gebrüll hallt durch Garmoth's Nest"
@@ -229,7 +242,6 @@ class CowSpirit(commands.Cog):
             image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/vell.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
-
 
     def create_embed(self, title, description, location_value, loot_value, image_url):
         """Helper function to create an embedded message."""
