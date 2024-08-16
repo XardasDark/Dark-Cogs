@@ -12,16 +12,18 @@ class CowSpirit(commands.Cog):
 
     def __init__(self, bot: Red):
         self.bot = bot
-        self.channel_id = 1199322485297000528
+        self.channel_id = 1274113015427502192
         self.scheduler = AsyncIOScheduler()
         self.scheduler_running = False  # Track whether the scheduler is active
         self.schedule_jobs()
-        
+    
+    @commands.command()    
     async def foo(self, ctx):
         """Description of myfirstcom visible with [p]help myfirstcom"""
         # Your code will go here
         await ctx.send("My first cog!")
 
+    @commands.command()
     async def cowspirit(self, ctx):
         """Toggle the boss notification scheduler."""
         if self.scheduler_running:
