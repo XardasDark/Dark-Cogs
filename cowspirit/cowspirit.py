@@ -101,7 +101,7 @@ class CowSpirit(commands.Cog):
             description = "Garmoth's Gebrüll hallt durch Garmoth's Nest"
             location_value = "Garmoth's Nest, Drieghan\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-47.68018294648414&lng=8.415527343750002&M=Garmoth#7/-47.372/8.690)"
             loot_value = "Garmoth's Herz <:garmothheart:1199730542325796934>"
-            image_url = "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/media/img/garmoth.jpg"
+            image_url = "media/img/garmoth.jpg"
             embed = self.create_embed(title, description, location_value, loot_value, image_url)
             await channel.send(embed=embed)
 
