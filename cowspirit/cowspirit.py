@@ -162,6 +162,7 @@ class CowSpirit(commands.Cog):
     async def send_karanda_embed(self):
         """Send Karanda embed message to the specified channel."""
         channel = self.bot.get_channel(self.channel_id)
+        await channel.send("Guten Loot 🍀! " f"<@&{self.role_id}>")
         if channel:
             title = "Karanda ist erschienen!"
             description = "Hoch oben auf dem Bergkamm befehlen Karandas Flügel den Harpyien zu brüllen"
@@ -174,6 +175,7 @@ class CowSpirit(commands.Cog):
     async def send_kutum_embed(self):
         """Send Kutum embed message to the specified channel."""
         channel = self.bot.get_channel(self.channel_id)
+        await channel.send("Guten Loot 🍀! " f"<@&{self.role_id}>")
         if channel:
             title = "Kutum ist erschienen!"
             description = "Das Herz des alten Kutum schlägt in der Scharlachsandkammer"
@@ -186,6 +188,7 @@ class CowSpirit(commands.Cog):
     async def send_kzarka_embed(self):
         """Send Kzarka embed message to the specified channel."""
         channel = self.bot.get_channel(self.channel_id)
+        await channel.send("Guten Loot 🍀! " f"<@&{self.role_id}>")
         if channel:
             title = "Kzarka ist erschienen!"
             description = "Das Gebrüll von Kzarka, dem Herrn der Verderbnis, bringt ganz Serendia zum Beben"
@@ -198,6 +201,7 @@ class CowSpirit(commands.Cog):
     async def send_nouver_embed(self):
         """Send Nouver embed message to the specified channel."""
         channel = self.bot.get_channel(self.channel_id)
+        await channel.send("Guten Loot 🍀! " f"<@&{self.role_id}>")
         if channel:
             title = "Nouver ist erschienen!"
             description = "Die Spuren von Nouver wurden nach einem heftigen Sandsturm entdeckt"
@@ -210,6 +214,7 @@ class CowSpirit(commands.Cog):
     async def send_offin_embed(self):
         """Send Offin embed message to the specified channel."""
         channel = self.bot.get_channel(self.channel_id)
+        await channel.send("Guten Loot 🍀! " f"<@&{self.role_id}>")
         if channel:
             title = "Offin ist erschienen!"
             description = "Offin ist erwacht. Offin absorbiert kontinuierlich die Energie der Geister"
@@ -222,6 +227,7 @@ class CowSpirit(commands.Cog):
     async def send_quint_muraka_embed(self):
         """Send Quint & Muraka embed message to the specified channel."""
         channel = self.bot.get_channel(self.channel_id)
+        await channel.send("Guten Loot 🍀! " f"<@&{self.role_id}>")
         if channel:
             title = "Quint und Muraka sind erschienen!"
             description = "Der König der Oger und der erste Troll sind dabei, der Welt zu erscheinen"
@@ -234,6 +240,7 @@ class CowSpirit(commands.Cog):
     async def send_vell_embed(self):
         """Send Vell embed message to the specified channel."""
         channel = self.bot.get_channel(self.channel_id)
+        await channel.send("Guten Loot 🍀! " f"<@&{self.role_id}>")
         if channel:
             title = "Vell ist erschienen!"
             description = "Vell neutralisiert den Siegelstein mit seinem kataklysmischen Zorn"
