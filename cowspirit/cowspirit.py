@@ -43,7 +43,8 @@ class CowSpirit(commands.Cog):
             except Exception as e:
                 print(f"Error while removing jobs: {e}")
             try:
-                await self.scheduler.shutdown()  # Shutdown the scheduler
+                #await self.scheduler.shutdown()  # Shutdown the scheduler
+                pass
             except Exception as e:
                 print(f"Error while shutting down scheduler: {e}")
         else:
