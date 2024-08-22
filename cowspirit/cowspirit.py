@@ -11,13 +11,75 @@ class CowSpirit(commands.Cog):
     """My custom cog to send embedded messages at specific times."""
 
     def __init__(self, bot: Red):
+        super().__init__()
         self.bot = bot
         self.channel_id = 1274113015427502192
         self.role_id = 1274141906913202186
         self.scheduler = AsyncIOScheduler()
-        self.scheduler_running = False  # Track whether the scheduler is active
+        #self.scheduler_running = True  # Track whether the scheduler is active
+
+        self.scheduler.start()
+        
+    async def initialize(self):
+        job_defaults = {
+            "coalesce": True,  # Multiple missed triggers within the grace time will only fire once
+            "max_instances": 5,  # This is probably way too high, should likely only be one
+            "misfire_grace_time": 15,  # 15 seconds ain't much, but it's honest work
+            "replace_existing": True,  # Very important for persistent data
+        }
+        self.scheduler = AsyncIOScheduler(job_defaults=job_defaults)
+        #self.scheduler.add_jobstore(self.jobstore, "default")
         self.schedule_jobs()
-        self.scheduler.start(True)
+        self.scheduler.start()
+        
+    
+    
+        
+    async def cog_unload(self):
+        if hasattr(self, 'scheduler') and self.scheduler is not None:
+            try:
+                if self.scheduler.get_jobs():
+                    await self.scheduler.remove_all_jobs()  # Remove all scheduled jobs
+            except Exception as e:
+                print(f"Error while removing jobs: {e}")
+            try:
+                await self.scheduler.shutdown()  # Shutdown the scheduler
+            except Exception as e:
+                print(f"Error while shutting down scheduler: {e}")
+        else:
+            print("Scheduler was not initialized or already cleaned up.")
+
+        try:
+            await self.bot.shutdown()  # Shutdown the bot
+        except Exception as e:
+            print(f"Error while shutting down bot: {e}")
+
+#     sched.add_job(myFunc, 'cron', minute='*', start_date=datetime(2023,1,1), end_date=datetime(2023,1,3))
+# for job in sched.get_jobs():
+#     print(job.next_run_time)
+# sched.start()
+    
+    
+    @commands.command()
+    async def list_jobs(self, ctx):
+        #super().remove_all_jobs()
+        self.scheduler.get_jobs(jobstore="default")
+        await ctx.send("All jobs!")
+
+    @commands.command()
+    async def print_jo(self, ctx):
+        #super().remove_all_jobs()
+        self.scheduler.print_jobs(jobstore="default")
+        await ctx.send("All jobs!")
+        
+    @commands.command()
+    async def get_next(self, ctx):
+        #super().remove_all_jobs()
+        #
+        # self.scheduler.
+        if self.scheduler.running:
+            print("Has started")
+        await ctx.send("All jobs!")
     
     @commands.command()   
     async def foo(self, ctx):
@@ -68,6 +130,9 @@ class CowSpirit(commands.Cog):
                 embed = self.create_embed(title, description, location_value, loot_value, image_url)
                 content = "Guten Loot 🍀 " f"<@&{self.role_id}>"
                 await ctx.send(content=content, embed=embed)
+        elif status.lower() == "remove_all":
+            self.scheduler.remove_all_jobs()
+            await ctx.send("All schedules removed!")
         else:
             # Invalid argument provided, display usage information
             await ctx.send("Invalid command. Use 'cowspirit schedule [true/false]' to activate or deactivate the scheduler.")
@@ -78,6 +143,7 @@ class CowSpirit(commands.Cog):
         self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, hour=14, minute=0)
         self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, hour=23, minute=15)
         self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, days_of_week='sun', hour=19, minute=0)
+
 
         # Karanda
         self.schedule_boss_notifications("Karanda", self.send_karanda_embed, days_of_week='mon', hour=0, minute=15)
@@ -342,3 +408,24 @@ class CowSpirit(commands.Cog):
         index = days.index(day_of_week)
         new_index = (index + adjustment) % 7
         return days[new_index]
+
+    # @commands.command()
+    # async def list_schedules(self, ctx):
+    #     # Access the scheduler
+    #     scheduler = self.bot.get_cog("Scheduler")
+    #     if scheduler:
+    #         tasks = await scheduler.get_all_tasks()  # Replace with actual method to get all tasks if exists
+    #         for task in tasks:
+    #             await ctx.send(f"Task ID: {task.id}, Time: {task.next_time}, Function: {task.function}")
+    #     else:
+    #         await ctx.send("Scheduler cog not found.")
+            
+    # @commands.command()
+    # async def cancel_schedule(self, ctx, task_id: int):
+    #     scheduler = self.bot.get_cog("Scheduler")
+    #     if scheduler:
+    #         await self.scheduler.remove_all_jobs()  # Replace with actual method to remove task if exists
+    #         await ctx.send(f"Task {task_id} removed.")
+    #     else:
+    #         await ctx.send("Scheduler cog not found.")
+            
