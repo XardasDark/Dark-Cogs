@@ -16,7 +16,7 @@ class CowSpirit(commands.Cog):
         self.channel_id = 1274113015427502192
         self.role_id = 1274141906913202186
         self.scheduler = AsyncIOScheduler()
-        #self.scheduler_running = True  # Track whether the scheduler is active
+        self.scheduler_running = False  # Track whether the scheduler is active
 
         self.scheduler.start()
         
