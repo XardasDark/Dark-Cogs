@@ -51,7 +51,8 @@ class CowSpirit(commands.Cog):
             print("Scheduler was not initialized or already cleaned up.")
 
         try:
-            await self.bot.shutdown()  # Shutdown the bot
+            #await self.bot.shutdown()  # Shutdown the bot
+            pass
         except Exception as e:
             print(f"Error while shutting down bot: {e}")
 
