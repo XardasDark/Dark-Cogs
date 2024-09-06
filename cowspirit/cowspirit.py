@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from redbot.core import commands, app_commands
 from redbot.core.bot import Red
@@ -248,7 +249,17 @@ class CowSpirit(commands.Cog):
             embed = self.create_embed(title, description, color, location_value, loot_value, image_url)
             #content = "Guten Loot 🍀 " f"<@&{self.role_id}>"
             content = f"<@&{self.role_id}>"
-            await channel.send(content=content, embed=embed)
+            notification_message = await channel.send(content=content, embed=embed)
+            
+            # Wait for 30 minutes (1800 seconds)
+            await asyncio.sleep(1800)
+            
+            # Delete the message after 30 minutes
+            try:
+                await notification_message.delete()
+            except discord.NotFound:
+                # The message may already be deleted or can't be found
+                print("Message was already deleted.")
         else:
             # Log or handle the error where channel couldn't be fetched
             print("Failed to fetch the channel")
