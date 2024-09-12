@@ -157,11 +157,6 @@ class CowSpirit(commands.Cog):
     def schedule_jobs(self):
         """Schedule all the jobs for different bosses."""
         
-        # Event Zodd
-        self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=10, minute=0)
-        self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=18, minute=00)
-        self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=23, minute=30)
-        
         # Garmoth
         self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, hour=14, minute=0)
         self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, hour=23, minute=15)
@@ -242,6 +237,62 @@ class CowSpirit(commands.Cog):
         # Vell
         self.schedule_boss_notifications("Vell", self.send_vell_embed, days_of_week='wed', hour=19, minute=0)
         self.schedule_boss_notifications("Vell", self.send_vell_embed, days_of_week='sat', hour=16, minute=0)
+        
+        # Uturi
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='mon', hour=16, minute=00)
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='mon', hour=22, minute=15)
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='tue', hour=19, minute=00)
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='wed', hour=22, minute=15)
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='thu', hour=16, minute=00)
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='thu', hour=22, minute=15)
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='fri', hour=16, minute=00)
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='fri', hour=22, minute=15)
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='sat', hour=00, minute=15)
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='sat', hour=16, minute=00)
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='sun', hour=00, minute=15)
+        
+        # Bulgasal
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='mon', hour=2, minute=00)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='mon', hour=19, minute=00)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='tue', hour=00, minute=15)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='tue', hour=19, minute=00)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='wed', hour=00, minute=15)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='wed', hour=16, minute=00)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='thu', hour=19, minute=00)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='fri', hour=2, minute=00)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='fri', hour=22, minute=15)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='sat', hour=2, minute=00)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='sat', hour=19, minute=00)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='sun', hour=2, minute=00)
+        
+        # Sangun
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='mon', hour=22, minute=15)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='tue', hour=2, minute=00)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='tue', hour=22, minute=15)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='wed', hour=22, minute=15)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='thu', hour=00, minute=15)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='thu', hour=2, minute=00)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='thu', hour=19, minute=00)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='fri', hour=00, minute=15)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='sun', hour=2, minute=00)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='sun', hour=22, minute=15)
+        
+        # Pig King
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='mon', hour=00, minute=15)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='mon', hour=19, minute=00)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='tue', hour=16, minute=00)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='tue', hour=22, minute=15)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='wed', hour=2, minute=00)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='thu', hour=22, minute=15)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='fri', hour=00, minute=15)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='fri', hour=19, minute=00)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='sat', hour=00, minute=15)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='sun', hour=22, minute=15)
+        
+        # Event Zodd
+        self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=10, minute=0)
+        self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=18, minute=00)
+        self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=23, minute=30)
 
     async def send_message_with_embed(self, channel, title, description, color, location_value, loot_value, image_url):
         """Send a message and embed to a specified channel."""
@@ -379,6 +430,58 @@ class CowSpirit(commands.Cog):
             "Mitten in der Verwunschene Kultstätte\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-44.134913443750726&lng=-13.996582031250002&M=Zodd)",
             "Behelit-Alchemiestein",
             "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/zodd.jpg"
+        )
+
+    async def send_uturi_embed(self, title="Uturi ist erschienen!"):
+        """Send Uturi embed message to the specified channel."""
+        channel = self.bot.get_channel(self.channel_id)
+        await self.send_message_with_embed(
+            channel,
+            title,
+            "Der Vogel hat einen Vogel!",
+            0x023020, # Dark Green
+            "Auf einer mittelgroßen Insel ganz im Norden von LOML\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=72.91318063340522&lng=-115.91674804687501&M=Uturi)",
+            "Stuff",
+            "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/uturi.jpg"
+        )
+
+    async def send_bulgasal_embed(self, title="Bulgasal ist erschienen!"):
+        """Send Bulgasal embed message to the specified channel."""
+        channel = self.bot.get_channel(self.channel_id)
+        await self.send_message_with_embed(
+            channel,
+            title,
+            "Böser Dude ist böse!",
+            0x4E1764, # Midnight Purple
+            "In der Festung an der südwestlichen Küste von LOML\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=72.91318063340522&lng=-115.91674804687501&M=Bulgasal)",
+            "Stuff",
+            "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/bulgasal.jpg"
+        )
+
+    async def send_sangun_embed(self, title="Sangun ist erschienen!"):
+        """Send Sangun embed message to the specified channel."""
+        channel = self.bot.get_channel(self.channel_id)
+        await self.send_message_with_embed(
+            channel,
+            title,
+            "Tiger macht Rawr Rawr.",
+            0xC0C0C0, # Silver
+            "Nördlich von Dalbeol in seiner Höhle\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=77.5964886481334&lng=-117.15820312500001&M=Sangun)",
+            "Stuff",
+            "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/sangun.jpg"
+        )
+        
+    async def send_pigking_embed(self, title="König der Aurumschweine ist erschienen!"):
+        """Send Pigking embed message to the specified channel."""
+        channel = self.bot.get_channel(self.channel_id)
+        await self.send_message_with_embed(
+            channel,
+            title,
+            "Großes wütendes Schwein.",
+            0x990000, # Crimson Red
+            "Mitten in der Verwunschene Kultstätte\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=72.91318063340522&lng=-115.91674804687501&M=Arumschweine)",
+            "Stuff",
+            "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/pigking.jpg"
         )
 
     def create_embed(self, title, description, color, location_value, loot_value, image_url):
