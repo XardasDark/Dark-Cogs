@@ -466,24 +466,3 @@ class CowSpirit(commands.Cog):
         index = days.index(day_of_week)
         new_index = (index + adjustment) % 7
         return days[new_index]
-
-    # @commands.command()
-    # async def list_schedules(self, ctx):
-    #     # Access the scheduler
-    #     scheduler = self.bot.get_cog("Scheduler")
-    #     if scheduler:
-    #         tasks = await scheduler.get_all_tasks()  # Replace with actual method to get all tasks if exists
-    #         for task in tasks:
-    #             await ctx.send(f"Task ID: {task.id}, Time: {task.next_time}, Function: {task.function}")
-    #     else:
-    #         await ctx.send("Scheduler cog not found.")
-            
-    # @commands.command()
-    # async def cancel_schedule(self, ctx, task_id: int):
-    #     scheduler = self.bot.get_cog("Scheduler")
-    #     if scheduler:
-    #         await self.scheduler.remove_all_jobs()  # Replace with actual method to remove task if exists
-    #         await ctx.send(f"Task {task_id} removed.")
-    #     else:
-    #         await ctx.send("Scheduler cog not found.")
-            
