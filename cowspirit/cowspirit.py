@@ -159,9 +159,12 @@ class CowSpirit(commands.Cog):
         
         # Garmoth
         self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, hour=14, minute=0)
-        self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, hour=23, minute=15)
-        self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, days_of_week='sun', hour=22, minute=38)
-        self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, days_of_week='sun', hour=22, minute=39)
+        self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, days_of_week='mon', hour=23, minute=15)
+        self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, days_of_week='tue', hour=23, minute=15)
+        self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, days_of_week='wed', hour=23, minute=15)
+        self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, days_of_week='thu', hour=23, minute=15)
+        self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, days_of_week='fri', hour=23, minute=15)
+        self.schedule_boss_notifications("Garmoth", self.send_garmoth_embed, days_of_week='sun', hour=23, minute=15)
 
         # Karanda
         self.schedule_boss_notifications("Karanda", self.send_karanda_embed, days_of_week='mon', hour=0, minute=15)
@@ -238,7 +241,11 @@ class CowSpirit(commands.Cog):
         self.schedule_boss_notifications("Vell", self.send_vell_embed, days_of_week='wed', hour=19, minute=0)
         self.schedule_boss_notifications("Vell", self.send_vell_embed, days_of_week='sat', hour=16, minute=0)
         
+        # Black Shadow
+        self.schedule_boss_notifications("Scharzschatten", self.send_blackshadow_embed, days_of_week='sat', hour=16, minute=0)
+        
         # Uturi
+        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='mon', hour=00, minute=15)
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='mon', hour=16, minute=00)
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='mon', hour=22, minute=15)
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='tue', hour=19, minute=00)
@@ -247,17 +254,16 @@ class CowSpirit(commands.Cog):
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='thu', hour=22, minute=15)
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='fri', hour=16, minute=00)
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='fri', hour=22, minute=15)
-        self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='sat', hour=00, minute=15)
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='sat', hour=16, minute=00)
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='sun', hour=00, minute=15)
         
         # Bulgasal
         self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='mon', hour=2, minute=00)
         self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='mon', hour=19, minute=00)
-        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='tue', hour=00, minute=15)
         self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='tue', hour=19, minute=00)
         self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='wed', hour=00, minute=15)
         self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='wed', hour=16, minute=00)
+        self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='thu', hour=00, minute=15)
         self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='thu', hour=19, minute=00)
         self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='fri', hour=2, minute=00)
         self.schedule_boss_notifications("Bulgasal", self.send_bulgasal_embed, days_of_week='fri', hour=22, minute=15)
@@ -270,23 +276,26 @@ class CowSpirit(commands.Cog):
         self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='tue', hour=2, minute=00)
         self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='tue', hour=22, minute=15)
         self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='wed', hour=22, minute=15)
-        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='thu', hour=00, minute=15)
         self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='thu', hour=2, minute=00)
         self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='thu', hour=19, minute=00)
         self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='fri', hour=00, minute=15)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='sat', hour=00, minute=15)
+        self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='sat', hour=19, minute=00)
         self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='sun', hour=2, minute=00)
         self.schedule_boss_notifications("Sangun", self.send_sangun_embed, days_of_week='sun', hour=22, minute=15)
         
         # Pig King
-        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='mon', hour=00, minute=15)
         self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='mon', hour=19, minute=00)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='tue', hour=00, minute=15)
         self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='tue', hour=16, minute=00)
         self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='tue', hour=22, minute=15)
         self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='wed', hour=2, minute=00)
         self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='thu', hour=22, minute=15)
-        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='fri', hour=00, minute=15)
         self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='fri', hour=19, minute=00)
         self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='sat', hour=00, minute=15)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='sat', hour=2, minute=00)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='sat', hour=16, minute=00)
+        self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='sun', hour=0, minute=15)
         self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='sun', hour=22, minute=15)
         
         # Event Zodd
@@ -389,7 +398,7 @@ class CowSpirit(commands.Cog):
             "Offin ist erwacht. Offin absorbiert kontinuierlich die Energie der Geister",
             0x374f2f, # Forest Green
             "Im Holo Wald nördlich von Grana\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-50.02185841773444&lng=-39.39697265625001&M=Offin#7/-50.173/-39.518)",
-            "Offin Hauptwaffe",
+            "Offin Hauptwaffe\nMystische Feder",
             "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/offin.jpg"
         )
 
@@ -430,6 +439,19 @@ class CowSpirit(commands.Cog):
             "Mitten in der Verwunschene Kultstätte\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-44.134913443750726&lng=-13.996582031250002&M=Zodd)",
             "Behelit-Alchemiestein",
             "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/zodd.jpg"
+        )
+        
+    async def send_blackshadow_embed(self, title="Schwarzschatten ist erschienen!"):
+        """Send Black Shadow embed message to the specified channel."""
+        channel = self.bot.get_channel(self.channel_id)
+        await self.send_message_with_embed(
+            channel,
+            title,
+            "Schwarzschatten, die Dunkelheit, die alles verschlingt, ist erschienen",
+            0x000000, # Black
+            "Vell's Realm im nördlichen Meer\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-26.391869671769022&lng=-9.569091796875002&M=Schwarzschatten)",
+            "Schwarzstern Rüstung\nMystische Feder",
+            "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/blackshadow.jpg"
         )
 
     async def send_uturi_embed(self, title="Uturi ist erschienen!"):
