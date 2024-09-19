@@ -299,9 +299,9 @@ class CowSpirit(commands.Cog):
         self.schedule_boss_notifications("Pigking", self.send_pigking_embed, days_of_week='sun', hour=22, minute=15)
         
         # Event Zodd
-        self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=10, minute=0)
-        self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=18, minute=00)
-        self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=23, minute=30)
+        #self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=10, minute=0)
+        #self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=18, minute=00)
+        #self.schedule_boss_notifications("Zodd", self.send_zodd_embed, hour=23, minute=30)
 
     async def send_message_with_embed(self, channel, title, description, color, location_value, loot_value, image_url):
         """Send a message and embed to a specified channel."""
