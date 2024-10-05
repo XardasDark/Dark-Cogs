@@ -239,10 +239,10 @@ class CowSpirit(commands.Cog):
 
         # Vell
         self.schedule_boss_notifications("Vell", self.send_vell_embed, days_of_week='wed', hour=19, minute=0)
-        self.schedule_boss_notifications("Vell", self.send_vell_embed, days_of_week='sat', hour=16, minute=0)
+        self.schedule_boss_notifications("Vell", self.send_vell_embed, days_of_week='sun', hour=16, minute=0)
         
         # Black Shadow
-        self.schedule_boss_notifications("Scharzschatten", self.send_blackshadow_embed, days_of_week='sat', hour=16, minute=0)
+        # self.schedule_boss_notifications("Schwarzschatten", self.send_blackshadow_embed, days_of_week='sat', hour=16, minute=0)
         
         # Uturi
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='mon', hour=00, minute=15)
