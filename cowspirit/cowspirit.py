@@ -244,6 +244,11 @@ class CowSpirit(commands.Cog):
         # Black Shadow
         # self.schedule_boss_notifications("Schwarzschatten", self.send_blackshadow_embed, days_of_week='sat', hour=16, minute=0)
         
+        # Event Boss Targargo
+        self.schedule_boss_notifications("Targargo", self.send_targargo_embed, hour=9, minute=30)
+        self.schedule_boss_notifications("Targargo", self.send_targargo_embed, hour=17, minute=30)
+        self.schedule_boss_notifications("Targargo", self.send_targargo_embed, hour=21, minute=45)
+        
         # Uturi
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='mon', hour=00, minute=15)
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='mon', hour=16, minute=00)
@@ -439,6 +444,19 @@ class CowSpirit(commands.Cog):
             "Mitten in der Verwunschene Kultstätte\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-44.134913443750726&lng=-13.996582031250002&M=Zodd)",
             "Behelit-Alchemiestein",
             "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/zodd.jpg"
+        )
+        
+    async def send_targargo_embed(self, title="Event Boss Targargo ist erschienen!"):
+        """Send Targargo embed message to the specified channel."""
+        channel = self.bot.get_channel(self.channel_id)
+        await self.send_message_with_embed(
+            channel,
+            title,
+            "Je größer der Körper, desto saftiger der Truthahn! Der Große Targargo und seine Targarga-Schar erscheint!\n[Öffne Eventseite](https://www.naeu.playblackdesert.com/de-DE/News/Detail?groupContentNo=7840&countryType=de-DE)",
+            0xe4d5b7, # Beige
+            "Nordöstlich von Velia. Unter Burg Cron\n[Öffne Karte](https://www.blackdesertfoundry.com/map/?lat=-7.623886853120049&lng=13.106689453125002&M=Targargo)",
+            "Ausgestopfte Truthähne\nRat von Valks +100\nGoldenes Truthahnei",
+            "https://raw.githubusercontent.com/XardasDark/Dark-Cogs/main/cowspirit/media/img/targargo.jpg"
         )
         
     async def send_blackshadow_embed(self, title="Schwarzschatten ist erschienen!"):
