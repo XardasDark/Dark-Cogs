@@ -242,12 +242,12 @@ class CowSpirit(commands.Cog):
         self.schedule_boss_notifications("Vell", self.send_vell_embed, days_of_week='sun', hour=16, minute=0)
         
         # Black Shadow
-        # self.schedule_boss_notifications("Schwarzschatten", self.send_blackshadow_embed, days_of_week='sat', hour=16, minute=0)
+        self.schedule_boss_notifications("Schwarzschatten", self.send_blackshadow_embed, days_of_week='sat', hour=16, minute=0)
         
         # Event Boss Targargo
-        self.schedule_boss_notifications("Targargo", self.send_targargo_embed, hour=9, minute=30)
-        self.schedule_boss_notifications("Targargo", self.send_targargo_embed, hour=17, minute=30)
-        self.schedule_boss_notifications("Targargo", self.send_targargo_embed, hour=21, minute=45)
+        # self.schedule_boss_notifications("Targargo", self.send_targargo_embed, hour=9, minute=30)
+        # self.schedule_boss_notifications("Targargo", self.send_targargo_embed, hour=17, minute=30)
+        # self.schedule_boss_notifications("Targargo", self.send_targargo_embed, hour=21, minute=45)
         
         # Uturi
         self.schedule_boss_notifications("Uturi", self.send_uturi_embed, days_of_week='mon', hour=00, minute=15)
