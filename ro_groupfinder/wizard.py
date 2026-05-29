@@ -92,7 +92,11 @@ class WizardState:
     draft_member_slot:  Optional[int] = None   # Aktuell im MembersView ausgewählter Slot
 
     # Schritt 5 – Datum & Zeit
-    dt_str: Optional[str] = None   # Format: "DD.MM.YYYY HH:MM"
+    dt_str:    Optional[str] = None   # Format: "DD.MM.YYYY HH:MM"
+    _dt_day:   Optional[int] = None   # Tag (1-31)
+    _dt_month: Optional[int] = None   # Monat (1-12)
+    _dt_year:  Optional[int] = None   # Jahr
+    _dt_time:  Optional[str] = None   # "HH:MM"
 
     # Schritt 6 – Wiederholung
     recurrence: str = "none"
@@ -937,61 +941,86 @@ class AddMemberModal(ui.Modal, title="Spieler hinzufügen"):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class DateTimeView(_BaseWizardView):
+    """Datum & Zeit über Dropdowns – Discord hat keinen nativen Date-Picker."""
     def __init__(self, session: WizardSession):
         super().__init__(session)
         s = session.state
+        from datetime import date as _date
+        current_year = _date.today().year
+        months = ["Januar","Februar","März","April","Mai","Juni",
+                  "Juli","August","September","Oktober","November","Dezember"]
 
-        if s.dt_str:
-            label = f"📅 Datum ändern ({s.dt_str})"
-        else:
-            label = "📅 Datum & Zeit eingeben"
-        self.add_item(_OpenModalBtn(label, DateTimeModal(session), row=0))
+        # Row 0: Tag
+        day_options = [
+            discord.SelectOption(label=f"{d:02d}.", value=str(d), default=(s._dt_day == d))
+            for d in range(1, 32)
+        ]
+        self.add_item(_DatePartSelect(session, day_options, "day", "📆 Tag wählen...", row=0))
+
+        # Row 1: Monat + Jahr
+        my_options = []
+        for y in [current_year, current_year + 1]:
+            for mi, mn in enumerate(months, 1):
+                my_options.append(discord.SelectOption(
+                    label=f"{mn} {y}", value=f"{mi:02d}.{y}",
+                    default=(s._dt_month == mi and s._dt_year == y)
+                ))
+        self.add_item(_DatePartSelect(session, my_options[:25], "month_year", "📅 Monat & Jahr wählen...", row=1))
+
+        # Row 2: Uhrzeit (30-Min-Schritte)
+        time_opts = [
+            discord.SelectOption(label=f"{h:02d}:{m:02d}", value=f"{h:02d}:{m:02d}",
+                                 default=(s._dt_time == f"{h:02d}:{m:02d}"))
+            for h in range(0, 24) for m in (0, 30)
+        ]
+        self.add_item(_DatePartSelect(session, time_opts[:25], "time", "🕐 Uhrzeit wählen...", row=2))
 
         if s.dt_str:
             self.add_item(_ClearDateTimeBtn(session))
 
-        self.add_nav(can_back=True, can_next=True)   # Optional → immer Weiter möglich
+        self.add_nav(can_back=True, can_next=True)
+
+
+class _DatePartSelect(ui.Select):
+    def __init__(self, session: WizardSession, options: list, part: str, placeholder: str, row: int):
+        super().__init__(placeholder=placeholder, options=options, row=row)
+        self.session = session
+        self.part    = part
+
+    async def callback(self, interaction: discord.Interaction):
+        s = self.session.state
+        val = self.values[0]
+        if self.part == "day":
+            s._dt_day = int(val)
+        elif self.part == "month_year":
+            m_str, y_str = val.split(".")
+            s._dt_month = int(m_str)
+            s._dt_year  = int(y_str)
+        elif self.part == "time":
+            s._dt_time = val
+        # Zusammenbauen wenn alle Teile gesetzt
+        if s._dt_day and s._dt_month and s._dt_year and s._dt_time:
+            try:
+                from datetime import datetime as _dtt
+                _dtt(s._dt_year, s._dt_month, s._dt_day,
+                     int(s._dt_time.split(":")[0]), int(s._dt_time.split(":")[1]))
+                s.dt_str = f"{s._dt_day:02d}.{s._dt_month:02d}.{s._dt_year} {s._dt_time}"
+            except ValueError:
+                s.dt_str = None
+        await self.session.refresh(interaction)
 
 
 class _ClearDateTimeBtn(ui.Button):
     def __init__(self, session: WizardSession):
-        super().__init__(label="✕ Datum entfernen", style=discord.ButtonStyle.secondary, row=1)
+        super().__init__(label="✕ Datum entfernen", style=discord.ButtonStyle.secondary, row=3)
         self.session = session
 
     async def callback(self, interaction: discord.Interaction):
         s = self.session.state
-        s.dt_str     = None
+        s.dt_str = None
+        s._dt_day = s._dt_month = s._dt_year = s._dt_time = None
         s.recurrence = "none"
         await self.session.refresh(interaction)
-
-
-class DateTimeModal(ui.Modal, title="Datum & Uhrzeit"):
-    date_input = ui.TextInput(
-        label="Datum (TT.MM.JJJJ)",
-        placeholder="z.B. 17.11.2024",
-        max_length=10,
-    )
-    time_input = ui.TextInput(
-        label="Uhrzeit (HH:MM)",
-        placeholder="z.B. 21:00",
-        max_length=5,
-    )
-
-    def __init__(self, session: WizardSession):
-        super().__init__()
-        self.session = session
-
-    async def on_submit(self, interaction: discord.Interaction):
-        raw_date = self.date_input.value.strip()
-        raw_time = self.time_input.value.strip()
-        # Einfache Format-Validierung
-        if re.match(r"^\d{2}\.\d{2}\.\d{4}$", raw_date) and re.match(r"^\d{2}:\d{2}$", raw_time):
-            self.session.state.dt_str = f"{raw_date} {raw_time}"
-        else:
-            # Ungültiges Format → Fehler-Embed über defer + edit
-            await interaction.response.defer()
-            return
-        await self.session.refresh_after_modal(interaction)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1082,8 +1111,12 @@ class LevelView(_BaseWizardView):
         self.add_item(_LevelModeSelect(session, mode_options))
 
         if session.state.level_mode in ("min", "range"):
-            label = f"🔢 Level eingeben ({session.state.level_display()})"
-            self.add_item(_OpenModalBtn(label, LevelModal(session), row=1))
+            s = session.state
+            if s.level_min:
+                lbl = f"🔢 Level: {s.level_display()}"[:45]
+            else:
+                lbl = "🔢 Level eingeben"
+            self.add_item(_OpenModalBtn(lbl, LevelModal(session), row=1))
 
         self.add_nav(can_back=True, can_next=True)
 
@@ -1108,7 +1141,7 @@ class LevelModal(ui.Modal, title="Level-Anforderung"):
         max_length=3,
     )
     max_input = ui.TextInput(
-        label="Maximales Level (nur für Bereich, sonst leer lassen)",
+        label="Max-Level (nur bei Bereich, sonst leer)",
         placeholder="z.B. 70",
         max_length=3,
         required=False,

@@ -405,6 +405,7 @@ class ROGroupFinder(commands.Cog):
         handlers = {
             "group_join":             self._handle_join,
             "group_leave":            self._handle_leave,
+            "group_finish":           self._handle_finish,
             "group_manage":           self._handle_manage,
             "join_slot_select":       self._handle_join_slot_select,
             "join_class_select":      self._handle_join_class_select,
@@ -640,6 +641,16 @@ class ROGroupFinder(commands.Cog):
 
         user_id = interaction.user.id
 
+        # Gruppenersteller kann nicht verlassen
+        if user_id == group.get("creator_id"):
+            await interaction.response.send_message(
+                "❌ Als Gruppenersteller kannst du die Gruppe nicht verlassen.
+"
+                "Nutze ⚙️ **Verwalten** → 🗑️ **Gruppe löschen** um sie aufzulösen.",
+                ephemeral=True,
+            )
+            return
+
         # Warteliste zuerst prüfen
         if is_user_in_waitlist(group, user_id):
             remove_from_waitlist(group, user_id)
@@ -697,7 +708,8 @@ class ROGroupFinder(commands.Cog):
                 pass
 
         # Nächsten Wartelisten-Spieler benachrichtigen
-        await self.scheduler.notify_next_waitlist_public(group)
+        freed_slot = next((s for s in group.get("slots", []) if s["slot_index"] == slot_index), None)
+        await self.scheduler.notify_next_waitlist_public(group, freed_slot=freed_slot)
 
         await interaction.response.edit_message(
             content="✅ Du hast die Gruppe verlassen.", view=None
@@ -728,6 +740,55 @@ class ROGroupFinder(commands.Cog):
         )
         await interaction.response.send_message(
             embed=embed, view=build_manage_view(group), ephemeral=True
+        )
+
+    async def _handle_finish(
+        self, interaction: discord.Interaction, msg_id: int, parts: list
+    ) -> None:
+        """Gruppenersteller markiert die Gruppe als abgeschlossen."""
+        group = get_group_by_message(interaction.guild_id, msg_id)
+        if not group:
+            await interaction.response.send_message("❌ Gruppe nicht gefunden.", ephemeral=True)
+            return
+
+        if interaction.user.id != group.get("creator_id"):
+            await interaction.response.send_message(
+                "❌ Nur der Gruppenersteller kann die Gruppe abschließen.", ephemeral=True
+            )
+            return
+
+        view = _FinishConfirmView(group, self)
+        await interaction.response.send_message(
+            "✅ Gruppe als abgeschlossen markieren?
+"
+            "Alle Mitglieder werden benachrichtigt und der Post wird geschlossen.",
+            view=view,
+            ephemeral=True,
+        )
+
+    async def complete_finish(
+        self, interaction: discord.Interaction, group: dict
+    ) -> None:
+        """Führt das Abschließen durch."""
+        from .notifications import notify_group_deleted
+        guild_id  = interaction.guild_id
+        msg_id    = group.get("message_id")
+
+        # Alle Mitglieder benachrichtigen
+        await notify_group_deleted(self.bot, group, reason="vom Ersteller als abgeschlossen markiert")
+
+        # Post löschen
+        channel = interaction.guild.get_channel(group["channel_id"])
+        if channel and msg_id:
+            try:
+                message = await channel.fetch_message(msg_id)
+                await message.delete()
+            except Exception:
+                pass
+
+        delete_group(guild_id, msg_id)
+        await interaction.response.edit_message(
+            content="✅ **Gruppe wurde abgeschlossen. GG!**", view=None
         )
 
     async def _handle_manage_members(
