@@ -5,11 +5,11 @@ Commands:
   /gruppe erstellen           → Startet den Wizard (nur im konfigurierten Channel)
   /gruppe suchen [klasse]     → Zeigt offene Gruppen die eine Klasse suchen
   /gruppe liste               → Zeigt alle aktiven Gruppen (Ephemeral)
-  /kuhring channel #channel   → Setzt den erlaubten Gruppen-Channel (Admin)
-  /kuhring info               → Zeigt aktuelle Servereinstellungen (Admin)
-  /kuhring erinnerung [min]   → Stellt ein wann Erinnerungen gesendet werden (Admin)
-  /kuhring cleanup [tage]     → Stellt die Ablaufzeit für Gruppen ein (Admin)
-  /kuhring timeout [min]      → Stellt den Wartelisten-Timeout ein (Admin)
+  /gruppe channel #channel   → Setzt den erlaubten Gruppen-Channel (Admin)
+  /gruppe info               → Zeigt aktuelle Servereinstellungen (Admin)
+  /gruppe erinnerung [min]   → Stellt ein wann Erinnerungen gesendet werden (Admin)
+  /gruppe cleanup [tage]     → Stellt die Ablaufzeit für Gruppen ein (Admin)
+  /gruppe timeout [min]      → Stellt den Wartelisten-Timeout ein (Admin)
 
 Persistent Interaction Handlers (Button/Select custom_id):
   group_join:<msg_id>               → Beitretens-Flow starten
@@ -296,25 +296,19 @@ class ROGroupFinder(commands.Cog):
         )
         await self._reply(ctx, embed=embed)
 
-    # ── /kuhring ──────────────────────────────────────────────────────────────
+        # ── Admin-Befehle (/gruppe channel, /gruppe info, ...) ────────────────────
 
-    @commands.hybrid_group(name="kuhring", description="RO Group Finder \u2013 Admin-Konfiguration")
-    @commands.guild_only()
-    async def kuhring(self, ctx: commands.Context) -> None:
-        if ctx.invoked_subcommand is None:
-            await ctx.send_help(ctx.command)
-
-    @kuhring.command(name="channel", description="Legt den Channel f\u00fcr Gruppenanfragen fest")
+    @gruppe.command(name="channel", description="Legt den Channel f\u00fcr Gruppenanfragen fest")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
-    async def kuhring_channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
+    async def gruppe_config_channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
         set_group_channel(ctx.guild.id, channel.id)
         await self._reply(ctx, f"\u2705 Gruppen-Channel auf {channel.mention} gesetzt.")
 
-    @kuhring.command(name="info", description="Zeigt die aktuelle Konfiguration")
+    @gruppe.command(name="info", description="Zeigt die aktuelle Konfiguration")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
-    async def kuhring_info(self, ctx: commands.Context) -> None:
+    async def gruppe_config_info(self, ctx: commands.Context) -> None:
         s  = get_guild_settings(ctx.guild.id)
         ch = ctx.guild.get_channel(s.get("group_channel_id") or 0)
 
@@ -325,41 +319,41 @@ class ROGroupFinder(commands.Cog):
         embed.add_field(name="\u23f3 Wartelisten-Timeout",     value=f"{s['waitlist_timeout_minutes']} Minuten",  inline=True)
         await self._reply(ctx, embed=embed)
 
-    @kuhring.command(name="erinnerung", description="Stellt ein wann Erinnerungen gesendet werden")
+    @gruppe.command(name="erinnerung", description="Stellt ein wann Erinnerungen gesendet werden")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
-    async def kuhring_erinnerung(self, ctx: commands.Context, minuten: int) -> None:
+    async def gruppe_config_erinnerung(self, ctx: commands.Context, minuten: int) -> None:
         if minuten < 5 or minuten > 1440:
             await self._reply(ctx, "\u274c Wert muss zwischen 5 und 1440 Minuten liegen.")
             return
         set_guild_setting(ctx.guild.id, "reminder_minutes", minuten)
         await self._reply(ctx, f"\u2705 Erinnerungen werden **{minuten} Minuten** vor Start gesendet.")
 
-    @kuhring.command(name="cleanup", description="Stellt die Ablaufzeit f\u00fcr inaktive Gruppen ein")
+    @gruppe.command(name="cleanup", description="Stellt die Ablaufzeit f\u00fcr inaktive Gruppen ein")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
-    async def kuhring_cleanup(self, ctx: commands.Context, tage: int) -> None:
+    async def gruppe_config_cleanup(self, ctx: commands.Context, tage: int) -> None:
         if tage < 1 or tage > 90:
             await self._reply(ctx, "\u274c Wert muss zwischen 1 und 90 Tagen liegen.")
             return
         set_guild_setting(ctx.guild.id, "cleanup_days", tage)
         await self._reply(ctx, f"\u2705 Gruppen laufen nach **{tage} Tagen** Inaktivit\u00e4t ab.")
 
-    @kuhring.command(name="timeout", description="Stellt den Wartelisten-Timeout ein")
+    @gruppe.command(name="timeout", description="Stellt den Wartelisten-Timeout ein")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
-    async def kuhring_timeout(self, ctx: commands.Context, minuten: int) -> None:
+    async def gruppe_config_timeout(self, ctx: commands.Context, minuten: int) -> None:
         if minuten < 5 or minuten > 120:
             await self._reply(ctx, "\u274c Wert muss zwischen 5 und 120 Minuten liegen.")
             return
         set_guild_setting(ctx.guild.id, "waitlist_timeout_minutes", minuten)
         await self._reply(ctx, f"\u2705 Wartelisten-Timeout auf **{minuten} Minuten** gesetzt.")
 
-    @kuhring_channel.error
-    @kuhring_info.error
-    @kuhring_erinnerung.error
-    @kuhring_cleanup.error
-    @kuhring_timeout.error
+    @gruppe_config_channel.error
+    @gruppe_config_info.error
+    @gruppe_config_erinnerung.error
+    @gruppe_config_cleanup.error
+    @gruppe_config_timeout.error
     async def admin_error(self, ctx: commands.Context, error) -> None:
         if isinstance(error, commands.MissingPermissions):
             await self._reply(ctx, "\u274c Du ben\u00f6tigst die Berechtigung **Server verwalten**.")
