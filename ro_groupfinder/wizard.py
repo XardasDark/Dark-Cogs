@@ -154,12 +154,13 @@ class WizardState:
         )
 
     def level_display(self) -> str:
-        if self.level_mode == "none":
+        if self.level_mode == "none" or self.level_min is None:
             return "Kein Level erforderlich"
         if self.level_mode == "min":
             return f"Ab Level {self.level_min}"
         if self.level_mode == "range":
-            return f"Level {self.level_min}–{self.level_max}"
+            max_part = str(self.level_max) if self.level_max is not None else "?"
+            return f"Level {self.level_min}–{max_part}"
         return "–"
 
     # ── Navigation ───────────────────────────────────────────────────────────
@@ -1111,11 +1112,7 @@ class LevelView(_BaseWizardView):
         self.add_item(_LevelModeSelect(session, mode_options))
 
         if session.state.level_mode in ("min", "range"):
-            s = session.state
-            if s.level_min:
-                lbl = f"🔢 Level: {s.level_display()}"[:45]
-            else:
-                lbl = "🔢 Level eingeben"
+            lbl = "🔢 Level eingeben"
             self.add_item(_OpenModalBtn(lbl, LevelModal(session), row=1))
 
         self.add_nav(can_back=True, can_next=True)
