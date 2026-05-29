@@ -30,9 +30,8 @@ Persistent Interaction Handlers (Button/Select custom_id):
 """
 
 import discord
-from discord import app_commands
-from discord.ext import commands
-from discord import ui
+from discord import app_commands, ui
+from redbot.core import commands
 from typing import Optional, Dict
 from datetime import datetime, timezone
 
