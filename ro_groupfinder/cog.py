@@ -119,31 +119,38 @@ class ROGroupFinder(commands.Cog):
         self.scheduler.stop()
 
     # ─────────────────────────────────────────────────────────────────────────
-    # SLASH-COMMANDS
+    # COMMANDS  (hybrid = Prefix UND Slash)
     # ─────────────────────────────────────────────────────────────────────────
 
-    gruppe = app_commands.Group(name="gruppe", description="RO Gruppen-System")
-    kuhring = app_commands.Group(name="kuhring", description="RO Group Finder – Admin-Konfiguration")
+    # ── /gruppe ───────────────────────────────────────────────────────────────
 
-    # ── /gruppe erstellen ─────────────────────────────────────────────────────
+    @commands.hybrid_group(name="gruppe", description="RO Gruppen-System")
+    @commands.guild_only()
+    async def gruppe(self, ctx: commands.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(ctx.command)
 
     @gruppe.command(name="erstellen", description="Erstelle eine neue Gruppenanfrage")
-    async def gruppe_erstellen(self, interaction: discord.Interaction) -> None:
+    @commands.guild_only()
+    async def gruppe_erstellen(self, ctx: commands.Context) -> None:
+        if not ctx.interaction:
+            await ctx.send("\u274c Dieser Befehl funktioniert nur als Slash-Command: `/gruppe erstellen`")
+            return
+
+        interaction = ctx.interaction
         guild_id    = interaction.guild_id
         channel_id  = interaction.channel_id
         allowed_ch  = get_group_channel(guild_id)
 
-        # Channel-Prüfung
         if allowed_ch and channel_id != allowed_ch:
-            ch = interaction.guild.get_channel(allowed_ch)
+            ch      = interaction.guild.get_channel(allowed_ch)
             mention = ch.mention if ch else f"<#{allowed_ch}>"
             await interaction.response.send_message(
-                f"❌ Gruppen können nur in {mention} erstellt werden.",
+                f"\u274c Gruppen k\u00f6nnen nur in {mention} erstellt werden.",
                 ephemeral=True,
             )
             return
 
-        # Laufende Session beenden wenn vorhanden
         if interaction.user.id in _wizard_sessions:
             del _wizard_sessions[interaction.user.id]
 
@@ -153,7 +160,6 @@ class ROGroupFinder(commands.Cog):
             creator_id   = interaction.user.id,
             creator_name = interaction.user.display_name,
         )
-
         session = WizardSession(
             state       = state,
             on_complete = self._wizard_complete,
@@ -165,17 +171,12 @@ class ROGroupFinder(commands.Cog):
     async def _wizard_complete(
         self, interaction: discord.Interaction, state: WizardState
     ) -> None:
-        """Wird aufgerufen wenn der Wizard im letzten Schritt auf 'Posten' geklickt wird."""
-        # Datum parsen
         dt = None
         if state.dt_str:
             try:
                 dt = datetime.strptime(state.dt_str, "%d.%m.%Y %H:%M").replace(tzinfo=timezone.utc)
             except ValueError:
                 pass
-
-        # Level-Mode aus WizardState
-        level_mode = state.level_mode if state.level_mode != "none" else None
 
         group = create_group(
             guild_id       = state.guild_id,
@@ -195,14 +196,11 @@ class ROGroupFinder(commands.Cog):
             level_min      = state.level_min,
             level_max      = state.level_max,
         )
-
-        # level_mode im Group-Dict speichern
         group["level_mode"] = state.level_mode
 
-        # Vorausgefüllte Mitglieder in Slots eintragen
         for member in state.prefilled_members:
             slot_idx = member["slot_index"]
-            slots = group["slots"]
+            slots    = group["slots"]
             if slot_idx < len(slots):
                 slot = slots[slot_idx]
                 slot["filled_by_id"]     = member.get("user_id") or state.creator_id
@@ -211,32 +209,24 @@ class ROGroupFinder(commands.Cog):
                 slot["filled_class"]     = slot["display_name"]
                 slot["filled_emoji"]     = slot["emoji"]
 
-        # Gruppen-Channel holen
         channel = interaction.guild.get_channel(state.channel_id)
         if not channel:
             await interaction.response.send_message(
-                "❌ Der Gruppen-Channel konnte nicht gefunden werden.", ephemeral=True
+                "\u274c Der Gruppen-Channel konnte nicht gefunden werden.", ephemeral=True
             )
             return
 
-        # Post senden
-        group["message_id"] = 0  # Temporär für View-Build
-        embed   = build_group_embed(group)
-        view    = build_group_action_view(group)
-        message = await channel.send(embed=embed, view=view)
-
+        group["message_id"] = 0
+        message = await channel.send(embed=build_group_embed(group), view=build_group_action_view(group))
         set_group_message_id(group, message.id)
         save_group(state.guild_id, group)
-
-        # View mit echter Message-ID nochmal updaten
         await message.edit(view=build_group_action_view(group))
 
-        # Wizard schließen
         if interaction.user.id in _wizard_sessions:
             del _wizard_sessions[interaction.user.id]
 
         await interaction.response.edit_message(
-            content="✅ **Deine Gruppenanfrage wurde gepostet!**",
+            content="\u2705 **Deine Gruppenanfrage wurde gepostet!**",
             embed=None,
             view=None,
         )
@@ -245,26 +235,22 @@ class ROGroupFinder(commands.Cog):
         if interaction.user.id in _wizard_sessions:
             del _wizard_sessions[interaction.user.id]
         await interaction.response.edit_message(
-            content="❌ Gruppen-Erstellung abgebrochen.",
+            content="\u274c Gruppen-Erstellung abgebrochen.",
             embed=None,
             view=None,
         )
 
-    # ── /gruppe suchen ────────────────────────────────────────────────────────
-
     @gruppe.command(name="suchen", description="Suche offene Gruppen nach Klasse/Rolle")
-    @app_commands.describe(klasse="Klasse oder Rolle nach der du suchst (optional)")
-    async def gruppe_suchen(
-        self, interaction: discord.Interaction, klasse: Optional[str] = None
-    ) -> None:
-        groups = get_guild_groups(interaction.guild_id)
+    @commands.guild_only()
+    async def gruppe_suchen(self, ctx: commands.Context, klasse: Optional[str] = None) -> None:
+        groups  = get_guild_groups(ctx.guild.id)
         results = []
 
         for group in groups.values():
             if group.get("status") not in ("open", "full"):
                 continue
             if klasse:
-                kl_lower = klasse.lower()
+                kl_lower   = klasse.lower()
                 open_slots = get_open_slots(group)
                 match = any(
                     kl_lower in s.get("display_name", "").lower() or
@@ -276,34 +262,22 @@ class ROGroupFinder(commands.Cog):
                     continue
             results.append(group)
 
+        term = f" f\u00fcr **{klasse}**" if klasse else ""
         if not results:
-            term = f" für **{klasse}**" if klasse else ""
-            await interaction.response.send_message(
-                f"Keine offenen Gruppen{term} gefunden.", ephemeral=True
-            )
+            await self._reply(ctx, f"Keine offenen Gruppen{term} gefunden.")
             return
 
-        embeds = []
-        for group in results[:5]:
-            embeds.append(build_group_embed(group))
-
-        await interaction.response.send_message(
-            content=f"**{len(results)} Gruppe(n) gefunden:**",
-            embeds=embeds,
-            ephemeral=True,
-        )
-
-    # ── /gruppe liste ─────────────────────────────────────────────────────────
+        embeds = [build_group_embed(g) for g in results[:5]]
+        await self._reply(ctx, f"**{len(results)} Gruppe(n) gefunden:**", embeds=embeds)
 
     @gruppe.command(name="liste", description="Zeige alle aktiven Gruppen")
-    async def gruppe_liste(self, interaction: discord.Interaction) -> None:
-        groups = get_guild_groups(interaction.guild_id)
+    @commands.guild_only()
+    async def gruppe_liste(self, ctx: commands.Context) -> None:
+        groups = get_guild_groups(ctx.guild.id)
         active = [g for g in groups.values() if g.get("status") in ("open", "full")]
 
         if not active:
-            await interaction.response.send_message(
-                "Es gibt derzeit keine aktiven Gruppen.", ephemeral=True
-            )
+            await self._reply(ctx, "Es gibt derzeit keine aktiven Gruppen.")
             return
 
         lines = []
@@ -312,98 +286,109 @@ class ROGroupFinder(commands.Cog):
             total   = g.get("player_count", "?")
             goal    = g.get("goal_custom") or g.get("goal") or "?"
             creator = g.get("creator_name", "?")
-            status  = "🟢" if g.get("status") == "open" else "🟡"
-            lines.append(f"{status} **{goal}** – {creator} ({filled}/{total} Spieler)")
+            icon    = "\U0001f7e2" if g.get("status") == "open" else "\U0001f7e1"
+            lines.append(f"{icon} **{goal}** \u2013 {creator} ({filled}/{total})")
 
         embed = discord.Embed(
-            title=f"🗡️ Aktive Gruppen ({len(active)})",
+            title=f"\u2694\ufe0f Aktive Gruppen ({len(active)})",
             description="\n".join(lines),
             color=COLOR_OPEN,
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await self._reply(ctx, embed=embed)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # /kuhring – ADMIN COMMANDS
-    # ─────────────────────────────────────────────────────────────────────────
+    # ── /kuhring ──────────────────────────────────────────────────────────────
 
-    @kuhring.command(name="channel", description="Legt den Channel für Gruppenanfragen fest")
-    @app_commands.describe(channel="Der Channel in dem Gruppen erstellt werden dürfen")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def kuhring_channel(
-        self, interaction: discord.Interaction, channel: discord.TextChannel
-    ) -> None:
-        set_group_channel(interaction.guild_id, channel.id)
-        await interaction.response.send_message(
-            f"✅ Gruppen-Channel auf {channel.mention} gesetzt.", ephemeral=True
-        )
+    @commands.hybrid_group(name="kuhring", description="RO Group Finder \u2013 Admin-Konfiguration")
+    @commands.guild_only()
+    async def kuhring(self, ctx: commands.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(ctx.command)
+
+    @kuhring.command(name="channel", description="Legt den Channel f\u00fcr Gruppenanfragen fest")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def kuhring_channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
+        set_group_channel(ctx.guild.id, channel.id)
+        await self._reply(ctx, f"\u2705 Gruppen-Channel auf {channel.mention} gesetzt.")
 
     @kuhring.command(name="info", description="Zeigt die aktuelle Konfiguration")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def kuhring_info(self, interaction: discord.Interaction) -> None:
-        s  = get_guild_settings(interaction.guild_id)
-        ch = interaction.guild.get_channel(s.get("group_channel_id") or 0)
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def kuhring_info(self, ctx: commands.Context) -> None:
+        s  = get_guild_settings(ctx.guild.id)
+        ch = ctx.guild.get_channel(s.get("group_channel_id") or 0)
 
-        embed = discord.Embed(title="⚙️ RO Group Finder – Konfiguration", color=COLOR_OPEN)
-        embed.add_field(
-            name="📌 Gruppen-Channel",
-            value=ch.mention if ch else "Nicht gesetzt",
-            inline=False,
-        )
-        embed.add_field(name="⏰ Erinnerung",         value=f"{s['reminder_minutes']} Minuten vor Start", inline=True)
-        embed.add_field(name="🗑️ Cleanup",            value=f"Nach {s['cleanup_days']} Tagen",            inline=True)
-        embed.add_field(name="⏳ Wartelisten-Timeout", value=f"{s['waitlist_timeout_minutes']} Minuten",   inline=True)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        embed = discord.Embed(title="\u2699\ufe0f RO Group Finder \u2013 Konfiguration", color=COLOR_OPEN)
+        embed.add_field(name="\U0001f4cc Gruppen-Channel",    value=ch.mention if ch else "Nicht gesetzt", inline=False)
+        embed.add_field(name="\u23f0 Erinnerung",              value=f"{s['reminder_minutes']} Min. vor Start",  inline=True)
+        embed.add_field(name="\U0001f5d1\ufe0f Cleanup",      value=f"Nach {s['cleanup_days']} Tagen",          inline=True)
+        embed.add_field(name="\u23f3 Wartelisten-Timeout",     value=f"{s['waitlist_timeout_minutes']} Minuten",  inline=True)
+        await self._reply(ctx, embed=embed)
 
     @kuhring.command(name="erinnerung", description="Stellt ein wann Erinnerungen gesendet werden")
-    @app_commands.describe(minuten="Minuten vor Gruppenstart (Standard: 30)")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def kuhring_erinnerung(self, interaction: discord.Interaction, minuten: int) -> None:
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def kuhring_erinnerung(self, ctx: commands.Context, minuten: int) -> None:
         if minuten < 5 or minuten > 1440:
-            await interaction.response.send_message("❌ Wert muss zwischen 5 und 1440 Minuten liegen.", ephemeral=True)
+            await self._reply(ctx, "\u274c Wert muss zwischen 5 und 1440 Minuten liegen.")
             return
-        set_guild_setting(interaction.guild_id, "reminder_minutes", minuten)
-        await interaction.response.send_message(
-            f"✅ Erinnerungen werden jetzt **{minuten} Minuten** vor Gruppenstart gesendet.", ephemeral=True
-        )
+        set_guild_setting(ctx.guild.id, "reminder_minutes", minuten)
+        await self._reply(ctx, f"\u2705 Erinnerungen werden **{minuten} Minuten** vor Start gesendet.")
 
-    @kuhring.command(name="cleanup", description="Stellt die Ablaufzeit für inaktive Gruppen ein")
-    @app_commands.describe(tage="Tage nach denen Gruppen ablaufen (Standard: 14)")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def kuhring_cleanup(self, interaction: discord.Interaction, tage: int) -> None:
+    @kuhring.command(name="cleanup", description="Stellt die Ablaufzeit f\u00fcr inaktive Gruppen ein")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def kuhring_cleanup(self, ctx: commands.Context, tage: int) -> None:
         if tage < 1 or tage > 90:
-            await interaction.response.send_message("❌ Wert muss zwischen 1 und 90 Tagen liegen.", ephemeral=True)
+            await self._reply(ctx, "\u274c Wert muss zwischen 1 und 90 Tagen liegen.")
             return
-        set_guild_setting(interaction.guild_id, "cleanup_days", tage)
-        await interaction.response.send_message(
-            f"✅ Gruppen laufen jetzt nach **{tage} Tagen** Inaktivität ab.", ephemeral=True
-        )
+        set_guild_setting(ctx.guild.id, "cleanup_days", tage)
+        await self._reply(ctx, f"\u2705 Gruppen laufen nach **{tage} Tagen** Inaktivit\u00e4t ab.")
 
     @kuhring.command(name="timeout", description="Stellt den Wartelisten-Timeout ein")
-    @app_commands.describe(minuten="Minuten die ein Wartelisten-Spieler Zeit hat zu reagieren (Standard: 30)")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def kuhring_timeout(self, interaction: discord.Interaction, minuten: int) -> None:
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def kuhring_timeout(self, ctx: commands.Context, minuten: int) -> None:
         if minuten < 5 or minuten > 120:
-            await interaction.response.send_message("❌ Wert muss zwischen 5 und 120 Minuten liegen.", ephemeral=True)
+            await self._reply(ctx, "\u274c Wert muss zwischen 5 und 120 Minuten liegen.")
             return
-        set_guild_setting(interaction.guild_id, "waitlist_timeout_minutes", minuten)
-        await interaction.response.send_message(
-            f"✅ Wartelisten-Timeout auf **{minuten} Minuten** gesetzt.", ephemeral=True
-        )
+        set_guild_setting(ctx.guild.id, "waitlist_timeout_minutes", minuten)
+        await self._reply(ctx, f"\u2705 Wartelisten-Timeout auf **{minuten} Minuten** gesetzt.")
 
-    # Fehlerbehandlung für fehlende Berechtigungen
     @kuhring_channel.error
     @kuhring_info.error
     @kuhring_erinnerung.error
     @kuhring_cleanup.error
     @kuhring_timeout.error
-    async def admin_error(self, interaction: discord.Interaction, error) -> None:
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message(
-                "❌ Du benötigst die Berechtigung **Server verwalten** für diesen Befehl.",
-                ephemeral=True,
-            )
+    async def admin_error(self, ctx: commands.Context, error) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await self._reply(ctx, "\u274c Du ben\u00f6tigst die Berechtigung **Server verwalten**.")
 
-    # ─────────────────────────────────────────────────────────────────────────
+    async def _reply(
+        self,
+        ctx:     commands.Context,
+        content: str = "",
+        *,
+        embed:   Optional[discord.Embed] = None,
+        embeds:  Optional[list]          = None,
+    ) -> None:
+        kwargs: dict = {}
+        if content:
+            kwargs["content"] = content
+        if embed:
+            kwargs["embed"] = embed
+        if embeds:
+            kwargs["embeds"] = embeds
+        if ctx.interaction:
+            kwargs["ephemeral"] = True
+            if ctx.interaction.response.is_done():
+                await ctx.interaction.followup.send(**kwargs)
+            else:
+                await ctx.interaction.response.send_message(**kwargs)
+        else:
+            await ctx.send(**kwargs)
+
+        # ─────────────────────────────────────────────────────────────────────────
     # INTERACTION HANDLER
     # Alle Button/Select-Callbacks werden über on_interaction geroutet.
     # ─────────────────────────────────────────────────────────────────────────
