@@ -296,16 +296,23 @@ class ROGroupFinder(commands.Cog):
         )
         await self._reply(ctx, embed=embed)
 
-        # ── Admin-Befehle (/gruppe channel, /gruppe info, ...) ────────────────────
+    # ── Admin-Befehle /gruppe-setup ────────────────────
+    @commands.hybrid_group(name="gruppe-setup", description="RO Gruppen-Einstellungen (nur Admins)")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    @app_commands.default_permissions(manage_guild=True)
+    async def gruppe_setup(self, ctx: commands.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(ctx.command)
 
-    @gruppe.command(name="channel", description="Legt den Channel f\u00fcr Gruppenanfragen fest")
+    @gruppe_setup.command(name="channel", description="Legt den Channel f\u00fcr Gruppenanfragen fest")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def gruppe_config_channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
         set_group_channel(ctx.guild.id, channel.id)
         await self._reply(ctx, f"\u2705 Gruppen-Channel auf {channel.mention} gesetzt.")
 
-    @gruppe.command(name="info", description="Zeigt die aktuelle Konfiguration")
+    @gruppe_setup.command(name="info", description="Zeigt die aktuelle Konfiguration")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def gruppe_config_info(self, ctx: commands.Context) -> None:
@@ -319,7 +326,7 @@ class ROGroupFinder(commands.Cog):
         embed.add_field(name="\u23f3 Wartelisten-Timeout",     value=f"{s['waitlist_timeout_minutes']} Minuten",  inline=True)
         await self._reply(ctx, embed=embed)
 
-    @gruppe.command(name="erinnerung", description="Stellt ein wann Erinnerungen gesendet werden")
+    @gruppe_setup.command(name="erinnerung", description="Stellt ein wann Erinnerungen gesendet werden")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def gruppe_config_erinnerung(self, ctx: commands.Context, minuten: int) -> None:
@@ -329,7 +336,7 @@ class ROGroupFinder(commands.Cog):
         set_guild_setting(ctx.guild.id, "reminder_minutes", minuten)
         await self._reply(ctx, f"\u2705 Erinnerungen werden **{minuten} Minuten** vor Start gesendet.")
 
-    @gruppe.command(name="cleanup", description="Stellt die Ablaufzeit f\u00fcr inaktive Gruppen ein")
+    @gruppe_setup.command(name="cleanup", description="Stellt die Ablaufzeit f\u00fcr inaktive Gruppen ein")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def gruppe_config_cleanup(self, ctx: commands.Context, tage: int) -> None:
@@ -339,7 +346,7 @@ class ROGroupFinder(commands.Cog):
         set_guild_setting(ctx.guild.id, "cleanup_days", tage)
         await self._reply(ctx, f"\u2705 Gruppen laufen nach **{tage} Tagen** Inaktivit\u00e4t ab.")
 
-    @gruppe.command(name="timeout", description="Stellt den Wartelisten-Timeout ein")
+    @gruppe_setup.command(name="timeout", description="Stellt den Wartelisten-Timeout ein")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def gruppe_config_timeout(self, ctx: commands.Context, minuten: int) -> None:
