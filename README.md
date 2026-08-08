@@ -17,6 +17,7 @@ Once the bot is installed, run the following command in Discord:
 | Name              | Status/Version   | Description (Click to see full status)                                                                                                                     | Authors                                            |
 |-------------------|------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------|
 | CowSpirit               | 0.0.1            | <details><summary>A BDO Bot!</summary>Doing cow things!</details>                                                                   | XardasDark                                         |
+| Muhfrage                | 0.1.0            | <details><summary>Umfragen & Abstimmungen 🐄</summary>Flexible Umfragen: freie Punktverteilung, Plus/Minus, Rang-Vergabe, Einzel-/Mehrfachauswahl, Skala und Textantworten. Manager-Rolle, Teilnehmer-Allowlist, anonyme Auswertung, öffentlich oder nur für Manager, TXT/CSV-Export.</details> | XardasDark                                         |
 
 # Credits
 [Red-DiscordBot](https://github.com/Cog-Creators/Red-DiscordBot)

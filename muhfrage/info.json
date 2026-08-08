@@ -1,0 +1,23 @@
+{
+    "name": "Muhfrage",
+    "short": "Flexible Umfragen & Abstimmungen mit Punktvergabe.",
+    "description": "Erstelle interaktive Umfragen: freie Punktverteilung, Plus/Minus, Rang-Vergabe, Einzel-/Mehrfachauswahl, Skala-Bewertung und freie Textantworten. Eine wählbare Manager-Rolle verwaltet Umfragen; Teilnehmer können per Allowlist beschränkt werden; Ergebnisse werden anonym/mit Namen ausgewertet und wahlweise nur für Manager oder öffentlich ausgegeben (inkl. TXT/CSV-Export).",
+    "end_user_data_statement": "Dieser Cog speichert pro Umfrage die Discord-User-IDs der Teilnehmer sowie deren abgegebene Antworten in der Bot-Datenbank. Bei als anonym markierten Umfragen werden User-IDs nur zur Verhinderung von Doppelabstimmungen genutzt und nicht in Auswertungen angezeigt. Daten werden gelöscht, wenn die zugehörige Umfrage gelöscht wird.",
+    "install_msg": "Danke für die Installation von Muhfrage! 🐄 Starte mit `[p]help Muhfrage` und setze zuerst eine Manager-Rolle über `/muhfrage-setup rolle`.",
+    "author": [
+        "XardasDark"
+    ],
+    "required_cogs": {},
+    "requirements": [],
+    "tags": [
+        "utility",
+        "poll",
+        "survey",
+        "voting",
+        "umfrage"
+    ],
+    "min_bot_version": "3.5.0",
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}
