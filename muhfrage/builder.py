@@ -186,13 +186,42 @@ class BuilderPanel(discord.ui.View):
             embed.set_author(name="🛠️ Umfrage-Builder")
         return embed
 
-    async def save_and_refresh(self, interaction: discord.Interaction) -> None:
-        await self.cog.store.save_survey(self.guild, self.survey)
+    async def _show(self, interaction: discord.Interaction) -> None:
+        """Panel neu rendern – interaktion-first, mit Webhook-Fallback (umgeht 3s-Limit / 10062)."""
         self._build()
-        if interaction.response.is_done():
-            await interaction.edit_original_response(embed=self._embed(), view=self)
-        else:
-            await interaction.response.edit_message(embed=self._embed(), view=self)
+        embed = self._embed()
+        try:
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+        except (discord.NotFound, discord.HTTPException):
+            if self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except discord.HTTPException:
+                    pass
+
+    async def _finish(self, interaction: discord.Interaction, *, content: str,
+                      embed: Optional[discord.Embed]) -> None:
+        """Panel schließen (View entfernen) – robust gegen abgelaufene Interaktionen."""
+        try:
+            if interaction.response.is_done():
+                await interaction.edit_original_response(content=content, embed=embed, view=None)
+            else:
+                await interaction.response.edit_message(content=content, embed=embed, view=None)
+        except (discord.NotFound, discord.HTTPException):
+            if self.message:
+                try:
+                    await self.message.edit(content=content, embed=embed, view=None)
+                except discord.HTTPException:
+                    pass
+        self.stop()
+
+    async def save_and_refresh(self, interaction: discord.Interaction) -> None:
+        # Zuerst die Interaktion bestätigen (schnell), dann persistent speichern.
+        await self._show(interaction)
+        await self.cog.store.save_survey(self.guild, self.survey)
 
     # ── Aufbau ────────────────────────────────────────────────────────────────
 
@@ -243,16 +272,13 @@ class BuilderPanel(discord.ui.View):
 
         async def on_add(interaction):
             self.mode = "add_type"
-            self._build()
-            await interaction.response.edit_message(embed=self._embed(), view=self)
+            await self._show(interaction)
         async def on_autoclose(interaction):
             self.mode = "autoclose"
-            self._build()
-            await interaction.response.edit_message(embed=self._embed(), view=self)
+            await self._show(interaction)
         async def on_allow(interaction):
             self.mode = "allow"
-            self._build()
-            await interaction.response.edit_message(embed=self._embed(), view=self)
+            await self._show(interaction)
         async def on_title(interaction):
             await interaction.response.send_modal(
                 TitleModal(self._title_done, self.survey["title"], self.survey.get("description", "")))
@@ -260,14 +286,11 @@ class BuilderPanel(discord.ui.View):
             hint = ("✅ **Entwurf gespeichert.** Starte die Umfrage mit "
                     f"`/muhfrage starten {self.survey['id']}`.")
             self.clear_items()
-            await interaction.response.edit_message(content=hint, embed=self._embed(), view=None)
-            self.stop()
+            await self._finish(interaction, content=hint, embed=self._embed())
         async def on_discard(interaction):
             await self.cog.store.delete_survey(self.guild, self.survey["id"])
             self.clear_items()
-            await interaction.response.edit_message(
-                content="🗑️ Entwurf verworfen.", embed=None, view=None)
-            self.stop()
+            await self._finish(interaction, content="🗑️ Entwurf verworfen.", embed=None)
 
         add_q.callback = on_add
         autoclose.callback = on_autoclose
@@ -307,8 +330,7 @@ class BuilderPanel(discord.ui.View):
             await self.save_and_refresh(interaction)
         async def on_back(interaction):
             self.mode = "main"
-            self._build()
-            await interaction.response.edit_message(embed=self._embed(), view=self)
+            await self._show(interaction)
 
         time_btn.callback = on_time
         count_btn.callback = on_count
@@ -332,8 +354,7 @@ class BuilderPanel(discord.ui.View):
         back = discord.ui.Button(label="Zurück", emoji="◀", style=discord.ButtonStyle.secondary, row=1)
         async def on_back(interaction):
             self.mode = "main"
-            self._build()
-            await interaction.response.edit_message(embed=self._embed(), view=self)
+            await self._show(interaction)
         back.callback = on_back
         self.add_item(back)
 
@@ -361,8 +382,7 @@ class BuilderPanel(discord.ui.View):
             await self.save_and_refresh(interaction)
         async def on_back(interaction):
             self.mode = "main"
-            self._build()
-            await interaction.response.edit_message(embed=self._embed(), view=self)
+            await self._show(interaction)
         clear.callback = on_clear
         back.callback = on_back
         self.add_item(clear)
