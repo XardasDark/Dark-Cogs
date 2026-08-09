@@ -15,7 +15,9 @@ Antwort-Formate (`answer`) je Frage-Typ:
   text             "freitext"
 """
 
+import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from .constants import (
@@ -43,7 +45,7 @@ def new_survey(slug: str, title: str, description: str, creator_id: int, created
         "result_channel_id":  None,
         "results_timing":     "on_close",
         "allow_change":       True,
-        "deadline":           None,
+        "autoclose":          {"deadline": None, "all_voted": False, "count": None},
         "allowed_user_ids":   [],
         "allowed_role_ids":   [],
         "created_by":         creator_id,
@@ -202,3 +204,89 @@ def question_summary(question: Dict[str, Any]) -> str:
     if qtype == "text":
         return "Freie Textantwort"
     return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AUTOMATISCHES ENDE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def parse_deadline(text: str) -> Optional[datetime]:
+    """
+    Wandelt eine Eingabe in einen UTC-Zeitpunkt um. Unterstützt relative Dauern
+    (z.B. `2d`, `12h`, `1d6h`, `90m`, `1w`) und absolute Zeitpunkte
+    (`TT.MM.JJJJ HH:MM`, `TT.MM. HH:MM`, als UTC interpretiert).
+    Gibt None zurück, wenn nichts erkannt wurde.
+    """
+    text = (text or "").strip().lower()
+    if not text:
+        return None
+
+    # Relative Dauer
+    if re.fullmatch(r"(\s*\d+\s*[wdhm])+", text):
+        units = {"w": "weeks", "d": "days", "h": "hours", "m": "minutes"}
+        kw: Dict[str, int] = {}
+        for num, unit in re.findall(r"(\d+)\s*([wdhm])", text):
+            kw[units[unit]] = kw.get(units[unit], 0) + int(num)
+        if kw:
+            return datetime.now(timezone.utc) + timedelta(**kw)
+
+    # Absoluter Zeitpunkt (als UTC)
+    for fmt in ("%d.%m.%Y %H:%M", "%d.%m.%y %H:%M", "%d.%m. %H:%M", "%d.%m %H:%M",
+                "%d.%m.%Y", "%d.%m."):
+        try:
+            dt = datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        if dt.year == 1900:
+            dt = dt.replace(year=datetime.now(timezone.utc).year)
+        return dt.replace(tzinfo=timezone.utc)
+    return None
+
+
+def deadline_dt(survey: Dict[str, Any]) -> Optional[datetime]:
+    dl = survey.get("autoclose", {}).get("deadline")
+    if not dl:
+        return None
+    try:
+        return datetime.fromisoformat(dl)
+    except (ValueError, TypeError):
+        return None
+
+
+def deadline_passed(survey: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    dt = deadline_dt(survey)
+    if not dt:
+        return False
+    return (now or datetime.now(timezone.utc)) >= dt
+
+
+def count_condition_met(survey: Dict[str, Any], response_count: int,
+                        eligible_count: Optional[int]) -> Tuple[bool, str]:
+    """Prüft die nicht-zeitbasierten Auto-Ende-Bedingungen."""
+    ac = survey.get("autoclose", {})
+    target = ac.get("count")
+    if target and response_count >= target:
+        return True, f"{response_count} Stimmen erreicht"
+    if ac.get("all_voted") and eligible_count and response_count >= eligible_count:
+        return True, "alle Berechtigten haben abgestimmt"
+    return False, ""
+
+
+def has_autoclose(survey: Dict[str, Any]) -> bool:
+    ac = survey.get("autoclose", {})
+    return bool(ac.get("deadline") or ac.get("count") or ac.get("all_voted"))
+
+
+def autoclose_summary(survey: Dict[str, Any]) -> str:
+    """Menschenlesbare Zusammenfassung der aktiven Auto-Ende-Bedingungen."""
+    ac = survey.get("autoclose", {})
+    parts: List[str] = []
+    dt = deadline_dt(survey)
+    if dt:
+        epoch = int(dt.timestamp())
+        parts.append(f"⏰ Zeitpunkt: <t:{epoch}:f> (<t:{epoch}:R>)")
+    if ac.get("count"):
+        parts.append(f"🔢 bei {ac['count']} Stimmen")
+    if ac.get("all_voted"):
+        parts.append("✅ wenn alle Berechtigten abgestimmt haben")
+    return "\n".join(parts) if parts else "_Kein automatisches Ende (manuell mit /muhfrage beenden)._"

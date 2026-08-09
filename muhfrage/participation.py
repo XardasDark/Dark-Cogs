@@ -438,7 +438,7 @@ class ParticipationView(discord.ui.View):
             content="✅ **Danke für deine Teilnahme!** Deine Antworten wurden gespeichert.",
             embed=None, view=None)
         self.stop()
-        await self.cog.update_public_message(self.guild, self.survey["id"])
+        await self.cog.on_response_saved(self.guild, self.survey["id"])
 
 
 class _TextModal(discord.ui.Modal, title="Deine Antwort"):

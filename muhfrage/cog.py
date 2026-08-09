@@ -19,6 +19,7 @@ Der persistente „Teilnehmen"-Button trägt die custom_id
 `muhfrage_join:<slug>` und wird über on_interaction geroutet (übersteht Neustarts).
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from functools import partial
@@ -64,6 +65,7 @@ class Muhfrage(commands.Cog):
             responses={},
         )
         self.store = SurveyStore(self.config)
+        self._autoclose_task: Optional[asyncio.Task] = None
 
     async def cog_load(self) -> None:
         # Autocomplete für die Slug-Parameter registrieren (bound methods → (interaction, current))
@@ -75,6 +77,12 @@ class Muhfrage(commands.Cog):
                 cmd.autocomplete("id")(self._ac_all)
         except Exception:  # pragma: no cover – Autocomplete ist nur Komfort
             log.debug("Autocomplete konnte nicht registriert werden", exc_info=True)
+        # Hintergrund-Loop für zeit-/bedingungsbasiertes automatisches Ende
+        self._autoclose_task = self.bot.loop.create_task(self._autoclose_loop())
+
+    def cog_unload(self) -> None:
+        if self._autoclose_task:
+            self._autoclose_task.cancel()
 
     # ─────────────────────────────────────────────────────────────────────────
     # HILFSFUNKTIONEN
@@ -135,6 +143,119 @@ class Muhfrage(commands.Cog):
                            view=views.build_join_view(survey))
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # AUTOMATISCHES ENDE
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _eligible_count(self, guild: discord.Guild, survey: Dict[str, Any]) -> Optional[int]:
+        """Anzahl teilnahmeberechtigter (nicht-Bot) Mitglieder. None = keine Beschränkung."""
+        users = set(survey.get("allowed_user_ids", []))
+        roles = set(survey.get("allowed_role_ids", []))
+        if not users and not roles:
+            return None
+        eligible = set()
+        for uid in users:
+            m = guild.get_member(uid)
+            if m and not m.bot:
+                eligible.add(uid)
+        if roles:
+            for m in guild.members:
+                if not m.bot and any(r.id in roles for r in m.roles):
+                    eligible.add(m.id)
+        return len(eligible)
+
+    async def on_response_saved(self, guild: discord.Guild, slug: str) -> None:
+        """Wird nach jeder gespeicherten Antwort aufgerufen."""
+        await self.update_public_message(guild, slug)
+        await self._maybe_autoclose(guild, slug)
+
+    async def _maybe_autoclose(self, guild: discord.Guild, slug: str) -> None:
+        survey = await self.store.get_survey(guild, slug)
+        if not survey or survey.get("status") != "open" or not models.has_autoclose(survey):
+            return
+        count = await self.store.response_count(guild, slug)
+        eligible = self._eligible_count(guild, survey)
+        met, reason = models.count_condition_met(survey, count, eligible)
+        if met:
+            await self._auto_finish(guild, survey, reason)
+
+    async def _auto_finish(self, guild: discord.Guild, survey: Dict[str, Any], reason: str) -> None:
+        """Schließt eine Umfrage automatisch und liefert die Ergebnisse aus."""
+        fresh = await self.store.get_survey(guild, survey["id"])
+        if not fresh or fresh.get("status") != "open":
+            return
+        fresh["status"] = "closed"
+        await self.store.save_survey(guild, fresh)
+        await self.update_public_message(guild, fresh["id"])
+        await self._send_results_auto(guild, fresh, reason)
+        log.debug("Umfrage %s auf %s automatisch beendet (%s)", fresh["id"], guild.id, reason)
+
+    async def _public_results_channel(self, guild: discord.Guild,
+                                      survey: Dict[str, Any]) -> Optional[discord.abc.Messageable]:
+        channel_id = survey.get("result_channel_id") or await self.store.get_results_channel_id(guild)
+        if channel_id:
+            ch = guild.get_channel(channel_id)
+            if ch:
+                return ch
+        pub = survey.get("published")
+        if pub:
+            return guild.get_channel(pub["channel_id"])
+        return None
+
+    async def _send_results_auto(self, guild: discord.Guild, survey: Dict[str, Any], reason: str) -> None:
+        responses = await self.store.get_responses(guild, survey["id"])
+        embed = results.build_results_embed(survey, responses)
+        note = f"⏹️ Umfrage automatisch beendet ({reason})."
+
+        if survey["results_visibility"] == "public":
+            channel = await self._public_results_channel(guild, survey)
+            if channel:
+                try:
+                    await channel.send(content=note, embed=embed)
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+        else:
+            # Nur für Manager: Ergebnisse an den Ersteller per DM, im Kanal nur ein Hinweis
+            creator = guild.get_member(survey.get("created_by")) if survey.get("created_by") else None
+            if creator:
+                try:
+                    await creator.send(
+                        content=f"{note} Umfrage `{survey['id']}` auf **{guild.name}**.", embed=embed)
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+            pub = survey.get("published")
+            if pub:
+                ch = guild.get_channel(pub["channel_id"])
+                if ch:
+                    try:
+                        await ch.send(f"⏹️ Umfrage **{survey['title']}** wurde beendet. "
+                                      "Die Ergebnisse gehen an die Auswerter.")
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+
+    async def _autoclose_loop(self) -> None:
+        await self.bot.wait_until_red_ready()
+        while True:
+            try:
+                for guild in list(self.bot.guilds):
+                    surveys = await self.store.all_surveys(guild)
+                    for slug, survey in list(surveys.items()):
+                        if survey.get("status") != "open" or not models.has_autoclose(survey):
+                            continue
+                        if models.deadline_passed(survey):
+                            await self._auto_finish(guild, survey, "Zeitpunkt erreicht")
+                            continue
+                        count = await self.store.response_count(guild, slug)
+                        eligible = self._eligible_count(guild, survey)
+                        met, reason = models.count_condition_met(survey, count, eligible)
+                        if met:
+                            await self._auto_finish(guild, survey, reason)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("Fehler im Auto-Close-Loop")
+            await asyncio.sleep(30)
 
     async def _deliver_results(self, ctx: commands.Context, survey: Dict[str, Any]) -> None:
         responses = await self.store.get_responses(ctx.guild, survey["id"])

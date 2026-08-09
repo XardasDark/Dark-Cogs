@@ -56,6 +56,20 @@ def build_public_embed(survey: Dict[str, Any], response_count: int) -> discord.E
     if hinweise:
         embed.add_field(name="Hinweise", value=" · ".join(hinweise), inline=False)
 
+    # Automatisches Ende (nur bei laufenden Umfragen relevant)
+    if survey["status"] == "open" and models.has_autoclose(survey):
+        dt = models.deadline_dt(survey)
+        parts = []
+        if dt:
+            parts.append(f"⏰ endet <t:{int(dt.timestamp())}:R>")
+        ac = survey.get("autoclose", {})
+        if ac.get("count"):
+            parts.append(f"🔢 spätestens bei {ac['count']} Stimmen")
+        if ac.get("all_voted"):
+            parts.append("✅ sobald alle Berechtigten abgestimmt haben")
+        if parts:
+            embed.add_field(name="Automatisches Ende", value=" · ".join(parts), inline=False)
+
     status = STATUS_LABELS.get(survey["status"], survey["status"])
     embed.set_footer(text=f"{status} · {response_count} Teilnahmen · ID: {survey['id']} · Teilnahme: /muhfrage teilnehmen {survey['id']}")
     return embed
@@ -91,6 +105,9 @@ def build_overview_embed(survey: Dict[str, Any], response_count: int) -> discord
     embed.add_field(name="Anonym", value="Ja" if survey.get("anonymous") else "Nein", inline=True)
     embed.add_field(name="Ergebnisse", value=TIMING_OPTIONS.get(survey["results_timing"], "?"), inline=True)
     embed.add_field(name="Änderbar", value="Ja" if survey.get("allow_change") else "Nein", inline=True)
+
+    # Automatisches Ende
+    embed.add_field(name="⏰ Automatisches Ende", value=models.autoclose_summary(survey), inline=False)
 
     # Teilnehmer-Beschränkung
     users = survey.get("allowed_user_ids", [])

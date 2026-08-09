@@ -180,6 +180,8 @@ class BuilderPanel(discord.ui.View):
             embed.set_author(name="➕ Fragetyp auswählen")
         elif self.mode == "allow":
             embed.set_author(name="🔒 Teilnehmer beschränken (leer = alle)")
+        elif self.mode == "autoclose":
+            embed.set_author(name="⏰ Automatisches Ende festlegen")
         else:
             embed.set_author(name="🛠️ Umfrage-Builder")
         return embed
@@ -200,6 +202,8 @@ class BuilderPanel(discord.ui.View):
             self._build_add_type()
         elif self.mode == "allow":
             self._build_allow()
+        elif self.mode == "autoclose":
+            self._build_autoclose()
         else:
             self._build_main()
 
@@ -229,15 +233,20 @@ class BuilderPanel(discord.ui.View):
             rem.callback = self._on_remove_question
             self.add_item(rem)
 
-        # Aktions-Buttons
+        # Aktions-Buttons (Zeile 2: Bearbeiten, Zeile 3: Abschluss)
         add_q = discord.ui.Button(label="Frage", emoji="➕", style=discord.ButtonStyle.success, row=2)
+        autoclose = discord.ui.Button(label="Auto-Ende", emoji="⏰", style=discord.ButtonStyle.secondary, row=2)
         allow = discord.ui.Button(label="Teilnehmer", emoji="🔒", style=discord.ButtonStyle.secondary, row=2)
         title = discord.ui.Button(label="Titel", emoji="✏️", style=discord.ButtonStyle.secondary, row=2)
-        done = discord.ui.Button(label="Fertig", emoji="✅", style=discord.ButtonStyle.primary, row=2)
-        discard = discord.ui.Button(label="Verwerfen", emoji="🗑️", style=discord.ButtonStyle.danger, row=2)
+        done = discord.ui.Button(label="Fertig", emoji="✅", style=discord.ButtonStyle.primary, row=3)
+        discard = discord.ui.Button(label="Verwerfen", emoji="🗑️", style=discord.ButtonStyle.danger, row=3)
 
         async def on_add(interaction):
             self.mode = "add_type"
+            self._build()
+            await interaction.response.edit_message(embed=self._embed(), view=self)
+        async def on_autoclose(interaction):
+            self.mode = "autoclose"
             self._build()
             await interaction.response.edit_message(embed=self._embed(), view=self)
         async def on_allow(interaction):
@@ -261,11 +270,52 @@ class BuilderPanel(discord.ui.View):
             self.stop()
 
         add_q.callback = on_add
+        autoclose.callback = on_autoclose
         allow.callback = on_allow
         title.callback = on_title
         done.callback = on_done
         discard.callback = on_discard
-        for b in (add_q, allow, title, done, discard):
+        for b in (add_q, autoclose, allow, title, done, discard):
+            self.add_item(b)
+
+    def _build_autoclose(self) -> None:
+        ac = self.survey.setdefault("autoclose", {"deadline": None, "all_voted": False, "count": None})
+        has_allowlist = bool(self.survey.get("allowed_user_ids") or self.survey.get("allowed_role_ids"))
+
+        time_btn = discord.ui.Button(label="Zeitpunkt setzen", emoji="⏰",
+                                     style=discord.ButtonStyle.primary, row=0)
+        count_btn = discord.ui.Button(label="Bei X Stimmen", emoji="🔢",
+                                      style=discord.ButtonStyle.primary, row=0)
+        allvoted_btn = discord.ui.Button(
+            label=f"Alle Berechtigten: {'An' if ac.get('all_voted') else 'Aus'}",
+            emoji="✅",
+            style=discord.ButtonStyle.success if ac.get("all_voted") else discord.ButtonStyle.secondary,
+            row=1, disabled=not has_allowlist)
+        reset_btn = discord.ui.Button(label="Zurücksetzen", emoji="♻️",
+                                      style=discord.ButtonStyle.danger, row=1)
+        back = discord.ui.Button(label="Zurück", emoji="◀", style=discord.ButtonStyle.secondary, row=2)
+
+        async def on_time(interaction):
+            await interaction.response.send_modal(_DeadlineModal(self))
+        async def on_count(interaction):
+            await interaction.response.send_modal(_CountModal(self))
+        async def on_allvoted(interaction):
+            self.survey["autoclose"]["all_voted"] = not self.survey["autoclose"].get("all_voted")
+            await self.save_and_refresh(interaction)
+        async def on_reset(interaction):
+            self.survey["autoclose"] = {"deadline": None, "all_voted": False, "count": None}
+            await self.save_and_refresh(interaction)
+        async def on_back(interaction):
+            self.mode = "main"
+            self._build()
+            await interaction.response.edit_message(embed=self._embed(), view=self)
+
+        time_btn.callback = on_time
+        count_btn.callback = on_count
+        allvoted_btn.callback = on_allvoted
+        reset_btn.callback = on_reset
+        back.callback = on_back
+        for b in (time_btn, count_btn, allvoted_btn, reset_btn, back):
             self.add_item(b)
 
     def _build_add_type(self) -> None:
@@ -343,3 +393,63 @@ class BuilderPanel(discord.ui.View):
         self.survey["title"] = title
         self.survey["description"] = desc
         await self.save_and_refresh(interaction)
+
+
+class _DeadlineModal(discord.ui.Modal, title="Automatisches Ende: Zeitpunkt"):
+    def __init__(self, panel: "BuilderPanel"):
+        super().__init__()
+        self.panel = panel
+        current = ""
+        dt = models.deadline_dt(panel.survey)
+        if dt:
+            current = dt.strftime("%d.%m.%Y %H:%M")
+        self.f_when = discord.ui.TextInput(
+            label="Wann? (z.B. 2d, 12h, 1d6h, TT.MM.JJJJ HH:MM)",
+            placeholder="2d   oder   24.12.2026 20:00   (leer = entfernen)",
+            required=False, max_length=40, default=current or None)
+        self.add_item(self.f_when)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw = str(self.f_when.value or "").strip()
+        if not raw:
+            self.panel.survey["autoclose"]["deadline"] = None
+            await self.panel.save_and_refresh(interaction)
+            return
+        dt = models.parse_deadline(raw)
+        if dt is None:
+            await interaction.response.send_message(
+                "❌ Zeitpunkt nicht erkannt. Beispiele: `2d`, `12h`, `1d6h`, `24.12.2026 20:00`.",
+                ephemeral=True)
+            return
+        from datetime import datetime, timezone
+        if dt <= datetime.now(timezone.utc):
+            await interaction.response.send_message(
+                "❌ Der Zeitpunkt liegt in der Vergangenheit.", ephemeral=True)
+            return
+        self.panel.survey["autoclose"]["deadline"] = dt.isoformat()
+        await self.panel.save_and_refresh(interaction)
+
+
+class _CountModal(discord.ui.Modal, title="Automatisches Ende: Stimmenzahl"):
+    def __init__(self, panel: "BuilderPanel"):
+        super().__init__()
+        self.panel = panel
+        current = panel.survey.get("autoclose", {}).get("count")
+        self.f_count = discord.ui.TextInput(
+            label="Nach wie vielen Stimmen beenden?",
+            placeholder="z.B. 20   (leer = deaktivieren)",
+            required=False, max_length=5, default=str(current) if current else None)
+        self.add_item(self.f_count)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw = str(self.f_count.value or "").strip()
+        if not raw:
+            self.panel.survey["autoclose"]["count"] = None
+            await self.panel.save_and_refresh(interaction)
+            return
+        if not raw.isdigit() or int(raw) < 1:
+            await interaction.response.send_message(
+                "❌ Bitte eine positive Zahl angeben.", ephemeral=True)
+            return
+        self.panel.survey["autoclose"]["count"] = int(raw)
+        await self.panel.save_and_refresh(interaction)
