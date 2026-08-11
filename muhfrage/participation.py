@@ -43,11 +43,20 @@ class ParticipationView(discord.ui.View):
         return self.survey["questions"][self.index]
 
     async def _refresh(self, interaction: discord.Interaction) -> None:
+        """Session neu rendern – mit Webhook-Fallback (umgeht 3s-Limit)."""
         self._build()
-        if interaction.response.is_done():
-            await interaction.edit_original_response(embed=self._embed(), view=self)
-        else:
-            await interaction.response.edit_message(embed=self._embed(), view=self)
+        embed = self._embed()
+        try:
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+        except (discord.NotFound, discord.HTTPException):
+            if self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except discord.HTTPException:
+                    pass
 
     # ── Embed ─────────────────────────────────────────────────────────────────
 
@@ -415,11 +424,24 @@ class ParticipationView(discord.ui.View):
         cancel = discord.ui.Button(label="Abbrechen", style=discord.ButtonStyle.danger, row=4)
         async def on_cancel(interaction: discord.Interaction):
             self.clear_items()
-            await interaction.response.edit_message(
-                content="❌ Teilnahme abgebrochen.", embed=None, view=None)
-            self.stop()
+            await self._close(interaction, "❌ Teilnahme abgebrochen.")
         cancel.callback = on_cancel
         self.add_item(cancel)
+
+    async def _close(self, interaction: discord.Interaction, content: str) -> None:
+        """Session-Nachricht abschließen – robust gegen abgelaufene Interaktionen."""
+        try:
+            if interaction.response.is_done():
+                await interaction.edit_original_response(content=content, embed=None, view=None)
+            else:
+                await interaction.response.edit_message(content=content, embed=None, view=None)
+        except (discord.NotFound, discord.HTTPException):
+            if self.message:
+                try:
+                    await self.message.edit(content=content, embed=None, view=None)
+                except discord.HTTPException:
+                    pass
+        self.stop()
 
     async def _on_submit(self, interaction: discord.Interaction) -> None:
         # Alle Fragen validieren
@@ -432,12 +454,15 @@ class ParticipationView(discord.ui.View):
                 await self._refresh(interaction)
                 return
 
+        # Interaktion sofort bestätigen, dann speichern
+        try:
+            await interaction.response.defer()
+        except (discord.NotFound, discord.HTTPException):
+            pass
         await self.cog.store.save_response(self.guild, self.survey["id"], self.member.id, self.working)
         self.clear_items()
-        await interaction.response.edit_message(
-            content="✅ **Danke für deine Teilnahme!** Deine Antworten wurden gespeichert.",
-            embed=None, view=None)
-        self.stop()
+        await self._close(
+            interaction, "✅ **Danke für deine Teilnahme!** Deine Antworten wurden gespeichert.")
         await self.cog.on_response_saved(self.guild, self.survey["id"])
 
 
