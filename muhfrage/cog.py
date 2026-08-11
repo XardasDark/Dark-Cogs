@@ -24,7 +24,7 @@ import copy
 import logging
 from datetime import datetime, timezone
 from functools import partial
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import discord
 from discord import app_commands
@@ -157,12 +157,22 @@ class Muhfrage(commands.Cog):
             return None, None
         return self._pseudo_survey_from_archive(survey, entry), entry.get("responses", {})
 
+    async def _fetch_messageable(self, guild: discord.Guild, channel_id: int):
+        """Löst eine Kanal-/Thread-ID zu einem sendbaren Objekt auf (auch Forum-Threads)."""
+        ch = guild.get_channel_or_thread(channel_id)
+        if ch is None:
+            try:
+                ch = await self.bot.fetch_channel(channel_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return None
+        return ch
+
     async def _disable_old_message(self, guild: discord.Guild,
                                    published: Optional[Dict[str, Any]]) -> None:
         """Entfernt die Buttons an einer alten veröffentlichten Nachricht (nach Neustart)."""
         if not published:
             return
-        channel = guild.get_channel(published["channel_id"])
+        channel = await self._fetch_messageable(guild, published["channel_id"])
         if not channel:
             return
         try:
@@ -177,7 +187,7 @@ class Muhfrage(commands.Cog):
         if not survey or not survey.get("published"):
             return
         pub = survey["published"]
-        channel = guild.get_channel(pub["channel_id"])
+        channel = await self._fetch_messageable(guild, pub["channel_id"])
         if not channel:
             return
         try:
@@ -244,7 +254,7 @@ class Muhfrage(commands.Cog):
                 return ch
         pub = survey.get("published")
         if pub:
-            return guild.get_channel(pub["channel_id"])
+            return await self._fetch_messageable(guild, pub["channel_id"])
         return None
 
     async def _send_results_auto(self, guild: discord.Guild, survey: Dict[str, Any], reason: str) -> None:
@@ -270,7 +280,7 @@ class Muhfrage(commands.Cog):
                     pass
             pub = survey.get("published")
             if pub:
-                ch = guild.get_channel(pub["channel_id"])
+                ch = await self._fetch_messageable(guild, pub["channel_id"])
                 if ch:
                     try:
                         await ch.send(f"⏹️ Umfrage **{survey['title']}** wurde beendet. "
@@ -306,8 +316,7 @@ class Muhfrage(commands.Cog):
         embed = results.build_results_embed(survey, responses)
 
         if survey["results_visibility"] == "public":
-            channel_id = survey.get("result_channel_id") or await self.store.get_results_channel_id(ctx.guild)
-            channel = ctx.guild.get_channel(channel_id) if channel_id else ctx.channel
+            channel = await self._public_results_channel(ctx.guild, survey) or ctx.channel
             try:
                 await channel.send(embed=embed)
                 await self._reply(ctx, f"✅ Ergebnisse in {channel.mention} veröffentlicht.")
@@ -468,10 +477,13 @@ class Muhfrage(commands.Cog):
 
     # ── starten ───────────────────────────────────────────────────────────────
 
-    @muhfrage.command(name="starten", description="Veröffentlicht eine Umfrage")
+    @muhfrage.command(name="starten", description="Veröffentlicht eine Umfrage (Text-, Forum- oder Thread-Kanal)")
+    @app_commands.describe(kanal="Ziel: Textkanal, Forum (erstellt einen Beitrag) oder Thread")
     @is_manager()
-    async def muhfrage_starten(self, ctx: commands.Context, id: str,
-                               kanal: Optional[discord.TextChannel] = None) -> None:
+    async def muhfrage_starten(
+        self, ctx: commands.Context, id: str,
+        kanal: Optional[Union[discord.TextChannel, discord.ForumChannel, discord.Thread]] = None,
+    ) -> None:
         survey = await self._get_survey(ctx, id)
         if not survey:
             return
@@ -482,18 +494,34 @@ class Muhfrage(commands.Cog):
             await self._reply(ctx, "ℹ️ Diese Umfrage läuft bereits.")
             return
 
-        channel = kanal or ctx.channel
+        target = kanal or ctx.channel
         survey["status"] = "open"
         count = await self.store.response_count(ctx.guild, id)
+        embed = views.build_public_embed(survey, count)
+        view = views.build_join_view(survey)
+
         try:
-            msg = await channel.send(embed=views.build_public_embed(survey, count),
-                                     view=views.build_join_view(survey))
+            if isinstance(target, discord.ForumChannel):
+                # Im Forum wird ein neuer Beitrag (Thread) erstellt
+                thread_name = (survey["title"] or f"Umfrage {id}")[:100]
+                created = await target.create_thread(name=thread_name, embed=embed, view=view)
+                published_id, msg_id, where = created.thread.id, created.message.id, created.thread.mention
+            else:
+                msg = await target.send(embed=embed, view=view)
+                published_id, msg_id, where = target.id, msg.id, target.mention
         except discord.Forbidden:
-            await self._reply(ctx, f"❌ Ich darf in {channel.mention} nicht schreiben.")
+            await self._reply(ctx, f"❌ Mir fehlen die Rechte, in {target.mention} zu posten.")
             return
-        survey["published"] = {"channel_id": channel.id, "message_id": msg.id}
+        except discord.HTTPException as e:
+            hint = ""
+            if isinstance(target, discord.ForumChannel):
+                hint = " (Benötigt das Forum ein Pflicht-Tag? Das wird aktuell nicht unterstützt.)"
+            await self._reply(ctx, f"❌ Veröffentlichen fehlgeschlagen: {getattr(e, 'text', None) or e}{hint}")
+            return
+
+        survey["published"] = {"channel_id": published_id, "message_id": msg_id}
         await self.store.save_survey(ctx.guild, survey)
-        await self._reply(ctx, f"✅ Umfrage `{id}` in {channel.mention} gestartet.")
+        await self._reply(ctx, f"✅ Umfrage `{id}` in {where} gestartet.")
 
     # ── beenden ───────────────────────────────────────────────────────────────
 
