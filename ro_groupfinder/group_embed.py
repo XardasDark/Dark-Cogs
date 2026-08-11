@@ -15,7 +15,7 @@ from discord import ui
 from typing import Optional, Dict, List
 
 from .constants import (
-    COLOR_OPEN, COLOR_FULL, COLOR_CLOSED, COLOR_EXPIRED,
+    COLOR_OPEN, COLOR_FULL, COLOR_CLOSED, COLOR_EXPIRED, COLOR_FINISHED,
     GROUP_STATUS, ROLE_TYPES, RECURRENCE_OPTIONS,
     SLOT_TYPE_ROLE, SLOT_TYPE_CLASS, SLOT_TYPE_FREE,
 )
@@ -34,10 +34,11 @@ def build_group_embed(group: Dict) -> discord.Embed:
 
     status    = group.get("status", "open")
     color_map = {
-        "open":    COLOR_OPEN,
-        "full":    COLOR_FULL,
-        "closed":  COLOR_CLOSED,
-        "expired": COLOR_EXPIRED,
+        "open":     COLOR_OPEN,
+        "full":     COLOR_FULL,
+        "closed":   COLOR_CLOSED,
+        "expired":  COLOR_EXPIRED,
+        "finished": COLOR_FINISHED,
     }
     color = color_map.get(status, COLOR_OPEN)
 
@@ -115,7 +116,7 @@ def build_group_action_view(group: Dict) -> ui.View:
     status  = group.get("status", "open")
     msg_id  = str(group.get("message_id", ""))
 
-    inactive = status in ("closed", "expired")
+    inactive = status in ("closed", "expired", "finished")
 
     # Beitreten (auch bei vollen Gruppen möglich → landet auf Warteliste)
     join_btn = ui.Button(
@@ -373,7 +374,7 @@ def _count_filled(group: Dict) -> int:
 
 
 def _status_label(status: str) -> str:
-    icons = {"open": "🟢 Offen", "full": "🟡 Voll", "closed": "🔴 Geschlossen", "expired": "⚫ Abgelaufen"}
+    icons = {"open": "🟢 Offen", "full": "🟡 Voll", "closed": "🔴 Geschlossen", "expired": "⚫ Abgelaufen", "finished": "✅ Abgeschlossen"}
     return icons.get(status, status)
 
 

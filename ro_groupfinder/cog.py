@@ -857,7 +857,8 @@ class ROGroupFinder(commands.Cog):
         view = _FinishConfirmView(group, self)
         await interaction.response.send_message(
             "✅ Gruppe als abgeschlossen markieren?"
-            "Alle Mitglieder werden benachrichtigt und der Post wird geschlossen.",
+            "Alle Mitglieder werden benachrichtigt. Der Beitrag bleibt zur Ansicht "
+            "im Channel erhalten und wird nicht gelöscht.",
             view=view,
             ephemeral=True,
         )
@@ -865,26 +866,28 @@ class ROGroupFinder(commands.Cog):
     async def complete_finish(
         self, interaction: discord.Interaction, group: dict
     ) -> None:
-        """Führt das Abschließen durch."""
-        from .notifications import notify_group_deleted
+        """
+        Markiert die Gruppe als abgeschlossen.
+        Der Post bleibt erhalten (Status 'finished', Buttons deaktiviert) und
+        wird nicht gelöscht. Der Scheduler räumt 'finished'-Gruppen nicht ab.
+        """
+        from .notifications import notify_group_finished
         guild_id  = interaction.guild_id
         msg_id    = group.get("message_id")
 
+        # Status setzen und speichern (bleibt erhalten)
+        group["status"] = "finished"
+        save_group(guild_id, group)
+
         # Alle Mitglieder benachrichtigen
-        await notify_group_deleted(self.bot, group, reason="vom Ersteller als abgeschlossen markiert")
+        await notify_group_finished(self.bot, group)
 
-        # Post löschen
-        channel = interaction.guild.get_channel(group["channel_id"])
-        if channel and msg_id:
-            try:
-                message = await channel.fetch_message(msg_id)
-                await message.delete()
-            except Exception:
-                pass
+        # Post aktualisieren (abgeschlossen-Ansicht, Buttons deaktiviert)
+        await self._refresh_group_message(group)
 
-        delete_group(guild_id, msg_id)
         await interaction.response.edit_message(
-            content="✅ **Gruppe wurde abgeschlossen. GG!**", view=None
+            content="✅ **Gruppe wurde abgeschlossen. GG!** Der Beitrag bleibt erhalten.",
+            view=None,
         )
 
     async def _handle_manage_members(
@@ -1132,7 +1135,7 @@ class ROGroupFinder(commands.Cog):
         msg_id   = int(parts[2])
         group    = get_group_by_message(guild_id, msg_id)
 
-        if not group or group.get("status") in ("expired", "closed"):
+        if not group or group.get("status") in ("expired", "closed", "finished"):
             await interaction.response.edit_message(
                 content="ℹ️ Diese Gruppensuche existiert nicht mehr.",
                 embed=None, view=None,

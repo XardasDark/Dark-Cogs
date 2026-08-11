@@ -251,6 +251,34 @@ async def notify_group_deleted(
             await _send_dm(user, embed)
 
 
+async def notify_group_finished(
+    bot:   discord.Client,
+    group: Dict,
+) -> None:
+    """
+    Informiert alle Mitglieder + Warteliste wenn der Ersteller die Gruppe als
+    abgeschlossen markiert. Der Post bleibt erhalten (wird nicht gelöscht).
+    """
+    embed = _base_embed(
+        title="✅ Gruppe abgeschlossen",
+        description=(
+            f"Die Gruppe **{_group_title(group)}** wurde vom Ersteller als "
+            f"**abgeschlossen** markiert. GG!\n\n"
+            f"👑 **Ersteller:** {group.get('creator_name', '?')}\n"
+            f"Der Beitrag bleibt zur Ansicht im Gruppen-Channel erhalten."
+        ),
+        color=COLOR_OPEN,
+    )
+
+    all_ids = _get_all_member_ids(group) + _get_waitlist_ids(group)
+    all_ids = list({uid for uid in all_ids if uid != group["creator_id"]})
+
+    for uid in all_ids:
+        user = await _get_user(bot, uid)
+        if user:
+            await _send_dm(user, embed)
+
+
 async def notify_expiry_warning(
     bot:             discord.Client,
     group:           Dict,

@@ -125,7 +125,7 @@ class GroupScheduler:
         all_groups = get_all_groups_flat()
 
         for group in all_groups:
-            if group.get("status") in ("expired", "closed"):
+            if group.get("status") in ("expired", "closed", "finished"):
                 continue
 
             expires_str = group.get("expires_at")
@@ -188,7 +188,7 @@ class GroupScheduler:
         for group in get_all_groups_flat():
             if group.get("reminder_sent"):
                 continue
-            if group.get("status") in ("closed", "expired"):
+            if group.get("status") in ("closed", "expired", "finished"):
                 continue
 
             dt_str = group.get("datetime")
@@ -228,7 +228,7 @@ class GroupScheduler:
         for group in get_all_groups_flat():
             if not group.get("waitlist"):
                 continue
-            if group.get("status") in ("closed", "expired"):
+            if group.get("status") in ("closed", "expired", "finished"):
                 continue
 
             settings         = get_guild_settings(group["guild_id"])
@@ -283,7 +283,7 @@ class GroupScheduler:
         for group in get_all_groups_flat():
             if group.get("recurrence", "none") == "none":
                 continue
-            if group.get("status") in ("closed", "expired"):
+            if group.get("status") in ("closed", "expired", "finished"):
                 continue
             if group.get("recurrence_handled"):
                 continue

@@ -474,7 +474,7 @@ def get_expired_groups(guild_id: int) -> List[Dict]:
     now = datetime.now(timezone.utc)
     expired = []
     for group in get_guild_groups(guild_id).values():
-        if group.get("status") in ("expired", "closed"):
+        if group.get("status") in ("expired", "closed", "finished"):
             continue
         expires_str = group.get("expires_at")
         if expires_str:
@@ -506,7 +506,7 @@ def get_upcoming_reminder_groups() -> List[Dict]:
     for group in get_all_groups_flat():
         if group.get("reminder_sent") or not group.get("datetime"):
             continue
-        if group.get("status") in ("closed", "expired"):
+        if group.get("status") in ("closed", "expired", "finished"):
             continue
         try:
             start = datetime.fromisoformat(group["datetime"])
@@ -625,7 +625,7 @@ def _waitlist_position(group: Dict, user_id: int) -> int:
 
 def _update_status(group: Dict) -> None:
     """Aktualisiert den Gruppen-Status basierend auf offenen Slots."""
-    if group["status"] in ("closed", "expired"):
+    if group["status"] in ("closed", "expired", "finished"):
         return
     open_count = len(get_open_slots(group))
     group["status"] = "full" if open_count == 0 else "open"

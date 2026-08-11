@@ -73,19 +73,21 @@ WIZARD_STEPS = [
 # GRUPPEN-STATUS
 # ─────────────────────────────────────────────────────────────────────────────
 GROUP_STATUS = {
-    "open":    "Offen",
-    "full":    "Voll",
-    "closed":  "Geschlossen",
-    "expired": "Abgelaufen",
+    "open":     "Offen",
+    "full":     "Voll",
+    "closed":   "Geschlossen",
+    "expired":  "Abgelaufen",
+    "finished": "Abgeschlossen",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EMBED-FARBEN (hex)
 # ─────────────────────────────────────────────────────────────────────────────
-COLOR_OPEN    = 0x00C853   # Grün   – Gruppe sucht noch Mitglieder
-COLOR_FULL    = 0xFFAB00   # Orange – Alle Slots belegt (Warteliste möglich)
-COLOR_CLOSED  = 0xD50000   # Rot    – Manuell geschlossen
-COLOR_EXPIRED = 0x757575   # Grau   – Abgelaufen (Cleanup)
+COLOR_OPEN     = 0x00C853   # Grün      – Gruppe sucht noch Mitglieder
+COLOR_FULL     = 0xFFAB00   # Orange    – Alle Slots belegt (Warteliste möglich)
+COLOR_CLOSED   = 0xD50000   # Rot       – Manuell geschlossen
+COLOR_EXPIRED  = 0x757575   # Grau      – Abgelaufen (Cleanup)
+COLOR_FINISHED = 0x1E88E5   # Blau      – Erfolgreich abgeschlossen (bleibt erhalten)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STANDARD-WERTE (werden in settings.json pro Guild überschrieben)
