@@ -1325,6 +1325,25 @@ class _LeaveConfirmView(ui.View):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# FINISH CONFIRM VIEW
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _FinishConfirmView(ui.View):
+    def __init__(self, group: Dict, cog: ROGroupFinder):
+        super().__init__(timeout=60)
+        self.group = group
+        self.cog   = cog
+
+    @ui.button(label="✅ Ja, abschließen", style=discord.ButtonStyle.primary)
+    async def confirm(self, interaction: discord.Interaction, button: ui.Button):
+        await self.cog.complete_finish(interaction, self.group)
+
+    @ui.button(label="✕ Abbrechen", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.edit_message(content="Abgebrochen.", view=None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DELETE CONFIRM VIEW
 # ─────────────────────────────────────────────────────────────────────────────
 
