@@ -35,7 +35,7 @@ from redbot.core import commands
 from typing import Optional, Dict
 from datetime import datetime, timezone
 
-from .wizard import WizardSession, WizardState
+from .wizard import WizardSession, WizardState, build_state_from_group
 from .data_manager import (
     get_group_channel,
     set_group_channel,
@@ -60,6 +60,7 @@ from .data_manager import (
     reset_slots,
     get_expired_snapshot,
     delete_expired_snapshot,
+    find_group_by_public_id,
     load_goals,
     load_classes,
 )
@@ -299,6 +300,53 @@ class ROGroupFinder(commands.Cog):
             color=COLOR_OPEN,
         )
         await self._reply(ctx, embed=embed)
+
+    @gruppe.command(name="kopieren", description="Erstelle eine Gruppe per ID erneut (mit Bearbeitung vor dem Posten)")
+    @commands.guild_only()
+    async def gruppe_kopieren(self, ctx: commands.Context, gruppen_id: str) -> None:
+        if not ctx.interaction:
+            await ctx.send("❌ Dieser Befehl funktioniert nur als Slash-Command: `/gruppe kopieren`")
+            return
+
+        interaction = ctx.interaction
+        guild_id    = interaction.guild_id
+
+        source = find_group_by_public_id(guild_id, gruppen_id)
+        if not source:
+            await interaction.response.send_message(
+                f"❌ Keine Gruppe mit der ID **{gruppen_id}** gefunden.\n"
+                f"Die ID findest du im Fußzeilentext des Gruppen-Posts (z.B. `ID: a1b2c3d4`).",
+                ephemeral=True,
+            )
+            return
+
+        # Ziel-Channel: konfigurierter Gruppen-Channel, sonst der der Quell-Gruppe
+        channel_id = get_group_channel(guild_id) or source.get("channel_id")
+        if not channel_id or not interaction.guild.get_channel(channel_id):
+            await interaction.response.send_message(
+                "❌ Der Gruppen-Channel konnte nicht gefunden werden. "
+                "Bitte lege ihn mit `/gruppe-setup channel` fest.",
+                ephemeral=True,
+            )
+            return
+
+        if interaction.user.id in _wizard_sessions:
+            del _wizard_sessions[interaction.user.id]
+
+        state = build_state_from_group(
+            source,
+            guild_id     = guild_id,
+            channel_id   = channel_id,
+            creator_id   = interaction.user.id,
+            creator_name = interaction.user.display_name,
+        )
+        session = WizardSession(
+            state       = state,
+            on_complete = self._wizard_complete,
+            on_cancel   = self._wizard_cancel,
+        )
+        _wizard_sessions[interaction.user.id] = session
+        await session.start(interaction)
 
     # ── Admin-Befehle /gruppe-setup ────────────────────
     @commands.hybrid_group(name="gruppe-setup", description="RO Gruppen-Einstellungen (nur Admins)")

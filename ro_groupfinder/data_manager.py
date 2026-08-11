@@ -573,6 +573,36 @@ def delete_expired_snapshot(group_id: str) -> bool:
     return False
 
 
+def find_group_by_public_id(guild_id: int, public_id: str) -> Optional[Dict]:
+    """
+    Sucht eine Gruppe anhand der Gruppen-ID, wie sie im Post-Footer angezeigt wird.
+
+    Durchsucht zuerst die aktiven Gruppen der Guild, danach die Snapshots
+    abgelaufener Gruppen. Gibt die gefundene Gruppe (Dict) zurück, oder None.
+    """
+    pid = (public_id or "").strip().lower()
+    if not pid:
+        return None
+
+    def _matches(gid: str) -> bool:
+        gid = gid.lower()
+        return gid == pid or gid.startswith(pid)
+
+    # 1. Aktive Gruppen der Guild
+    for group in get_guild_groups(guild_id).values():
+        if _matches(str(group.get("group_id", ""))):
+            return group
+
+    # 2. Snapshots abgelaufener Gruppen (nur dieselbe Guild)
+    for snap in _load_expired_snapshots().values():
+        if snap.get("guild_id") != guild_id:
+            continue
+        if _matches(str(snap.get("group_id", ""))):
+            return snap
+
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # INTERNE HELFER
 # ─────────────────────────────────────────────────────────────────────────────

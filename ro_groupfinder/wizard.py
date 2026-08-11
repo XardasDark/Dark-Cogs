@@ -246,6 +246,133 @@ class WizardState:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# STATE AUS BESTEHENDER GRUPPE (für "Gruppe kopieren")
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_state_from_group(
+    group:        Dict,
+    guild_id:     int,
+    channel_id:   int,
+    creator_id:   int,
+    creator_name: str,
+) -> WizardState:
+    """
+    Baut aus einer bestehenden (oder abgelaufenen) Gruppe einen vorbefüllten
+    WizardState, sodass der Nutzer die Gruppe vor dem erneuten Posten noch
+    bearbeiten kann.
+
+    Der Wizard startet direkt in der Vorschau; über "← Zurück" kann jeder
+    Schritt angepasst werden. `creator_id` / `creator_name` beziehen sich auf
+    den Nutzer, der die Kopie erstellt (= neuer Ersteller).
+    """
+    state = WizardState(
+        guild_id     = guild_id,
+        channel_id   = channel_id,
+        creator_id   = creator_id,
+        creator_name = creator_name,
+    )
+
+    # ── Ziel ──────────────────────────────────────────────────────────────────
+    goal        = group.get("goal") or ""
+    goal_custom = group.get("goal_custom")
+    matched     = next((g for g in load_goals() if g["key"] == goal), None)
+    if matched and goal != "__custom__":
+        state.goal_key    = matched["key"]
+        state.goal_label  = matched["name"]
+        state.goal_emoji  = matched.get("emoji", "🎯")
+        state.goal_custom = None
+    else:
+        state.goal_key    = "__custom__"
+        state.goal_custom = goal_custom or (goal if goal != "__custom__" else None)
+
+    # ── Spieleranzahl ─────────────────────────────────────────────────────────
+    state.player_count = group.get("player_count", 0)
+
+    # ── Slots (gleiche aufeinanderfolgende Slots zu Configs zusammenfassen) ────
+    grouped: List = []   # Liste von [signature, quantity]
+    for slot in group.get("slots", []):
+        stype = slot.get("slot_type", SLOT_TYPE_FREE)
+        if stype == SLOT_TYPE_ROLE:
+            key = slot.get("role_key")
+        elif stype == SLOT_TYPE_CLASS:
+            key = slot.get("class_key")
+        else:
+            key = None
+        sig = (
+            stype,
+            key,
+            slot.get("free_text"),
+            slot.get("display_name", "Slot"),
+            slot.get("emoji", "❓"),
+        )
+        if grouped and grouped[-1][0] == sig:
+            grouped[-1][1] += 1
+        else:
+            grouped.append([sig, 1])
+
+    state.slot_configs = [
+        SlotConfig(
+            slot_type    = sig[0],
+            key          = sig[1],
+            display_name = sig[3],
+            emoji        = sig[4],
+            free_text    = sig[2],
+            quantity     = qty,
+        )
+        for sig, qty in grouped
+    ]
+
+    # ── Ersteller in seinen ursprünglichen Slot vorbelegen ────────────────────
+    src_creator_id = group.get("creator_id")
+    creator_slot = next(
+        (s for s in group.get("slots", []) if s.get("filled_by_id") == src_creator_id),
+        None,
+    )
+    if creator_slot is not None:
+        state.prefilled_members.append({
+            "slot_index":  creator_slot["slot_index"],
+            "ingame_name": creator_slot.get("filled_by_ingame")
+                           or group.get("creator_ingame")
+                           or creator_name,
+            "is_creator":  True,
+            "user_id":     creator_id,
+        })
+
+    # ── Datum & Zeit ──────────────────────────────────────────────────────────
+    dt_raw = group.get("datetime")
+    if dt_raw:
+        try:
+            dt = datetime.fromisoformat(dt_raw)
+            state._dt_day, state._dt_month, state._dt_year = dt.day, dt.month, dt.year
+            state._dt_time = f"{dt.hour:02d}:{dt.minute:02d}"
+            state.dt_str   = f"{dt.day:02d}.{dt.month:02d}.{dt.year} {state._dt_time}"
+        except ValueError:
+            pass
+
+    # ── Wiederholung / Kommentar ──────────────────────────────────────────────
+    state.recurrence = group.get("recurrence", "none")
+    state.comment    = group.get("comment")
+
+    # ── Level ─────────────────────────────────────────────────────────────────
+    level_mode = group.get("level_mode")
+    if level_mode not in ("none", "min", "range"):
+        if group.get("level_min") is not None and group.get("level_max") is not None:
+            level_mode = "range"
+        elif group.get("level_min") is not None:
+            level_mode = "min"
+        else:
+            level_mode = "none"
+    state.level_mode = level_mode
+    state.level_min  = group.get("level_min")
+    state.level_max  = group.get("level_max")
+
+    # ── Direkt in der Vorschau starten ────────────────────────────────────────
+    state.step_index = WIZARD_STEPS.index("preview")
+
+    return state
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # WIZARD SESSION
 # ─────────────────────────────────────────────────────────────────────────────
 
