@@ -46,6 +46,8 @@ def new_survey(slug: str, title: str, description: str, creator_id: int, created
         "results_timing":     "on_close",
         "allow_change":       True,
         "autoclose":          {"deadline": None, "all_voted": False, "count": None},
+        "keep_history":        False,   # bei Neustart alte Ergebnisse archivieren statt verwerfen
+        "run":                 1,       # aktuelle Runde (wird bei Neustart erhöht)
         "allowed_user_ids":   [],
         "allowed_role_ids":   [],
         "created_by":         creator_id,

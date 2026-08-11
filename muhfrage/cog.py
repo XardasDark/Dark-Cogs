@@ -20,6 +20,7 @@ Der persistente „Teilnehmen"-Button trägt die custom_id
 """
 
 import asyncio
+import copy
 import logging
 from datetime import datetime, timezone
 from functools import partial
@@ -63,6 +64,7 @@ class Muhfrage(commands.Cog):
             results_channel_id=None,
             surveys={},
             responses={},
+            archives={},
         )
         self.store = SurveyStore(self.config)
         self._autoclose_task: Optional[asyncio.Task] = None
@@ -73,7 +75,7 @@ class Muhfrage(commands.Cog):
             self.muhfrage_teilnehmen.autocomplete("id")(self._ac_open)
             for cmd in (self.muhfrage_teilnehmer, self.muhfrage_starten, self.muhfrage_beenden,
                         self.muhfrage_ergebnisse, self.muhfrage_export, self.muhfrage_bearbeiten,
-                        self.muhfrage_loeschen):
+                        self.muhfrage_loeschen, self.muhfrage_neustart):
                 cmd.autocomplete("id")(self._ac_all)
         except Exception:  # pragma: no cover – Autocomplete ist nur Komfort
             log.debug("Autocomplete konnte nicht registriert werden", exc_info=True)
@@ -126,6 +128,48 @@ class Muhfrage(commands.Cog):
                 return None
             return slug
         return await self.store.generate_slug(ctx.guild)
+
+    def _pseudo_survey_from_archive(self, base: Dict[str, Any], entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Baut aus einem Archiv-Eintrag eine minimale Umfrage-Struktur zum Rendern."""
+        return {
+            "id":          base["id"],
+            "title":       f"{entry.get('title', base['title'])} · Runde {entry.get('run')}",
+            "description": base.get("description", ""),
+            "status":      "closed",
+            "anonymous":   entry.get("anonymous", base.get("anonymous", False)),
+            "questions":   entry.get("questions", []),
+        }
+
+    async def _resolve_run(self, ctx: commands.Context, survey: Dict[str, Any],
+                           runde: Optional[int]):
+        """Gibt (Umfrage-Struktur, Antworten) für die gewünschte Runde zurück, sonst (None, None)."""
+        slug = survey["id"]
+        current_run = survey.get("run", 1)
+        if runde is None or runde == current_run:
+            responses = await self.store.get_responses(ctx.guild, slug)
+            return survey, responses
+        archives = await self.store.get_archives(ctx.guild, slug)
+        entry = next((a for a in archives if a.get("run") == runde), None)
+        if not entry:
+            avail = ", ".join(str(a.get("run")) for a in archives) or "keine"
+            await self._reply(ctx, f"❌ Runde {runde} ist nicht archiviert. "
+                                   f"Verfügbar: {avail}. (Aktuelle Runde: {current_run})")
+            return None, None
+        return self._pseudo_survey_from_archive(survey, entry), entry.get("responses", {})
+
+    async def _disable_old_message(self, guild: discord.Guild,
+                                   published: Optional[Dict[str, Any]]) -> None:
+        """Entfernt die Buttons an einer alten veröffentlichten Nachricht (nach Neustart)."""
+        if not published:
+            return
+        channel = guild.get_channel(published["channel_id"])
+        if not channel:
+            return
+        try:
+            msg = await channel.fetch_message(published["message_id"])
+            await msg.edit(view=None)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
 
     async def update_public_message(self, guild: discord.Guild, slug: str) -> None:
         """Aktualisiert die veröffentlichte Nachricht (Teilnehmerzahl/Status)."""
@@ -467,33 +511,83 @@ class Muhfrage(commands.Cog):
         await self.update_public_message(ctx.guild, id)
         await self._deliver_results(ctx, survey)
 
-    # ── ergebnisse ────────────────────────────────────────────────────────────
+    # ── neustart (neue Runde) ──────────────────────────────────────────────────
 
-    @muhfrage.command(name="ergebnisse", description="Zeigt die aktuellen Ergebnisse")
+    @muhfrage.command(name="neustart",
+                      description="Setzt eine Umfrage für eine neue Runde in den Entwurf zurück")
     @is_manager()
-    async def muhfrage_ergebnisse(self, ctx: commands.Context, id: str) -> None:
+    async def muhfrage_neustart(self, ctx: commands.Context, id: str) -> None:
         survey = await self._get_survey(ctx, id)
         if not survey:
             return
         responses = await self.store.get_responses(ctx.guild, id)
-        embed = results.build_results_embed(survey, responses)
+        run = survey.get("run", 1)
+
+        note = ""
+        if survey.get("keep_history") and responses:
+            entry = {
+                "run":       run,
+                "closed_at": datetime.now(timezone.utc).isoformat(),
+                "title":     survey["title"],
+                "anonymous": survey.get("anonymous", False),
+                "questions": copy.deepcopy(survey["questions"]),
+                "responses": responses,
+            }
+            await self.store.append_archive(ctx.guild, id, entry)
+            note = f" Die Ergebnisse von Runde {run} wurden archiviert (`/muhfrage ergebnisse {id} runde:{run}`)."
+        elif responses:
+            note = " Die bisherigen Ergebnisse wurden verworfen."
+
+        old_pub = survey.get("published")
+        survey["run"] = run + 1
+        survey["status"] = "draft"
+        survey["published"] = None
+        await self.store.save_survey(ctx.guild, survey)
+        await self.store.clear_responses(ctx.guild, id)
+        await self._disable_old_message(ctx.guild, old_pub)
+
+        await self._reply(
+            ctx,
+            f"🔄 Umfrage `{id}` ist zurück im Entwurf (jetzt **Runde {survey['run']}**).{note}\n"
+            f"Passe die Kandidaten mit `/muhfrage bearbeiten {id}` an und starte erneut mit "
+            f"`/muhfrage starten {id}`.")
+
+    # ── ergebnisse ────────────────────────────────────────────────────────────
+
+    @muhfrage.command(name="ergebnisse", description="Zeigt die Ergebnisse (optional einer früheren Runde)")
+    @app_commands.describe(runde="Nummer einer archivierten Runde (leer = aktuelle)")
+    @is_manager()
+    async def muhfrage_ergebnisse(self, ctx: commands.Context, id: str,
+                                  runde: Optional[int] = None) -> None:
+        survey = await self._get_survey(ctx, id)
+        if not survey:
+            return
+        target_survey, responses = await self._resolve_run(ctx, survey, runde)
+        if target_survey is None:
+            return
+        embed = results.build_results_embed(target_survey, responses)
         await self._reply(ctx, embed=embed)
 
     # ── export ────────────────────────────────────────────────────────────────
 
-    @muhfrage.command(name="export", description="Exportiert die Rohdaten (TXT/CSV)")
+    @muhfrage.command(name="export", description="Exportiert die Rohdaten (TXT/CSV, optional einer Runde)")
+    @app_commands.describe(runde="Nummer einer archivierten Runde (leer = aktuelle)")
     @is_manager()
-    async def muhfrage_export(self, ctx: commands.Context, id: str) -> None:
+    async def muhfrage_export(self, ctx: commands.Context, id: str,
+                              runde: Optional[int] = None) -> None:
         survey = await self._get_survey(ctx, id)
         if not survey:
             return
-        responses = await self.store.get_responses(ctx.guild, id)
-        if not responses:
-            await self._reply(ctx, "ℹ️ Es liegen noch keine Antworten vor.")
+        target_survey, responses = await self._resolve_run(ctx, survey, runde)
+        if target_survey is None:
             return
-        files = results.export_files(survey, responses, ctx.guild)
-        anon = " (anonymisiert)" if survey.get("anonymous") else ""
-        await self._reply(ctx, f"📎 Export für `{id}`{anon}:", files=files)
+        if not responses:
+            await self._reply(ctx, "ℹ️ Es liegen keine Antworten vor.")
+            return
+        files = results.export_files(target_survey, responses, ctx.guild)
+        anon = " (anonymisiert)" if target_survey.get("anonymous") else ""
+        label = f" Runde {runde}" if runde else ""
+        await self._reply(ctx, f"📎 Export für `{id}`{label}{anon}:", files=files)
 
     # ── liste ─────────────────────────────────────────────────────────────────
 

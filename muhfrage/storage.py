@@ -54,6 +54,8 @@ class SurveyStore:
             surveys.pop(slug, None)
         async with self.config.guild(guild).responses() as responses:
             responses.pop(slug, None)
+        async with self.config.guild(guild).archives() as archives:
+            archives.pop(slug, None)
 
     async def slug_exists(self, guild: discord.Guild, slug: str) -> bool:
         surveys = await self.config.guild(guild).surveys()
@@ -101,6 +103,20 @@ class SurveyStore:
     async def response_count(self, guild: discord.Guild, slug: str) -> int:
         responses = await self.config.guild(guild).responses()
         return len(responses.get(slug, {}))
+
+    async def clear_responses(self, guild: discord.Guild, slug: str) -> None:
+        async with self.config.guild(guild).responses() as responses:
+            responses.pop(slug, None)
+
+    # ── Archiv (vergangene Runden) ────────────────────────────────────────────
+
+    async def get_archives(self, guild: discord.Guild, slug: str) -> List[Dict[str, Any]]:
+        archives = await self.config.guild(guild).archives()
+        return archives.get(slug, [])
+
+    async def append_archive(self, guild: discord.Guild, slug: str, entry: Dict[str, Any]) -> None:
+        async with self.config.guild(guild).archives() as archives:
+            archives.setdefault(slug, []).append(entry)
 
     # ── Berechtigungen ────────────────────────────────────────────────────────
 

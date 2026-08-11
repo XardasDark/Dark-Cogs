@@ -50,20 +50,28 @@ def _int_or(value: str, fallback: int) -> int:
 class QuestionModal(discord.ui.Modal):
     """Sammelt Fragetext, Kandidaten und typ-spezifische Parameter."""
 
-    def __init__(self, panel: "BuilderPanel", qtype: str):
+    def __init__(self, panel: "BuilderPanel", qtype: str, existing: Optional[Dict[str, Any]] = None):
         meta = QUESTION_TYPES.get(qtype, {})
-        super().__init__(title=f"Frage: {meta.get('name', qtype)}"[:45])
+        verb = "bearbeiten" if existing else "Frage"
+        super().__init__(title=f"{verb}: {meta.get('name', qtype)}"[:45])
         self.panel = panel
         self.qtype = qtype
+        self.existing = existing
+        cfg = (existing or {}).get("config", {})
 
-        self.f_text = discord.ui.TextInput(label="Fragetext", max_length=200, required=True)
+        def _d(value, fallback=None):
+            return str(value) if value is not None else fallback
+
+        self.f_text = discord.ui.TextInput(label="Fragetext", max_length=200, required=True,
+                                           default=(existing or {}).get("text"))
         self.add_item(self.f_text)
 
         if qtype in OPTION_BASED_TYPES:
+            opt_default = "\n".join(existing["options"]) if existing and existing.get("options") else None
             self.f_options = discord.ui.TextInput(
                 label="Kandidaten / Optionen (eine pro Zeile)",
                 style=discord.TextStyle.paragraph, max_length=1500, required=True,
-                placeholder="Spieler A\nSpieler B\nSpieler C",
+                placeholder="Spieler A\nSpieler B\nSpieler C", default=opt_default,
             )
             self.add_item(self.f_options)
         else:
@@ -72,22 +80,31 @@ class QuestionModal(discord.ui.Modal):
         # bis zu 3 weitere typ-spezifische Felder (Discord-Limit: 5 gesamt)
         self.f_p1 = self.f_p2 = self.f_p3 = None
         if qtype == "points_pool":
-            self.f_p1 = discord.ui.TextInput(label="Gesamtpunkte", default="3", max_length=4)
+            self.f_p1 = discord.ui.TextInput(label="Gesamtpunkte",
+                                             default=_d(cfg.get("points_total"), "3"), max_length=4)
             self.f_p2 = discord.ui.TextInput(label="Max. Punkte pro Kandidat (optional)",
-                                             required=False, max_length=4)
+                                             required=False, max_length=4,
+                                             default=_d(cfg.get("max_per_option")))
         elif qtype == "plus_minus":
-            self.f_p1 = discord.ui.TextInput(label="Anzahl Pluspunkte", default="1", max_length=2)
-            self.f_p2 = discord.ui.TextInput(label="Anzahl Minuspunkte", default="1", max_length=2)
+            self.f_p1 = discord.ui.TextInput(label="Anzahl Pluspunkte",
+                                             default=_d(cfg.get("plus_count"), "1"), max_length=2)
+            self.f_p2 = discord.ui.TextInput(label="Anzahl Minuspunkte",
+                                             default=_d(cfg.get("minus_count"), "1"), max_length=2)
         elif qtype == "ranked":
+            rank_default = ",".join(str(v) for v in cfg.get("rank_values", [])) if existing else None
             self.f_p1 = discord.ui.TextInput(label="Rang-Punkte (z.B. 5,4,3,2,1 – leer = auto)",
-                                             required=False, max_length=60)
+                                             required=False, max_length=60, default=rank_default)
         elif qtype == "multiple_choice":
-            self.f_p1 = discord.ui.TextInput(label="Max. Auswahl", default="2", max_length=2)
+            self.f_p1 = discord.ui.TextInput(label="Max. Auswahl",
+                                             default=_d(cfg.get("max_choices"), "2"), max_length=2)
         elif qtype == "scale":
-            self.f_p1 = discord.ui.TextInput(label="Skala von", default="1", max_length=3)
-            self.f_p2 = discord.ui.TextInput(label="Skala bis", default="5", max_length=3)
+            self.f_p1 = discord.ui.TextInput(label="Skala von",
+                                             default=_d(cfg.get("scale_min"), "1"), max_length=3)
+            self.f_p2 = discord.ui.TextInput(label="Skala bis",
+                                             default=_d(cfg.get("scale_max"), "5"), max_length=3)
         elif qtype == "text":
-            self.f_p1 = discord.ui.TextInput(label="Max. Zeichen", default="300", max_length=4)
+            self.f_p1 = discord.ui.TextInput(label="Max. Zeichen",
+                                             default=_d(cfg.get("max_length"), "300"), max_length=4)
         for f in (self.f_p1, self.f_p2, self.f_p3):
             if f is not None:
                 self.add_item(f)
@@ -150,8 +167,19 @@ class QuestionModal(discord.ui.Modal):
             cfg["max_length"] = max(10, min(_int_or(self.f_p1.value, 300), 1000))
 
         question = models.new_question(qtype, str(self.f_text.value), options, cfg)
-        self.panel.survey["questions"].append(question)
-        self.panel.mode = "main"
+        questions = self.panel.survey["questions"]
+        if self.existing:
+            # In-Place ersetzen (ID und Position beibehalten)
+            question["id"] = self.existing["id"]
+            for i, q in enumerate(questions):
+                if q["id"] == self.existing["id"]:
+                    questions[i] = question
+                    break
+            self.panel.mode = "question"
+            self.panel.edit_qid = question["id"]
+        else:
+            questions.append(question)
+            self.panel.mode = "main"
         await self.panel.save_and_refresh(interaction)
 
 
@@ -165,7 +193,8 @@ class BuilderPanel(discord.ui.View):
         self.cog    = cog
         self.guild  = guild
         self.survey = survey
-        self.mode   = "main"   # main | add_type | allow
+        self.mode   = "main"   # main | add_type | allow | autoclose | question
+        self.edit_qid: Optional[str] = None   # aktuell im "question"-Modus gewählte Frage
         self.message: Optional[discord.Message] = None
 
     async def start(self, interaction: discord.Interaction) -> None:
@@ -182,6 +211,8 @@ class BuilderPanel(discord.ui.View):
             embed.set_author(name="🔒 Teilnehmer beschränken (leer = alle)")
         elif self.mode == "autoclose":
             embed.set_author(name="⏰ Automatisches Ende festlegen")
+        elif self.mode == "question":
+            embed.set_author(name="✏️ Frage bearbeiten oder entfernen")
         else:
             embed.set_author(name="🛠️ Umfrage-Builder")
         return embed
@@ -233,6 +264,8 @@ class BuilderPanel(discord.ui.View):
             self._build_allow()
         elif self.mode == "autoclose":
             self._build_autoclose()
+        elif self.mode == "question":
+            self._build_question()
         else:
             self._build_main()
 
@@ -249,18 +282,20 @@ class BuilderPanel(discord.ui.View):
                 value="timing"),
             discord.SelectOption(label=f"Antwort änderbar: {'Ja' if s['allow_change'] else 'Nein'}",
                                  value="allow_change"),
+            discord.SelectOption(label=f"Ergebnisse behalten (Neustart): {'Ja' if s.get('keep_history') else 'Nein'}",
+                                 value="keep_history"),
         ])
         settings.callback = self._on_setting
         self.add_item(settings)
 
-        # Frage entfernen (nur wenn vorhanden)
+        # Frage bearbeiten/entfernen (nur wenn vorhanden)
         if s["questions"]:
-            rem = discord.ui.Select(placeholder="🗑️ Frage entfernen …", row=1, options=[
+            edit = discord.ui.Select(placeholder="✏️ Frage bearbeiten / entfernen …", row=1, options=[
                 discord.SelectOption(label=f"{i+1}. {q['text'][:80]}", value=q["id"])
                 for i, q in enumerate(s["questions"][:25])
             ])
-            rem.callback = self._on_remove_question
-            self.add_item(rem)
+            edit.callback = self._on_select_question
+            self.add_item(edit)
 
         # Aktions-Buttons (Zeile 2: Bearbeiten, Zeile 3: Abschluss)
         add_q = discord.ui.Button(label="Frage", emoji="➕", style=discord.ButtonStyle.success, row=2)
@@ -388,6 +423,36 @@ class BuilderPanel(discord.ui.View):
         self.add_item(clear)
         self.add_item(back)
 
+    def _build_question(self) -> None:
+        q = next((x for x in self.survey["questions"] if x["id"] == self.edit_qid), None)
+        if q is None:
+            self.mode = "main"
+            self._build_main()
+            return
+
+        edit_btn = discord.ui.Button(label="Bearbeiten", emoji="✏️",
+                                     style=discord.ButtonStyle.primary, row=0)
+        remove_btn = discord.ui.Button(label="Entfernen", emoji="🗑️",
+                                       style=discord.ButtonStyle.danger, row=0)
+        back = discord.ui.Button(label="Zurück", emoji="◀", style=discord.ButtonStyle.secondary, row=0)
+
+        async def on_edit(interaction):
+            await interaction.response.send_modal(QuestionModal(self, q["type"], existing=q))
+        async def on_remove(interaction):
+            self.survey["questions"] = [x for x in self.survey["questions"] if x["id"] != self.edit_qid]
+            self.edit_qid = None
+            self.mode = "main"
+            await self.save_and_refresh(interaction)
+        async def on_back(interaction):
+            self.mode = "main"
+            await self._show(interaction)
+
+        edit_btn.callback = on_edit
+        remove_btn.callback = on_remove
+        back.callback = on_back
+        for b in (edit_btn, remove_btn, back):
+            self.add_item(b)
+
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
     async def _on_setting(self, interaction: discord.Interaction) -> None:
@@ -402,12 +467,14 @@ class BuilderPanel(discord.ui.View):
             s["results_timing"] = "on_close" if s["results_timing"] == "live" else "live"
         elif value == "allow_change":
             s["allow_change"] = not s["allow_change"]
+        elif value == "keep_history":
+            s["keep_history"] = not s.get("keep_history")
         await self.save_and_refresh(interaction)
 
-    async def _on_remove_question(self, interaction: discord.Interaction) -> None:
-        qid = interaction.data["values"][0]
-        self.survey["questions"] = [q for q in self.survey["questions"] if q["id"] != qid]
-        await self.save_and_refresh(interaction)
+    async def _on_select_question(self, interaction: discord.Interaction) -> None:
+        self.edit_qid = interaction.data["values"][0]
+        self.mode = "question"
+        await self._show(interaction)
 
     async def _title_done(self, interaction: discord.Interaction, title: str, desc: str) -> None:
         self.survey["title"] = title

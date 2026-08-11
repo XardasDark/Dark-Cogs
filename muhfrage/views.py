@@ -105,6 +105,8 @@ def build_overview_embed(survey: Dict[str, Any], response_count: int) -> discord
     embed.add_field(name="Anonym", value="Ja" if survey.get("anonymous") else "Nein", inline=True)
     embed.add_field(name="Ergebnisse", value=TIMING_OPTIONS.get(survey["results_timing"], "?"), inline=True)
     embed.add_field(name="Änderbar", value="Ja" if survey.get("allow_change") else "Nein", inline=True)
+    embed.add_field(name="Runde", value=str(survey.get("run", 1)), inline=True)
+    embed.add_field(name="Ergebnisse behalten", value="Ja" if survey.get("keep_history") else "Nein", inline=True)
 
     # Automatisches Ende
     embed.add_field(name="⏰ Automatisches Ende", value=models.autoclose_summary(survey), inline=False)
@@ -147,6 +149,9 @@ def build_list_embed(surveys: Dict[str, Dict[str, Any]], counts: Dict[str, int])
     lines = []
     for slug, s in surveys.items():
         status = STATUS_LABELS.get(s["status"], s["status"])
-        lines.append(f"`{slug}` · {status} · **{s['title']}** · {len(s['questions'])} Fragen · {counts.get(slug, 0)} Teilnahmen")
+        run = s.get("run", 1)
+        run_tag = f" · Runde {run}" if run > 1 else ""
+        lines.append(f"`{slug}` · {status}{run_tag} · **{s['title']}** · "
+                     f"{len(s['questions'])} Fragen · {counts.get(slug, 0)} Teilnahmen")
     embed.description = "\n".join(lines)[:4000]
     return embed
