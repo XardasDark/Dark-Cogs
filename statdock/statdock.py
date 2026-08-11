@@ -10,15 +10,17 @@ Zählmodi:
   roles  – Mitglieder, die IRGENDEINE der angegebenen Rollen besitzen
            (dedupliziert: wer mehrere der Rollen hat, wird nur einmal gezählt)
 
-Befehle (Admin / "Server verwalten"):
-  [p]statdock create <name...>            – neuen gesperrten Voice-Channel anlegen + als Gesamt-Dock registrieren
-  [p]statdock addtotal <#channel> <name>  – bestehenden Channel als Gesamt-Dock registrieren
-  [p]statdock addroles <#channel> <name> <@rolle...> – als Rollen-Dock registrieren
-  [p]statdock name <#channel> <name...>   – Anzeigenamen/Vorlage ändern
-  [p]statdock roles <#channel> <@rolle...> – Rollen eines Rollen-Docks neu setzen
-  [p]statdock remove <#channel>           – Dock entfernen (Channel bleibt bestehen)
-  [p]statdock list                        – alle Docks anzeigen
-  [p]statdock refresh                     – sofortiges Update erzwingen
+Befehle sind Slash-Commands unter /statdock und nur für Admins ("Server verwalten")
+sichtbar und nutzbar:
+  /statdock create    – neuen gesperrten Voice-Channel anlegen + als Gesamt-Dock registrieren
+  /statdock addtotal  – bestehenden Channel als Gesamt-Dock registrieren
+  /statdock addroles  – als Rollen-Dock registrieren (bis zu 6 Rollen)
+  /statdock name      – Anzeigenamen/Vorlage ändern
+  /statdock roles     – Rollen eines Rollen-Docks neu setzen
+  /statdock remove    – Dock entfernen (Channel bleibt bestehen)
+  /statdock list      – alle Docks anzeigen
+  /statdock refresh   – sofortiges Update erzwingen
+  /statdock lock      – bestehenden Channel sperren (sichtbar, nicht betretbar)
 
 Die Vorlage darf den Platzhalter {count} enthalten (z. B. "🟢 Ragnarok X: {count}").
 Fehlt der Platzhalter, wird die Zahl als "Name: {count}" angehängt.
@@ -27,13 +29,13 @@ Hinweis: Für den Rollen-Modus muss das Members-Intent aktiv sein (bei Red stand
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import discord
+from discord import app_commands
 from discord.ext import tasks
 from redbot.core import Config, commands
 from redbot.core.bot import Red
-from redbot.core.utils import chat_formatting as cf
 
 log = logging.getLogger("red.dark-cogs.statdock")
 
@@ -119,18 +121,28 @@ class Statdock(commands.Cog):
 
     # ── Befehle ───────────────────────────────────────────────────────────────
 
+    @commands.hybrid_group(name="statdock", description="Statdocks verwalten (nur Admins)")
     @commands.guild_only()
     @commands.admin_or_permissions(manage_guild=True)
-    @commands.group(name="statdock", aliases=["statdocks"])
+    @app_commands.default_permissions(manage_guild=True)
     async def statdock(self, ctx: commands.Context) -> None:
         """Statdocks verwalten (Voice-Channel mit Live-Zähler im Namen)."""
 
-    @statdock.command(name="create")
-    async def sd_create(self, ctx: commands.Context, *, name: str) -> None:
-        """Legt einen neuen, gesperrten Voice-Channel an und zeigt dort die Gesamt-Mitgliederzahl.
+    @staticmethod
+    def _collect_roles(*roles: Optional[discord.Role]) -> List[discord.Role]:
+        """Filtert None heraus und dedupliziert unter Erhalt der Reihenfolge."""
+        seen: List[discord.Role] = []
+        seen_ids = set()
+        for role in roles:
+            if role is not None and role.id not in seen_ids:
+                seen.append(role)
+                seen_ids.add(role.id)
+        return seen
 
-        Beispiel: `[p]statdock create 👥 All Members: {count}`
-        """
+    @statdock.command(name="create", description="Neuen gesperrten Voice-Channel als Gesamt-Dock anlegen")
+    @app_commands.describe(name="Anzeigename, Platzhalter {count} (z. B. '👥 All Members: {count}')")
+    async def sd_create(self, ctx: commands.Context, *, name: str) -> None:
+        """Legt einen neuen, gesperrten Voice-Channel an und zeigt dort die Gesamt-Mitgliederzahl."""
         overwrites = {
             # @everyone: darf den Channel SEHEN, aber nicht BETRETEN.
             ctx.guild.default_role: discord.PermissionOverwrite(view_channel=True, connect=False),
@@ -145,93 +157,124 @@ class Statdock(commands.Cog):
                 name=display, overwrites=overwrites, reason=f"Statdock erstellt von {ctx.author}"
             )
         except discord.Forbidden:
-            await ctx.send("❌ Mir fehlt die Berechtigung, Channels zu erstellen (`Kanäle verwalten`).")
+            await ctx.send("❌ Mir fehlt die Berechtigung, Channels zu erstellen (`Kanäle verwalten`).", ephemeral=True)
             return
         await self._set_dock(ctx.guild, channel.id, template=name, mode="total", roles=[])
-        await ctx.send(f"✅ Gesamt-Dock erstellt: {channel.mention}")
+        await ctx.send(f"✅ Gesamt-Dock erstellt: {channel.mention}", ephemeral=True)
 
-    @statdock.command(name="addtotal")
+    @statdock.command(name="addtotal", description="Bestehenden Voice-Channel als Gesamt-Dock registrieren")
+    @app_commands.describe(
+        channel="Der Voice-Channel, der die Zahl anzeigt",
+        name="Anzeigename, Platzhalter {count} (z. B. '👥 All Members: {count}')",
+    )
     async def sd_addtotal(
         self, ctx: commands.Context, channel: discord.VoiceChannel, *, name: str
     ) -> None:
-        """Registriert einen bestehenden Voice-Channel als Gesamt-Mitglieder-Dock.
-
-        Beispiel: `[p]statdock addtotal #stats 👥 All Members: {count}`
-        """
+        """Registriert einen bestehenden Voice-Channel als Gesamt-Mitglieder-Dock."""
         await self._set_dock(ctx.guild, channel.id, template=name, mode="total", roles=[])
         await self._update_dock(ctx.guild, channel.id, await self._get_dock(ctx.guild, channel.id))
-        await ctx.send(f"✅ {channel.mention} zählt jetzt alle Mitglieder.")
+        await ctx.send(f"✅ {channel.mention} zählt jetzt alle Mitglieder.", ephemeral=True)
 
-    @statdock.command(name="addroles")
+    @statdock.command(name="addroles", description="Voice-Channel als Rollen-Dock registrieren (bis zu 6 Rollen)")
+    @app_commands.describe(
+        channel="Der Voice-Channel, der die Zahl anzeigt",
+        name="Anzeigename, Platzhalter {count} (z. B. '🟢 Ragnarok X: {count}')",
+        rolle1="Erste Rolle (Pflicht)",
+        rolle2="Weitere Rolle (optional)",
+        rolle3="Weitere Rolle (optional)",
+        rolle4="Weitere Rolle (optional)",
+        rolle5="Weitere Rolle (optional)",
+        rolle6="Weitere Rolle (optional)",
+    )
     async def sd_addroles(
         self,
         ctx: commands.Context,
         channel: discord.VoiceChannel,
         name: str,
-        *roles: discord.Role,
+        rolle1: discord.Role,
+        rolle2: Optional[discord.Role] = None,
+        rolle3: Optional[discord.Role] = None,
+        rolle4: Optional[discord.Role] = None,
+        rolle5: Optional[discord.Role] = None,
+        rolle6: Optional[discord.Role] = None,
     ) -> None:
-        """Registriert einen Voice-Channel als Rollen-Dock (zählt Mitglieder mit einer der Rollen).
-
-        Der Name muss in Anführungszeichen stehen, danach folgen die Rollen.
-        Beispiel: `[p]statdock addroles #ragx "🟢 Ragnarok X: {count}" @RolleA @RolleB @RolleC`
-        """
-        if not roles:
-            await ctx.send("❌ Gib mindestens eine Rolle an.")
-            return
-        role_ids = list(dict.fromkeys(r.id for r in roles))  # dedupliziert, Reihenfolge erhalten
-        await self._set_dock(ctx.guild, channel.id, template=name, mode="roles", roles=role_ids)
+        """Registriert einen Voice-Channel als Rollen-Dock (zählt Mitglieder mit einer der Rollen)."""
+        roles = self._collect_roles(rolle1, rolle2, rolle3, rolle4, rolle5, rolle6)
+        await self._set_dock(
+            ctx.guild, channel.id, template=name, mode="roles", roles=[r.id for r in roles]
+        )
         await self._update_dock(ctx.guild, channel.id, await self._get_dock(ctx.guild, channel.id))
         role_mentions = ", ".join(r.mention for r in roles)
-        await ctx.send(f"✅ {channel.mention} zählt jetzt Mitglieder mit: {role_mentions}")
+        await ctx.send(f"✅ {channel.mention} zählt jetzt Mitglieder mit: {role_mentions}", ephemeral=True)
 
-    @statdock.command(name="name", aliases=["template"])
+    @statdock.command(name="name", description="Anzeigename/Vorlage eines Docks ändern")
+    @app_commands.describe(
+        channel="Der Dock-Channel",
+        name="Neuer Anzeigename, Platzhalter {count}",
+    )
     async def sd_name(
         self, ctx: commands.Context, channel: discord.VoiceChannel, *, name: str
     ) -> None:
         """Ändert die Namensvorlage eines Docks (Platzhalter: {count})."""
         dock = await self._get_dock(ctx.guild, channel.id)
         if dock is None:
-            await ctx.send("❌ Dieser Channel ist kein Statdock.")
+            await ctx.send("❌ Dieser Channel ist kein Statdock.", ephemeral=True)
             return
         dock["template"] = name
         await self._set_dock(ctx.guild, channel.id, **dock)
         await self._update_dock(ctx.guild, channel.id, dock)
-        await ctx.send("✅ Vorlage aktualisiert.")
+        await ctx.send("✅ Vorlage aktualisiert.", ephemeral=True)
 
-    @statdock.command(name="roles")
+    @statdock.command(name="roles", description="Rollen eines Rollen-Docks neu setzen (bis zu 6)")
+    @app_commands.describe(
+        channel="Der Dock-Channel",
+        rolle1="Erste Rolle (Pflicht)",
+        rolle2="Weitere Rolle (optional)",
+        rolle3="Weitere Rolle (optional)",
+        rolle4="Weitere Rolle (optional)",
+        rolle5="Weitere Rolle (optional)",
+        rolle6="Weitere Rolle (optional)",
+    )
     async def sd_roles(
-        self, ctx: commands.Context, channel: discord.VoiceChannel, *roles: discord.Role
+        self,
+        ctx: commands.Context,
+        channel: discord.VoiceChannel,
+        rolle1: discord.Role,
+        rolle2: Optional[discord.Role] = None,
+        rolle3: Optional[discord.Role] = None,
+        rolle4: Optional[discord.Role] = None,
+        rolle5: Optional[discord.Role] = None,
+        rolle6: Optional[discord.Role] = None,
     ) -> None:
         """Setzt die Rollen eines Rollen-Docks neu."""
         dock = await self._get_dock(ctx.guild, channel.id)
         if dock is None:
-            await ctx.send("❌ Dieser Channel ist kein Statdock.")
+            await ctx.send("❌ Dieser Channel ist kein Statdock.", ephemeral=True)
             return
-        if not roles:
-            await ctx.send("❌ Gib mindestens eine Rolle an.")
-            return
+        roles = self._collect_roles(rolle1, rolle2, rolle3, rolle4, rolle5, rolle6)
         dock["mode"] = "roles"
-        dock["roles"] = list(dict.fromkeys(r.id for r in roles))
+        dock["roles"] = [r.id for r in roles]
         await self._set_dock(ctx.guild, channel.id, **dock)
         await self._update_dock(ctx.guild, channel.id, dock)
-        await ctx.send("✅ Rollen aktualisiert.")
+        await ctx.send("✅ Rollen aktualisiert.", ephemeral=True)
 
-    @statdock.command(name="remove", aliases=["delete", "del"])
+    @statdock.command(name="remove", description="Dock aus der Verwaltung entfernen (Channel bleibt)")
+    @app_commands.describe(channel="Der Dock-Channel")
     async def sd_remove(self, ctx: commands.Context, channel: discord.VoiceChannel) -> None:
         """Entfernt ein Dock aus der Verwaltung (der Channel selbst bleibt bestehen)."""
         async with self.config.guild(ctx.guild).docks() as docks:
             if str(channel.id) not in docks:
-                await ctx.send("❌ Dieser Channel ist kein Statdock.")
+                await ctx.send("❌ Dieser Channel ist kein Statdock.", ephemeral=True)
                 return
             del docks[str(channel.id)]
-        await ctx.send("✅ Dock entfernt. Den Channel kannst du bei Bedarf manuell löschen.")
+        await ctx.send("✅ Dock entfernt. Den Channel kannst du bei Bedarf manuell löschen.", ephemeral=True)
 
-    @statdock.command(name="list")
+    @statdock.command(name="list", description="Alle konfigurierten Docks anzeigen")
     async def sd_list(self, ctx: commands.Context) -> None:
         """Zeigt alle konfigurierten Docks."""
         docks = await self.config.guild(ctx.guild).docks()
         if not docks:
-            await ctx.send("Es sind keine Statdocks konfiguriert.")
+            await ctx.send("Es sind keine Statdocks konfiguriert.", ephemeral=True)
             return
         lines = []
         for channel_id_str, dock in docks.items():
@@ -247,20 +290,18 @@ class Statdock(commands.Cog):
                 detail = "alle Mitglieder"
             count = self._count(ctx.guild, dock)
             lines.append(f"{where} → `{dock['template']}` [{detail}] = **{count}**")
-        await ctx.send("\n".join(lines))
+        await ctx.send("\n".join(lines), ephemeral=True)
 
-    @statdock.command(name="refresh", aliases=["update"])
+    @statdock.command(name="refresh", description="Sofortiges Update aller Docks erzwingen")
     async def sd_refresh(self, ctx: commands.Context) -> None:
         """Erzwingt ein sofortiges Update aller Docks dieses Servers."""
         await self._update_guild(ctx.guild)
-        await ctx.send("🔄 Docks aktualisiert.")
+        await ctx.send("🔄 Docks aktualisiert.", ephemeral=True)
 
-    @statdock.command(name="lock")
+    @statdock.command(name="lock", description="Channel sperren: sichtbar, aber nicht betretbar")
+    @app_commands.describe(channel="Der Voice-Channel, der gesperrt werden soll")
     async def sd_lock(self, ctx: commands.Context, channel: discord.VoiceChannel) -> None:
-        """Sperrt einen bestehenden Voice-Channel: sichtbar für alle, aber nicht betretbar.
-
-        Praktisch für Channels, die per `addtotal`/`addroles` registriert wurden.
-        """
+        """Sperrt einen bestehenden Voice-Channel: sichtbar für alle, aber nicht betretbar."""
         try:
             await channel.set_permissions(
                 ctx.guild.default_role,
@@ -276,9 +317,9 @@ class Statdock(commands.Cog):
                 reason="Statdock: Bot-Zugriff sicherstellen",
             )
         except discord.Forbidden:
-            await ctx.send("❌ Mir fehlt die Berechtigung, die Channel-Rechte zu ändern (`Kanäle verwalten`).")
+            await ctx.send("❌ Mir fehlt die Berechtigung, die Channel-Rechte zu ändern (`Kanäle verwalten`).", ephemeral=True)
             return
-        await ctx.send(f"🔒 {channel.mention} ist jetzt sichtbar, aber nicht betretbar.")
+        await ctx.send(f"🔒 {channel.mention} ist jetzt sichtbar, aber nicht betretbar.", ephemeral=True)
 
     # ── Config-Helfer ─────────────────────────────────────────────────────────
 
