@@ -749,8 +749,7 @@ class ROGroupFinder(commands.Cog):
                 pass
 
         # Nächsten Wartelisten-Spieler benachrichtigen
-        freed_slot = next((s for s in group.get("slots", []) if s["slot_index"] == slot_index), None)
-        await self.scheduler.notify_next_waitlist_public(group, freed_slot=freed_slot)
+        await self.scheduler.notify_next_waitlist_public(group)
 
         await interaction.response.edit_message(
             content="✅ Du hast die Gruppe verlassen.", view=None
