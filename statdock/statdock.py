@@ -132,8 +132,12 @@ class Statdock(commands.Cog):
         Beispiel: `[p]statdock create 👥 All Members: {count}`
         """
         overwrites = {
-            ctx.guild.default_role: discord.PermissionOverwrite(connect=False),
-            ctx.guild.me: discord.PermissionOverwrite(connect=True, manage_channels=True),
+            # @everyone: darf den Channel SEHEN, aber nicht BETRETEN.
+            ctx.guild.default_role: discord.PermissionOverwrite(view_channel=True, connect=False),
+            # Der Bot muss betreten/verwalten dürfen, um umbenennen zu können.
+            ctx.guild.me: discord.PermissionOverwrite(
+                view_channel=True, connect=True, manage_channels=True
+            ),
         }
         display = self._render(name, self._count(ctx.guild, {"mode": "total"}))
         try:
@@ -250,6 +254,31 @@ class Statdock(commands.Cog):
         """Erzwingt ein sofortiges Update aller Docks dieses Servers."""
         await self._update_guild(ctx.guild)
         await ctx.send("🔄 Docks aktualisiert.")
+
+    @statdock.command(name="lock")
+    async def sd_lock(self, ctx: commands.Context, channel: discord.VoiceChannel) -> None:
+        """Sperrt einen bestehenden Voice-Channel: sichtbar für alle, aber nicht betretbar.
+
+        Praktisch für Channels, die per `addtotal`/`addroles` registriert wurden.
+        """
+        try:
+            await channel.set_permissions(
+                ctx.guild.default_role,
+                view_channel=True,
+                connect=False,
+                reason=f"Statdock gesperrt von {ctx.author}",
+            )
+            await channel.set_permissions(
+                ctx.guild.me,
+                view_channel=True,
+                connect=True,
+                manage_channels=True,
+                reason="Statdock: Bot-Zugriff sicherstellen",
+            )
+        except discord.Forbidden:
+            await ctx.send("❌ Mir fehlt die Berechtigung, die Channel-Rechte zu ändern (`Kanäle verwalten`).")
+            return
+        await ctx.send(f"🔒 {channel.mention} ist jetzt sichtbar, aber nicht betretbar.")
 
     # ── Config-Helfer ─────────────────────────────────────────────────────────
 
