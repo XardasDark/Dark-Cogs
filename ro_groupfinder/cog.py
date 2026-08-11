@@ -351,7 +351,7 @@ class ROGroupFinder(commands.Cog):
     # ── Admin-Befehle /gruppe-setup ────────────────────
     @commands.hybrid_group(name="gruppe-setup", description="RO Gruppen-Einstellungen (nur Admins)")
     @commands.guild_only()
-    @commands.has_permissions(manage_guild=True)
+    @commands.admin()
     @app_commands.default_permissions(manage_guild=True)
     async def gruppe_setup(self, ctx: commands.Context) -> None:
         if ctx.invoked_subcommand is None:
@@ -359,14 +359,14 @@ class ROGroupFinder(commands.Cog):
 
     @gruppe_setup.command(name="channel", description="Legt den Channel f\u00fcr Gruppenanfragen fest")
     @commands.guild_only()
-    @commands.has_permissions(manage_guild=True)
+    @commands.admin()
     async def gruppe_config_channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
         set_group_channel(ctx.guild.id, channel.id)
         await self._reply(ctx, f"\u2705 Gruppen-Channel auf {channel.mention} gesetzt.")
 
     @gruppe_setup.command(name="info", description="Zeigt die aktuelle Konfiguration")
     @commands.guild_only()
-    @commands.has_permissions(manage_guild=True)
+    @commands.admin()
     async def gruppe_config_info(self, ctx: commands.Context) -> None:
         s  = get_guild_settings(ctx.guild.id)
         ch = ctx.guild.get_channel(s.get("group_channel_id") or 0)
@@ -381,7 +381,7 @@ class ROGroupFinder(commands.Cog):
 
     @gruppe_setup.command(name="erinnerung", description="Stellt ein wann Erinnerungen gesendet werden")
     @commands.guild_only()
-    @commands.has_permissions(manage_guild=True)
+    @commands.admin()
     async def gruppe_config_erinnerung(self, ctx: commands.Context, minuten: int) -> None:
         if minuten < 5 or minuten > 1440:
             await self._reply(ctx, "\u274c Wert muss zwischen 5 und 1440 Minuten liegen.")
@@ -391,7 +391,7 @@ class ROGroupFinder(commands.Cog):
 
     @gruppe_setup.command(name="cleanup", description="Stellt die Ablaufzeit f\u00fcr inaktive Gruppen ein")
     @commands.guild_only()
-    @commands.has_permissions(manage_guild=True)
+    @commands.admin()
     async def gruppe_config_cleanup(self, ctx: commands.Context, tage: int) -> None:
         if tage < 1 or tage > 90:
             await self._reply(ctx, "\u274c Wert muss zwischen 1 und 90 Tagen liegen.")
@@ -401,7 +401,7 @@ class ROGroupFinder(commands.Cog):
 
     @gruppe_setup.command(name="warnung", description="Stellt ein wie viele Tage vor Ablauf der Ersteller gewarnt wird")
     @commands.guild_only()
-    @commands.has_permissions(manage_guild=True)
+    @commands.admin()
     async def gruppe_config_warnung(self, ctx: commands.Context, tage: int) -> None:
         settings = get_guild_settings(ctx.guild.id)
         if tage < 1 or tage >= settings["cleanup_days"]:
@@ -416,7 +416,7 @@ class ROGroupFinder(commands.Cog):
 
     @gruppe_setup.command(name="timeout", description="Stellt den Wartelisten-Timeout ein")
     @commands.guild_only()
-    @commands.has_permissions(manage_guild=True)
+    @commands.admin()
     async def gruppe_config_timeout(self, ctx: commands.Context, minuten: int) -> None:
         if minuten < 5 or minuten > 120:
             await self._reply(ctx, "\u274c Wert muss zwischen 5 und 120 Minuten liegen.")
@@ -431,8 +431,17 @@ class ROGroupFinder(commands.Cog):
     @gruppe_config_warnung.error
     @gruppe_config_timeout.error
     async def admin_error(self, ctx: commands.Context, error) -> None:
-        if isinstance(error, commands.MissingPermissions):
-            await self._reply(ctx, "\u274c Du ben\u00f6tigst die Berechtigung **Server verwalten**.")
+        # Reds admin()-Check wirft CheckFailure (nicht MissingPermissions).
+        # NoPrivateMessage (guild_only) ist ebenfalls eine CheckFailure-Unterklasse
+        # und wird hier absichtlich nicht mit der Admin-Meldung überschrieben.
+        if isinstance(error, commands.NoPrivateMessage):
+            return
+        if isinstance(error, (commands.MissingPermissions, commands.CheckFailure)):
+            await self._reply(
+                ctx,
+                "\u274c Nur die **@Admin-Rolle** (bzw. Server-/Bot-Owner) darf diese "
+                "Einstellungen \u00e4ndern.",
+            )
 
     async def _reply(
         self,
