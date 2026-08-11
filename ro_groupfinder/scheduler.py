@@ -34,6 +34,7 @@ from .data_manager import (
     get_upcoming_reminder_groups,
     save_group,
     delete_group,
+    save_expired_snapshot,
     get_guild_settings,
     add_to_waitlist,
     remove_from_waitlist,
@@ -44,6 +45,7 @@ from .data_manager import (
 from .group_embed import build_group_embed, build_group_action_view
 from .notifications import (
     notify_group_expired,
+    notify_expiry_warning,
     notify_reminder,
     notify_waitlist_slot_free,
     notify_waitlist_timeout,
@@ -104,12 +106,20 @@ class GroupScheduler:
 
     async def _task_cleanup(self) -> None:
         """
-        Prüft alle Gruppen auf Ablauf.
-        Abgelaufene Gruppen werden:
-          1. Als 'expired' markiert
-          2. Alle Beteiligten per DM benachrichtigt
-          3. Der Discord-Post wird gelöscht
-          4. Die Gruppe aus groups.json entfernt
+        Prüft alle Gruppen auf Inaktivität.
+
+        Ablauf basiert auf 'expires_at' (= last_activity_at + cleanup_days).
+        Für jede aktive Gruppe:
+          1. VORWARNUNG – wenn der Ablauf in <= warning_days liegt und noch
+             keine Warnung gesendet wurde: Ersteller per DM informieren
+             (mit "Suche aktiv halten"-Button) und expiry_warning_sent setzen.
+          2. ABLAUF – wenn expires_at erreicht ist:
+             a. Als 'expired' markiert
+             b. Snapshot für "Erneut suchen" gespeichert
+             c. Alle Beteiligten per DM benachrichtigt (Ersteller mit
+                "Erneut suchen"-Button)
+             d. Der Discord-Post wird gelöscht
+             e. Die Gruppe aus groups.json entfernt
         """
         now = datetime.now(timezone.utc)
         all_groups = get_all_groups_flat()
@@ -127,25 +137,41 @@ class GroupScheduler:
             except ValueError:
                 continue
 
+            guild_id       = group["guild_id"]
+            settings       = get_guild_settings(guild_id)
+            inactivity_days = settings["cleanup_days"]
+            warning_days    = settings["warning_days"]
+
+            # ── 1. Vorwarnung (Gruppe läuft bald ab) ──────────────────────────
             if expires_dt > now:
+                warn_at = expires_dt - timedelta(days=warning_days)
+                if now >= warn_at and not group.get("expiry_warning_sent"):
+                    days_left = max(1, (expires_dt - now).days)
+                    await notify_expiry_warning(
+                        self.bot, group, days_left, inactivity_days
+                    )
+                    group["expiry_warning_sent"] = True
+                    save_group(guild_id, group)
                 continue
 
-            # ── Gruppe ist abgelaufen ─────────────────────────────────────────
-            guild_id   = group["guild_id"]
+            # ── 2. Gruppe ist abgelaufen ──────────────────────────────────────
             message_id = group.get("message_id")
 
-            # 1. Status setzen
+            # a. Status setzen
             group["status"] = "expired"
             save_group(guild_id, group)
 
-            # 2. Benachrichtigungen
-            await notify_group_expired(self.bot, group)
+            # b. Snapshot für "Erneut suchen"
+            save_expired_snapshot(group)
 
-            # 3. Discord-Post löschen
+            # c. Benachrichtigungen
+            await notify_group_expired(self.bot, group, inactivity_days)
+
+            # d. Discord-Post löschen
             if message_id:
                 await self._delete_discord_message(guild_id, group["channel_id"], message_id)
 
-            # 4. Aus JSON entfernen
+            # e. Aus JSON entfernen
             delete_group(guild_id, message_id)
 
     # ─────────────────────────────────────────────────────────────────────────

@@ -18,8 +18,10 @@ from typing import Optional, Dict, List, Any
 
 from .constants import (
     DEFAULT_CLEANUP_DAYS,
+    DEFAULT_EXPIRY_WARNING_DAYS,
     DEFAULT_REMINDER_MINUTES,
     DEFAULT_WAITLIST_TIMEOUT_MINUTES,
+    EXPIRED_SNAPSHOT_RETENTION_DAYS,
     GROUP_STATUS,
 )
 
@@ -30,6 +32,7 @@ _BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 _DATA_DIR      = os.path.join(_BASE_DIR, "data")
 _GROUPS_FILE   = os.path.join(_DATA_DIR, "groups.json")
 _SETTINGS_FILE = os.path.join(_DATA_DIR, "settings.json")
+_EXPIRED_FILE  = os.path.join(_DATA_DIR, "expired_snapshots.json")
 _GOALS_FILE    = os.path.join(_DATA_DIR, "goals.json")
 _CLASSES_FILE  = os.path.join(_DATA_DIR, "classes.json")
 
@@ -109,6 +112,7 @@ def get_guild_settings(guild_id: int) -> Dict:
     defaults = {
         "group_channel_id":           None,
         "cleanup_days":               DEFAULT_CLEANUP_DAYS,
+        "warning_days":               DEFAULT_EXPIRY_WARNING_DAYS,
         "reminder_minutes":           DEFAULT_REMINDER_MINUTES,
         "waitlist_timeout_minutes":   DEFAULT_WAITLIST_TIMEOUT_MINUTES,
     }
@@ -218,28 +222,70 @@ def create_group(
     expires_at = (now + timedelta(days=settings["cleanup_days"])).isoformat()
 
     return {
-        "group_id":       str(uuid.uuid4()),
-        "message_id":     None,          # wird nach Post gesetzt
-        "channel_id":     channel_id,
-        "guild_id":       guild_id,
-        "creator_id":     creator_id,
-        "creator_name":   creator_name,
-        "creator_ingame": creator_ingame,
-        "goal":           goal,
-        "goal_custom":    goal_custom,
-        "player_count":   player_count,
-        "slots":          slots,         # Liste von Slot-Dicts (siehe unten)
-        "waitlist":       [],
-        "datetime":       dt.isoformat() if dt else None,
-        "recurrence":     recurrence,
-        "comment":        comment,
-        "level_min":      level_min,
-        "level_max":      level_max,
-        "status":         "open",
-        "created_at":     now.isoformat(),
-        "expires_at":     expires_at,
-        "reminder_sent":  False,
+        "group_id":            str(uuid.uuid4()),
+        "message_id":          None,     # wird nach Post gesetzt
+        "channel_id":          channel_id,
+        "guild_id":            guild_id,
+        "creator_id":          creator_id,
+        "creator_name":        creator_name,
+        "creator_ingame":      creator_ingame,
+        "goal":                goal,
+        "goal_custom":         goal_custom,
+        "player_count":        player_count,
+        "slots":               slots,    # Liste von Slot-Dicts (siehe unten)
+        "waitlist":            [],
+        "datetime":            dt.isoformat() if dt else None,
+        "recurrence":          recurrence,
+        "comment":             comment,
+        "level_min":           level_min,
+        "level_max":           level_max,
+        "status":              "open",
+        "created_at":          now.isoformat(),
+        # Ablauf basiert auf Inaktivität: expires_at = last_activity_at + cleanup_days.
+        # Jede Aktivität (Beitritt, Verlassen, ...) setzt den Timer via touch_group_activity() zurück.
+        "last_activity_at":    now.isoformat(),
+        "expires_at":          expires_at,
+        "expiry_warning_sent": False,
+        "reminder_sent":       False,
     }
+
+
+def touch_group_activity(group: Dict) -> Dict:
+    """
+    Registriert Aktivität in einer Gruppe und verschiebt den Inaktivitäts-Ablauf.
+
+    Wird bei jeder relevanten Interaktion aufgerufen (Beitritt, Verlassen,
+    Warteliste, Bearbeitung, Entfernen ...). Setzt:
+      - last_activity_at    → jetzt
+      - expires_at          → jetzt + cleanup_days
+      - expiry_warning_sent → False (damit erneut vorgewarnt wird)
+
+    Der Aufrufer muss die Gruppe anschließend selbst speichern (save_group).
+    """
+    now      = datetime.now(timezone.utc)
+    settings = get_guild_settings(group["guild_id"])
+    group["last_activity_at"]    = now.isoformat()
+    group["expires_at"]          = (now + timedelta(days=settings["cleanup_days"])).isoformat()
+    group["expiry_warning_sent"] = False
+    return group
+
+
+def reset_slots(slots: List[Dict]) -> List[Dict]:
+    """
+    Erstellt eine Kopie der Slot-Liste mit zurückgesetzten Belegungen.
+    Wird für Wiederholungs- und neu erstellte Gruppen verwendet.
+    """
+    reset = []
+    for slot in slots:
+        reset.append({
+            **slot,
+            "filled_by_id":     None,
+            "filled_by_name":   None,
+            "filled_by_ingame": None,
+            "filled_class":     None,
+            "filled_emoji":     None,
+        })
+    return reset
 
 
 def set_group_message_id(group: Dict, message_id: int) -> Dict:
@@ -471,6 +517,60 @@ def get_upcoming_reminder_groups() -> List[Dict]:
         except ValueError:
             pass
     return due
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXPIRED-SNAPSHOTS  (für "Erneut suchen" nach Ablauf)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _load_expired_snapshots() -> Dict:
+    """Lädt alle gespeicherten Snapshots abgelaufener Gruppen (Key = group_id)."""
+    return _load_json(_EXPIRED_FILE, {})
+
+
+def _save_expired_snapshots(snapshots: Dict) -> None:
+    _save_json(_EXPIRED_FILE, snapshots)
+
+
+def save_expired_snapshot(group: Dict) -> None:
+    """
+    Legt eine Kopie einer abgelaufenen Gruppe ab, damit der Ersteller sie
+    per Button schnell erneut posten kann.
+
+    Alte Snapshots (> EXPIRED_SNAPSHOT_RETENTION_DAYS) werden dabei aufgeräumt.
+    """
+    snapshots = _load_expired_snapshots()
+
+    # Retention: abgelaufene Snapshots entfernen
+    now    = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=EXPIRED_SNAPSHOT_RETENTION_DAYS)
+    for gid in list(snapshots.keys()):
+        ts = snapshots[gid].get("expired_at")
+        try:
+            if ts and datetime.fromisoformat(ts) < cutoff:
+                del snapshots[gid]
+        except ValueError:
+            del snapshots[gid]
+
+    snapshot = dict(group)
+    snapshot["expired_at"] = now.isoformat()
+    snapshots[str(group["group_id"])] = snapshot
+    _save_expired_snapshots(snapshots)
+
+
+def get_expired_snapshot(group_id: str) -> Optional[Dict]:
+    """Gibt den Snapshot einer abgelaufenen Gruppe zurück, oder None."""
+    return _load_expired_snapshots().get(str(group_id))
+
+
+def delete_expired_snapshot(group_id: str) -> bool:
+    """Entfernt einen Snapshot. Gibt True zurück wenn gefunden."""
+    snapshots = _load_expired_snapshots()
+    if str(group_id) in snapshots:
+        del snapshots[str(group_id)]
+        _save_expired_snapshots(snapshots)
+        return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────

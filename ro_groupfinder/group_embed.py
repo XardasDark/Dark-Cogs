@@ -96,7 +96,7 @@ def build_group_embed(group: Dict) -> discord.Embed:
 
     # ── Footer ────────────────────────────────────────────────────────────────
     expires = group.get("expires_at", "")[:10]
-    embed.set_footer(text=f"ID: {group.get('group_id', '?')[:8]}  |  Läuft ab: {expires}")
+    embed.set_footer(text=f"ID: {group.get('group_id', '?')[:8]}  |  Läuft bei Inaktivität ab: {expires}")
 
     return embed
 

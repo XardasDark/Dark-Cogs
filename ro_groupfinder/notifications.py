@@ -43,16 +43,36 @@ async def _get_user(bot: discord.Client, user_id: int) -> Optional[discord.User]
     return user
 
 
-async def _send_dm(user: discord.User, embed: discord.Embed) -> bool:
+async def _send_dm(
+    user:  discord.User,
+    embed: discord.Embed,
+    view:  Optional[discord.ui.View] = None,
+) -> bool:
     """
-    Sendet eine DM an einen Nutzer.
+    Sendet eine DM an einen Nutzer (optional mit Button-View).
     Gibt True zurück wenn erfolgreich, False wenn DMs deaktiviert sind.
     """
     try:
-        await user.send(embed=embed)
+        if view is not None:
+            await user.send(embed=embed, view=view)
+        else:
+            await user.send(embed=embed)
         return True
     except (discord.Forbidden, discord.HTTPException):
         return False
+
+
+def _dm_button_view(label: str, custom_id: str, style: discord.ButtonStyle) -> discord.ui.View:
+    """
+    Baut eine einfache View mit genau einem Button für DM-Aktionen.
+
+    Die Buttons werden – wie alle anderen im Cog – zentral über den
+    on_interaction-Listener anhand ihrer custom_id verarbeitet, daher genügt
+    hier eine View ohne eigene Callbacks (funktioniert auch nach Bot-Neustart).
+    """
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(label=label, custom_id=custom_id, style=style))
+    return view
 
 
 def _group_title(group: Dict) -> str:
@@ -231,20 +251,82 @@ async def notify_group_deleted(
             await _send_dm(user, embed)
 
 
+async def notify_expiry_warning(
+    bot:             discord.Client,
+    group:           Dict,
+    days_left:       int,
+    inactivity_days: int,
+) -> None:
+    """
+    Warnt den Gruppenersteller **vor** dem automatischen Ablauf, damit er
+    aktiv eingreifen kann, falls die Suche noch länger laufen soll.
+
+    Enthält einen Button "Suche aktiv halten", der den Inaktivitäts-Timer
+    zurücksetzt (custom_id → group_extend).
+    """
+    creator = await _get_user(bot, group["creator_id"])
+    if not creator:
+        return
+
+    days_txt = "morgen" if days_left <= 1 else f"in {days_left} Tagen"
+    embed = _base_embed(
+        title="⏳ Deine Gruppensuche läuft bald ab",
+        description=(
+            f"Deine Gruppensuche **{_group_title(group)}** läuft **{days_txt}** "
+            f"automatisch ab, weil seit {inactivity_days} Tagen keine Aktivität "
+            f"stattgefunden hat.\n\n"
+            f"Suchst du noch Spieler? Dann halte die Suche mit dem Button unten "
+            f"aktiv – der Ablauf wird dann um weitere {inactivity_days} Tage verschoben.\n"
+            f"Andernfalls wird die Gruppe automatisch entfernt."
+        ),
+        color=0xFFAB00,
+    )
+
+    view = _dm_button_view(
+        label="🔄 Suche aktiv halten",
+        custom_id=f"group_extend:{group['guild_id']}:{group['message_id']}",
+        style=discord.ButtonStyle.success,
+    )
+    await _send_dm(creator, embed, view)
+
+
 async def notify_group_expired(
-    bot:   discord.Client,
-    group: Dict,
+    bot:             discord.Client,
+    group:           Dict,
+    inactivity_days: int,
 ) -> None:
     """
     Informiert alle Beteiligten wenn eine Gruppe durch den Cleanup-Task abläuft.
+
+    Der Ersteller erhält zusätzlich einen Button, um die Suche mit denselben
+    Einstellungen sofort erneut zu posten (custom_id → group_recreate).
     """
-    embed = _base_embed(
+    creator_id = group.get("creator_id")
+
+    creator_embed = _base_embed(
         title="⏰ Gruppe abgelaufen",
         description=(
-            f"Die Gruppe **{_group_title(group)}** wurde automatisch nach 14 Tagen Inaktivität geschlossen.\n\n"
-            f"Du kannst jederzeit eine neue Gruppe erstellen."
+            f"Deine Gruppensuche **{_group_title(group)}** wurde automatisch nach "
+            f"{inactivity_days} Tagen ohne Aktivität geschlossen.\n\n"
+            f"Suchst du weiterhin? Mit dem Button unten erstellst du die Suche "
+            f"mit denselben Einstellungen sofort neu."
         ),
         color=COLOR_EXPIRED,
+    )
+    member_embed = _base_embed(
+        title="⏰ Gruppe abgelaufen",
+        description=(
+            f"Die Gruppe **{_group_title(group)}** wurde automatisch nach "
+            f"{inactivity_days} Tagen ohne Aktivität geschlossen.\n\n"
+            f"Du kannst jederzeit einer neuen Gruppe beitreten."
+        ),
+        color=COLOR_EXPIRED,
+    )
+
+    recreate_view = _dm_button_view(
+        label="🔄 Erneut suchen",
+        custom_id=f"group_recreate:{group['guild_id']}:{group['group_id']}",
+        style=discord.ButtonStyle.success,
     )
 
     all_ids = _get_all_member_ids(group) + _get_waitlist_ids(group)
@@ -252,8 +334,12 @@ async def notify_group_expired(
 
     for uid in all_ids:
         user = await _get_user(bot, uid)
-        if user:
-            await _send_dm(user, embed)
+        if not user:
+            continue
+        if uid == creator_id:
+            await _send_dm(user, creator_embed, recreate_view)
+        else:
+            await _send_dm(user, member_embed)
 
 
 async def notify_reminder(

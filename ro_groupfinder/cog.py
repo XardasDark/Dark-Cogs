@@ -56,6 +56,10 @@ from .data_manager import (
     create_group,
     set_group_message_id,
     update_group_fields,
+    touch_group_activity,
+    reset_slots,
+    get_expired_snapshot,
+    delete_expired_snapshot,
     load_goals,
     load_classes,
 )
@@ -322,7 +326,8 @@ class ROGroupFinder(commands.Cog):
         embed = discord.Embed(title="\u2699\ufe0f RO Group Finder \u2013 Konfiguration", color=COLOR_OPEN)
         embed.add_field(name="\U0001f4cc Gruppen-Channel",    value=ch.mention if ch else "Nicht gesetzt", inline=False)
         embed.add_field(name="\u23f0 Erinnerung",              value=f"{s['reminder_minutes']} Min. vor Start",  inline=True)
-        embed.add_field(name="\U0001f5d1\ufe0f Cleanup",      value=f"Nach {s['cleanup_days']} Tagen",          inline=True)
+        embed.add_field(name="\U0001f5d1\ufe0f Cleanup",      value=f"Nach {s['cleanup_days']} Tagen Inaktivit\u00e4t", inline=True)
+        embed.add_field(name="\u26a0\ufe0f Vorwarnung",        value=f"{s['warning_days']} Tage vor Ablauf",      inline=True)
         embed.add_field(name="\u23f3 Wartelisten-Timeout",     value=f"{s['waitlist_timeout_minutes']} Minuten",  inline=True)
         await self._reply(ctx, embed=embed)
 
@@ -346,6 +351,21 @@ class ROGroupFinder(commands.Cog):
         set_guild_setting(ctx.guild.id, "cleanup_days", tage)
         await self._reply(ctx, f"\u2705 Gruppen laufen nach **{tage} Tagen** Inaktivit\u00e4t ab.")
 
+    @gruppe_setup.command(name="warnung", description="Stellt ein wie viele Tage vor Ablauf der Ersteller gewarnt wird")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def gruppe_config_warnung(self, ctx: commands.Context, tage: int) -> None:
+        settings = get_guild_settings(ctx.guild.id)
+        if tage < 1 or tage >= settings["cleanup_days"]:
+            await self._reply(
+                ctx,
+                f"\u274c Wert muss zwischen 1 und {settings['cleanup_days'] - 1} Tagen liegen "
+                f"(kleiner als die Ablaufzeit von {settings['cleanup_days']} Tagen).",
+            )
+            return
+        set_guild_setting(ctx.guild.id, "warning_days", tage)
+        await self._reply(ctx, f"\u2705 Der Ersteller wird **{tage} Tage** vor Ablauf vorgewarnt.")
+
     @gruppe_setup.command(name="timeout", description="Stellt den Wartelisten-Timeout ein")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
@@ -360,6 +380,7 @@ class ROGroupFinder(commands.Cog):
     @gruppe_config_info.error
     @gruppe_config_erinnerung.error
     @gruppe_config_cleanup.error
+    @gruppe_config_warnung.error
     @gruppe_config_timeout.error
     async def admin_error(self, ctx: commands.Context, error) -> None:
         if isinstance(error, commands.MissingPermissions):
@@ -406,6 +427,17 @@ class ROGroupFinder(commands.Cog):
             return
 
         action  = parts[0]
+
+        # ── DM-Aktionen (Vorwarnung / Ablauf) ─────────────────────────────────
+        # Diese Buttons stecken in DMs, daher ist interaction.guild_id None und
+        # die guild_id/group_id sind in der custom_id kodiert.
+        if action == "group_extend":
+            await self._handle_group_extend(interaction, parts)
+            return
+        if action == "group_recreate":
+            await self._handle_group_recreate(interaction, parts)
+            return
+
         msg_id  = int(parts[1]) if parts[1].isdigit() else None
 
         # ── Dispatcher ────────────────────────────────────────────────────────
@@ -606,6 +638,7 @@ class ROGroupFinder(commands.Cog):
             await interaction.followup.send("❌ Slot ist bereits belegt.", ephemeral=True)
             return
 
+        touch_group_activity(group)
         save_group(guild_id, group)
 
         # Ersteller benachrichtigen
@@ -660,6 +693,7 @@ class ROGroupFinder(commands.Cog):
         # Warteliste zuerst prüfen
         if is_user_in_waitlist(group, user_id):
             remove_from_waitlist(group, user_id)
+            touch_group_activity(group)
             save_group(interaction.guild_id, group)
             await interaction.response.send_message(
                 "✅ Du wurdest von der Warteliste entfernt.", ephemeral=True
@@ -697,6 +731,7 @@ class ROGroupFinder(commands.Cog):
         )
 
         clear_slot(group, slot_index)
+        touch_group_activity(group)
         save_group(guild_id, group)
 
         await notify_creator_leave(self.bot, group, player_name, slot_index)
@@ -834,6 +869,7 @@ class ROGroupFinder(commands.Cog):
         player_name = (slot.get("filled_by_ingame") or slot.get("filled_by_name", "?")) if slot else "?"
 
         clear_slot(group, slot_index)
+        touch_group_activity(group)
         save_group(interaction.guild_id, group)
 
         # Spieler benachrichtigen
@@ -1004,6 +1040,7 @@ class ROGroupFinder(commands.Cog):
         benachrichtigt Mitglieder.
         """
         update_group_fields(group, **changes)
+        touch_group_activity(group)
         save_group(interaction.guild_id, group)
 
         # Embed im Channel aktualisieren
@@ -1019,6 +1056,193 @@ class ROGroupFinder(commands.Cog):
                 pass
 
         await notify_edit(self.bot, group, changes)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # DM-AKTIONEN: SUCHE AKTIV HALTEN / ERNEUT SUCHEN
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _handle_group_extend(
+        self, interaction: discord.Interaction, parts: list
+    ) -> None:
+        """
+        Vorwarnungs-Button "Suche aktiv halten": setzt den Inaktivitäts-Timer
+        zurück, damit die Gruppe weiter bestehen bleibt.
+        custom_id-Format: group_extend:<guild_id>:<message_id>
+        """
+        if len(parts) < 3 or not parts[1].isdigit() or not parts[2].isdigit():
+            return
+
+        guild_id = int(parts[1])
+        msg_id   = int(parts[2])
+        group    = get_group_by_message(guild_id, msg_id)
+
+        if not group or group.get("status") in ("expired", "closed"):
+            await interaction.response.edit_message(
+                content="ℹ️ Diese Gruppensuche existiert nicht mehr.",
+                embed=None, view=None,
+            )
+            return
+
+        if interaction.user.id != group.get("creator_id"):
+            await interaction.response.send_message(
+                "❌ Nur der Ersteller kann die Suche aktiv halten.", ephemeral=True
+            )
+            return
+
+        touch_group_activity(group)
+        save_group(guild_id, group)
+
+        # Post im Channel aktualisieren (Footer zeigt neues Ablaufdatum)
+        await self._refresh_group_message(group)
+
+        expires = group.get("expires_at", "")[:10]
+        await interaction.response.edit_message(
+            content=(
+                f"✅ **Deine Suche bleibt aktiv.**\n"
+                f"Sie läuft nun frühestens am **{expires}** ab, sofern keine "
+                f"weitere Aktivität stattfindet."
+            ),
+            embed=None, view=None,
+        )
+
+    async def _handle_group_recreate(
+        self, interaction: discord.Interaction, parts: list
+    ) -> None:
+        """
+        Ablauf-Button "Erneut suchen": postet eine abgelaufene Gruppe mit
+        denselben Einstellungen erneut.
+        custom_id-Format: group_recreate:<guild_id>:<group_id>
+        """
+        if len(parts) < 3 or not parts[1].isdigit():
+            return
+
+        guild_id = int(parts[1])
+        group_id = parts[2]
+        snapshot = get_expired_snapshot(group_id)
+
+        if not snapshot:
+            await interaction.response.edit_message(
+                content="ℹ️ Diese Suche ist nicht mehr verfügbar und kann nicht erneut erstellt werden.",
+                embed=None, view=None,
+            )
+            return
+
+        if interaction.user.id != snapshot.get("creator_id"):
+            await interaction.response.send_message(
+                "❌ Nur der ursprüngliche Ersteller kann diese Suche erneut erstellen.",
+                ephemeral=True,
+            )
+            return
+
+        # Channel holen (DM → kein interaction.guild verfügbar)
+        channel_id = snapshot["channel_id"]
+        channel    = self.bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except Exception:
+                await interaction.response.edit_message(
+                    content="❌ Der Gruppen-Channel konnte nicht gefunden werden.",
+                    embed=None, view=None,
+                )
+                return
+
+        # Termin nur übernehmen wenn er in der Zukunft liegt
+        dt = None
+        dt_str = snapshot.get("datetime")
+        if dt_str:
+            try:
+                parsed = datetime.fromisoformat(dt_str)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                if parsed > datetime.now(timezone.utc):
+                    dt = parsed
+            except ValueError:
+                pass
+
+        new_group = create_group(
+            guild_id       = guild_id,
+            channel_id     = channel_id,
+            creator_id     = snapshot["creator_id"],
+            creator_name   = snapshot.get("creator_name", interaction.user.display_name),
+            creator_ingame = snapshot.get("creator_ingame"),
+            goal           = snapshot.get("goal", ""),
+            goal_custom    = snapshot.get("goal_custom"),
+            player_count   = snapshot["player_count"],
+            slots          = reset_slots(snapshot["slots"]),
+            dt             = dt,
+            recurrence     = snapshot.get("recurrence", "none"),
+            comment        = snapshot.get("comment"),
+            level_min      = snapshot.get("level_min"),
+            level_max      = snapshot.get("level_max"),
+        )
+        new_group["level_mode"] = snapshot.get("level_mode", "none")
+
+        # Ersteller wieder in seinen ursprünglichen Slot setzen (falls vorhanden)
+        creator_id = snapshot["creator_id"]
+        old_slot = next(
+            (s for s in snapshot.get("slots", []) if s.get("filled_by_id") == creator_id),
+            None,
+        )
+        if old_slot is not None:
+            idx = old_slot["slot_index"]
+            if idx < len(new_group["slots"]):
+                slot = new_group["slots"][idx]
+                slot["filled_by_id"]     = creator_id
+                slot["filled_by_name"]   = old_slot.get("filled_by_name")
+                slot["filled_by_ingame"] = old_slot.get("filled_by_ingame")
+                slot["filled_class"]     = old_slot.get("filled_class") or slot["display_name"]
+                slot["filled_emoji"]     = old_slot.get("filled_emoji") or slot["emoji"]
+
+        # Posten
+        try:
+            new_group["message_id"] = 0
+            message = await channel.send(
+                embed=build_group_embed(new_group),
+                view=build_group_action_view(new_group),
+            )
+            set_group_message_id(new_group, message.id)
+            save_group(guild_id, new_group)
+            await message.edit(view=build_group_action_view(new_group))
+        except Exception:
+            await interaction.response.edit_message(
+                content="❌ Die Suche konnte nicht erneut erstellt werden.",
+                embed=None, view=None,
+            )
+            return
+
+        # Snapshot verbrauchen
+        delete_expired_snapshot(group_id)
+
+        msg_url = f"https://discord.com/channels/{guild_id}/{channel_id}/{message.id}"
+        await interaction.response.edit_message(
+            content=(
+                f"✅ **Deine Suche wurde erneut erstellt!**\n"
+                f"🔗 [Hier ansehen]({msg_url})"
+            ),
+            embed=None, view=None,
+        )
+
+    async def _refresh_group_message(self, group: Dict) -> None:
+        """Aktualisiert Embed + View des Gruppen-Posts im Channel (best effort)."""
+        channel_id = group.get("channel_id")
+        msg_id     = group.get("message_id")
+        if not channel_id or not msg_id:
+            return
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except Exception:
+                return
+        try:
+            message = await channel.fetch_message(msg_id)
+            await message.edit(
+                embed=build_group_embed(group),
+                view=build_group_action_view(group),
+            )
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1117,6 +1341,7 @@ class WaitlistJoinModal(ui.Modal, title="Warteliste beitreten"):
             class_display = self.class_input.value.strip(),
             class_emoji   = "⚔️",
         )
+        touch_group_activity(self.group)
         save_group(self.group["guild_id"], self.group)
         await notify_waitlist_joined(
             interaction.client, self.group, self.user_id, position

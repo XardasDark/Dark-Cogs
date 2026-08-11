@@ -90,9 +90,13 @@ COLOR_EXPIRED = 0x757575   # Grau   – Abgelaufen (Cleanup)
 # ─────────────────────────────────────────────────────────────────────────────
 # STANDARD-WERTE (werden in settings.json pro Guild überschrieben)
 # ─────────────────────────────────────────────────────────────────────────────
-DEFAULT_CLEANUP_DAYS             = 14   # Tage bis eine inaktive Gruppe gelöscht wird
+DEFAULT_CLEANUP_DAYS             = 30   # Tage OHNE Aktivität bis eine Gruppe gelöscht wird
+DEFAULT_EXPIRY_WARNING_DAYS      = 3    # Tage vor Ablauf → Vorwarnung an den Ersteller
 DEFAULT_REMINDER_MINUTES         = 30   # Minuten vor Gruppenstart → Erinnerungs-DM
 DEFAULT_WAITLIST_TIMEOUT_MINUTES = 30   # Minuten die ein Wartelisten-Spieler Zeit hat
+
+# Wie lange ein Snapshot einer abgelaufenen Gruppe für "Erneut suchen" aufbewahrt wird.
+EXPIRED_SNAPSHOT_RETENTION_DAYS  = 30
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SLOT-AUSWAHLTYPEN
