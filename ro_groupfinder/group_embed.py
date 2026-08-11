@@ -136,8 +136,9 @@ def build_group_action_view(group: Dict) -> ui.View:
     )
     view.add_item(leave_btn)
 
-    # Gruppe abschließen (nur sichtbar wenn voll – Prüfung ob Ersteller im Callback)
-    if status == "full":
+    # Gruppe abschließen (sichtbar solange aktiv – auch wenn nicht voll;
+    # Prüfung ob Ersteller im Callback)
+    if not inactive:
         finish_btn = ui.Button(
             label="✅ Gruppe abschließen",
             style=discord.ButtonStyle.primary,
