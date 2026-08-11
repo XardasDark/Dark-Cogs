@@ -741,7 +741,7 @@ class ROGroupFinder(commands.Cog):
         # Gruppenersteller kann nicht verlassen
         if user_id == group.get("creator_id"):
             await interaction.response.send_message(
-                "❌ Als Gruppenersteller kannst du die Gruppe nicht verlassen."
+                "❌ Als Gruppenersteller kannst du die Gruppe nicht verlassen. "
                 "Nutze ⚙️ **Verwalten** → 🗑️ **Gruppe löschen** um sie aufzulösen.",
                 ephemeral=True,
             )
@@ -856,7 +856,7 @@ class ROGroupFinder(commands.Cog):
 
         view = _FinishConfirmView(group, self)
         await interaction.response.send_message(
-            "✅ Gruppe als abgeschlossen markieren?"
+            "✅ Gruppe als abgeschlossen markieren? "
             "Alle Mitglieder werden benachrichtigt. Der Beitrag bleibt zur Ansicht "
             "im Channel erhalten und wird nicht gelöscht.",
             view=view,
