@@ -26,6 +26,7 @@ import discord
 from typing import Optional, Dict, List
 
 from .constants import RECURRENCE_OPTIONS, COLOR_OPEN, COLOR_CLOSED, COLOR_EXPIRED
+from .data_manager import format_datetime_display
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -204,7 +205,7 @@ async def notify_group_full(
     """
     Informiert alle Mitglieder wenn die Gruppe vollständig belegt ist.
     """
-    dt_str = group.get("datetime") or "Noch nicht festgelegt"
+    dt_str = format_datetime_display(group.get("datetime"), group.get("guild_id"), fallback="Noch nicht festgelegt")
     rec    = RECURRENCE_OPTIONS.get(group.get("recurrence", "none"), "Einmalig")
 
     embed = _base_embed(
@@ -377,7 +378,7 @@ async def notify_reminder(
     """
     Sendet eine Erinnerungs-DM an alle Mitglieder X Minuten vor Gruppenstart.
     """
-    dt_str = group.get("datetime", "Unbekannt")
+    dt_str = format_datetime_display(group.get("datetime"), group.get("guild_id"), fallback="Unbekannt")
 
     embed = _base_embed(
         title="⏰ Erinnerung: Deine Gruppe startet bald!",
@@ -416,6 +417,9 @@ async def notify_edit(
     }
     for key, val in changes.items():
         label = labels.get(key, key)
+        # datetime wird als UTC-ISO gespeichert → für die Anzeige lokalisieren
+        if key == "datetime":
+            val = format_datetime_display(group.get("datetime"), group.get("guild_id"))
         change_lines.append(f"{label}: **{val}**")
 
     embed = _base_embed(
@@ -549,7 +553,7 @@ async def notify_recurrence_new_post(
     """
     Informiert alle Mitglieder der alten Gruppe über die neue Wiederholungs-Gruppe.
     """
-    dt_str = group.get("datetime", "Unbekannt")
+    dt_str = format_datetime_display(group.get("datetime"), group.get("guild_id"), fallback="Unbekannt")
     rec    = RECURRENCE_OPTIONS.get(group.get("recurrence", "none"), "Einmalig")
 
     embed = _base_embed(

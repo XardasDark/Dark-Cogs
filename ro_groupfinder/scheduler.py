@@ -35,6 +35,7 @@ from .data_manager import (
     save_group,
     delete_group,
     save_expired_snapshot,
+    parse_stored_datetime,
     get_guild_settings,
     add_to_waitlist,
     remove_from_waitlist,
@@ -195,9 +196,8 @@ class GroupScheduler:
             if not dt_str:
                 continue
 
-            try:
-                start_dt = _parse_dt(dt_str)
-            except ValueError:
+            start_dt = parse_stored_datetime(dt_str, group["guild_id"])
+            if start_dt is None:
                 continue
 
             settings        = get_guild_settings(group["guild_id"])
@@ -292,9 +292,8 @@ class GroupScheduler:
             if not dt_str:
                 continue
 
-            try:
-                start_dt = _parse_dt(dt_str)
-            except ValueError:
+            start_dt = parse_stored_datetime(dt_str, group["guild_id"])
+            if start_dt is None:
                 continue
 
             if start_dt > now:
@@ -442,26 +441,6 @@ class GroupScheduler:
 # ─────────────────────────────────────────────────────────────────────────────
 # MODUL-HILFSFUNKTIONEN
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _parse_dt(dt_str: str) -> datetime:
-    """
-    Parst einen Datums-String aus dem Wizard.
-    Erwartet Format: "DD.MM.YYYY HH:MM" oder ISO-Format.
-    Gibt ein timezone-aware datetime (UTC) zurück.
-    """
-    # ISO-Format (intern gespeichert)
-    try:
-        dt = datetime.fromisoformat(dt_str)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except ValueError:
-        pass
-
-    # Wizard-Format: "DD.MM.YYYY HH:MM"
-    dt = datetime.strptime(dt_str, "%d.%m.%Y %H:%M")
-    return dt.replace(tzinfo=timezone.utc)
-
 
 def _reset_slots(slots: list) -> list:
     """

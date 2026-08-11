@@ -22,6 +22,7 @@ from .constants import (
 from .data_manager import (
     load_classes, get_open_slots, get_filled_slots,
     is_user_in_group, is_user_in_waitlist,
+    format_datetime_display,
 )
 
 
@@ -63,9 +64,9 @@ def build_group_embed(group: Dict) -> discord.Embed:
     embed.add_field(name="🔢 Level",        value=level_str,                   inline=True)
 
     # ── Datum & Zeit ──────────────────────────────────────────────────────────
-    dt = group.get("datetime")
+    dt_display = format_datetime_display(group.get("datetime"), group.get("guild_id"))
     rec = RECURRENCE_OPTIONS.get(group.get("recurrence", "none"), "Einmalig")
-    embed.add_field(name="📅 Datum & Zeit", value=dt or "Offen / Zeitlos",    inline=True)
+    embed.add_field(name="📅 Datum & Zeit", value=dt_display,                  inline=True)
     embed.add_field(name="🔄 Wiederholung", value=rec,                         inline=True)
 
     # ── Slots ─────────────────────────────────────────────────────────────────

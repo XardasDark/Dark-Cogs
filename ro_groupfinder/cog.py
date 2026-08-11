@@ -61,6 +61,8 @@ from .data_manager import (
     get_expired_snapshot,
     delete_expired_snapshot,
     find_group_by_public_id,
+    parse_local_input,
+    is_valid_timezone,
     load_goals,
     load_classes,
 )
@@ -176,12 +178,8 @@ class ROGroupFinder(commands.Cog):
     async def _wizard_complete(
         self, interaction: discord.Interaction, state: WizardState
     ) -> None:
-        dt = None
-        if state.dt_str:
-            try:
-                dt = datetime.strptime(state.dt_str, "%d.%m.%Y %H:%M").replace(tzinfo=timezone.utc)
-            except ValueError:
-                pass
+        # Nutzereingabe gilt als lokale Guild-Zeit → wird als UTC gespeichert.
+        dt = parse_local_input(state.dt_str, state.guild_id) if state.dt_str else None
 
         group = create_group(
             guild_id       = state.guild_id,
@@ -377,6 +375,7 @@ class ROGroupFinder(commands.Cog):
         embed.add_field(name="\U0001f5d1\ufe0f Cleanup",      value=f"Nach {s['cleanup_days']} Tagen Inaktivit\u00e4t", inline=True)
         embed.add_field(name="\u26a0\ufe0f Vorwarnung",        value=f"{s['warning_days']} Tage vor Ablauf",      inline=True)
         embed.add_field(name="\u23f3 Wartelisten-Timeout",     value=f"{s['waitlist_timeout_minutes']} Minuten",  inline=True)
+        embed.add_field(name="\ud83c\udf0d Zeitzone",                value=s.get("timezone", "Europe/Berlin"),          inline=True)
         await self._reply(ctx, embed=embed)
 
     @gruppe_setup.command(name="erinnerung", description="Stellt ein wann Erinnerungen gesendet werden")
@@ -414,6 +413,25 @@ class ROGroupFinder(commands.Cog):
         set_guild_setting(ctx.guild.id, "warning_days", tage)
         await self._reply(ctx, f"\u2705 Der Ersteller wird **{tage} Tage** vor Ablauf vorgewarnt.")
 
+    @gruppe_setup.command(name="zeitzone", description="Setzt die Zeitzone f\u00fcr Termine (z.B. Europe/Berlin)")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_zeitzone(self, ctx: commands.Context, zeitzone: str) -> None:
+        zeitzone = zeitzone.strip()
+        if not is_valid_timezone(zeitzone):
+            await self._reply(
+                ctx,
+                "\u274c Unbekannte Zeitzone. Bitte einen **IANA-Namen** angeben, z.B. "
+                "`Europe/Berlin`, `Europe/London` oder `America/New_York`.",
+            )
+            return
+        set_guild_setting(ctx.guild.id, "timezone", zeitzone)
+        await self._reply(
+            ctx,
+            f"\u2705 Zeitzone auf **{zeitzone}** gesetzt. Termin-Eingaben werden ab jetzt "
+            f"in dieser Zone interpretiert.",
+        )
+
     @gruppe_setup.command(name="timeout", description="Stellt den Wartelisten-Timeout ein")
     @commands.guild_only()
     @commands.admin()
@@ -429,6 +447,7 @@ class ROGroupFinder(commands.Cog):
     @gruppe_config_erinnerung.error
     @gruppe_config_cleanup.error
     @gruppe_config_warnung.error
+    @gruppe_config_zeitzone.error
     @gruppe_config_timeout.error
     async def admin_error(self, ctx: commands.Context, error) -> None:
         # Reds admin()-Check wirft CheckFailure (nicht MissingPermissions).
@@ -1443,8 +1462,16 @@ class EditDateTimeModal(ui.Modal, title="Datum & Zeit ändern"):
         self.cog   = cog
 
     async def on_submit(self, interaction: discord.Interaction):
-        new_dt = f"{self.date_input.value.strip()} {self.time_input.value.strip()}"
-        await self.cog.apply_group_edit(interaction, self.group, {"datetime": new_dt})
+        raw    = f"{self.date_input.value.strip()} {self.time_input.value.strip()}"
+        dt_utc = parse_local_input(raw, interaction.guild_id)
+        if dt_utc is None:
+            await interaction.response.send_message(
+                "❌ Ungültiges Format. Bitte Datum als **TT.MM.JJJJ** und "
+                "Uhrzeit als **HH:MM** eingeben (z.B. `24.12.2026` / `20:30`).",
+                ephemeral=True,
+            )
+            return
+        await self.cog.apply_group_edit(interaction, self.group, {"datetime": dt_utc.isoformat()})
         await interaction.response.send_message("✅ Datum & Zeit aktualisiert.", ephemeral=True)
 
 

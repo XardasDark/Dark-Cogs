@@ -97,6 +97,10 @@ DEFAULT_EXPIRY_WARNING_DAYS      = 3    # Tage vor Ablauf → Vorwarnung an den 
 DEFAULT_REMINDER_MINUTES         = 30   # Minuten vor Gruppenstart → Erinnerungs-DM
 DEFAULT_WAITLIST_TIMEOUT_MINUTES = 30   # Minuten die ein Wartelisten-Spieler Zeit hat
 
+# IANA-Zeitzone in der Termin-Eingaben interpretiert werden (pro Guild überschreibbar).
+# Nutzereingaben (z.B. "20:30") gelten als lokale Zeit dieser Zone; gespeichert wird UTC.
+DEFAULT_TIMEZONE                 = "Europe/Berlin"
+
 # Wie lange ein Snapshot einer abgelaufenen Gruppe für "Erneut suchen" aufbewahrt wird.
 EXPIRED_SNAPSHOT_RETENTION_DAYS  = 30
 

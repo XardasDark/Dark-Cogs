@@ -25,7 +25,7 @@ from typing import Optional, List, Dict, Callable
 from datetime import datetime, timezone
 import re
 
-from .data_manager import load_goals, load_classes, build_slot
+from .data_manager import load_goals, load_classes, build_slot, stored_datetime_to_local_str
 from .constants import (
     ROLE_TYPES, RECURRENCE_OPTIONS, WIZARD_STEPS,
     SLOT_TYPE_ROLE, SLOT_TYPE_CLASS, SLOT_TYPE_FREE,
@@ -338,14 +338,14 @@ def build_state_from_group(
             "user_id":     creator_id,
         })
 
-    # ── Datum & Zeit ──────────────────────────────────────────────────────────
-    dt_raw = group.get("datetime")
-    if dt_raw:
+    # ── Datum & Zeit (gespeichertes UTC → lokale Guild-Zeit) ──────────────────
+    local_str = stored_datetime_to_local_str(group.get("datetime"), guild_id)
+    if local_str:
+        state.dt_str = local_str
         try:
-            dt = datetime.fromisoformat(dt_raw)
+            dt = datetime.strptime(local_str, "%d.%m.%Y %H:%M")
             state._dt_day, state._dt_month, state._dt_year = dt.day, dt.month, dt.year
             state._dt_time = f"{dt.hour:02d}:{dt.minute:02d}"
-            state.dt_str   = f"{dt.day:02d}.{dt.month:02d}.{dt.year} {state._dt_time}"
         except ValueError:
             pass
 

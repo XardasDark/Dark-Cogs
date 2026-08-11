@@ -13,14 +13,25 @@ Alle Datei-Pfade sind relativ zum Ordner des Cogs (ro_groupfinder/data/).
 import json
 import uuid
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Optional, Dict, List, Any
+
+# zoneinfo ist ab Python 3.9 in der Stdlib; darunter über backports.zoneinfo.
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:  # pragma: no cover  (Python < 3.9)
+    try:
+        from backports.zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # type: ignore
+    except ImportError:
+        ZoneInfo = None                 # type: ignore
+        ZoneInfoNotFoundError = Exception  # type: ignore
 
 from .constants import (
     DEFAULT_CLEANUP_DAYS,
     DEFAULT_EXPIRY_WARNING_DAYS,
     DEFAULT_REMINDER_MINUTES,
     DEFAULT_WAITLIST_TIMEOUT_MINUTES,
+    DEFAULT_TIMEZONE,
     EXPIRED_SNAPSHOT_RETENTION_DAYS,
     GROUP_STATUS,
 )
@@ -115,6 +126,7 @@ def get_guild_settings(guild_id: int) -> Dict:
         "warning_days":               DEFAULT_EXPIRY_WARNING_DAYS,
         "reminder_minutes":           DEFAULT_REMINDER_MINUTES,
         "waitlist_timeout_minutes":   DEFAULT_WAITLIST_TIMEOUT_MINUTES,
+        "timezone":                   DEFAULT_TIMEZONE,
     }
     existing = all_settings.get(guild_key, {})
     # Merge: defaults werden durch gespeicherte Werte überschrieben
@@ -139,6 +151,99 @@ def set_group_channel(guild_id: int, channel_id: int) -> None:
 def get_group_channel(guild_id: int) -> Optional[int]:
     """Gibt die Channel-ID zurück in der Gruppen erlaubt sind, oder None."""
     return get_guild_settings(guild_id).get("group_channel_id")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ZEITZONE & DATUM-KONVERTIERUNG
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Grundregel: Termine werden IMMER als UTC (ISO-String) gespeichert.
+# Nutzereingaben ("DD.MM.YYYY HH:MM") gelten als LOKALE Zeit der Guild-Zeitzone
+# und werden vor dem Speichern nach UTC umgerechnet. Die Anzeige nutzt
+# dynamische Discord-Timestamps, die sich pro Betrachter lokalisieren.
+
+def is_valid_timezone(name: str) -> bool:
+    """True wenn `name` eine auflösbare IANA-Zeitzone ist (z.B. 'Europe/Berlin')."""
+    if not name or ZoneInfo is None:
+        return False
+    try:
+        ZoneInfo(name)
+        return True
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+
+
+def get_guild_timezone(guild_id: int) -> tzinfo:
+    """
+    Gibt die konfigurierte Zeitzone der Guild zurück (Standard: DEFAULT_TIMEZONE).
+    Fällt bei fehlendem zoneinfo-Modul oder ungültigem Namen auf UTC zurück.
+    """
+    name = get_guild_settings(guild_id).get("timezone") or DEFAULT_TIMEZONE
+    if ZoneInfo is None:
+        return timezone.utc
+    for candidate in (name, DEFAULT_TIMEZONE):
+        try:
+            return ZoneInfo(candidate)
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+    return timezone.utc
+
+
+def parse_local_input(dt_str: str, guild_id: int) -> Optional[datetime]:
+    """
+    Parst eine Nutzereingabe 'DD.MM.YYYY HH:MM' als LOKALE Zeit der Guild-Zeitzone
+    und gibt ein timezone-aware datetime in UTC zurück.
+    Gibt None zurück wenn das Format ungültig ist.
+    """
+    try:
+        naive = datetime.strptime((dt_str or "").strip(), "%d.%m.%Y %H:%M")
+    except (ValueError, AttributeError):
+        return None
+    return naive.replace(tzinfo=get_guild_timezone(guild_id)).astimezone(timezone.utc)
+
+
+def parse_stored_datetime(value: Optional[str], guild_id: int) -> Optional[datetime]:
+    """
+    Wandelt einen gespeicherten datetime-Wert in ein aware UTC-datetime um.
+
+    Unterstützt:
+      - ISO-Format (aware → direkt; naiv → als UTC interpretiert)
+      - Alt-Format 'DD.MM.YYYY HH:MM' (als lokale Guild-Zeit interpretiert)
+    """
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        pass
+    return parse_local_input(value, guild_id)
+
+
+def stored_datetime_to_local_str(value: Optional[str], guild_id: int) -> Optional[str]:
+    """Gespeichertes datetime → 'DD.MM.YYYY HH:MM' in der Guild-Zeitzone (oder None)."""
+    dt = parse_stored_datetime(value, guild_id)
+    if dt is None:
+        return None
+    return dt.astimezone(get_guild_timezone(guild_id)).strftime("%d.%m.%Y %H:%M")
+
+
+def format_datetime_display(
+    value:    Optional[str],
+    guild_id: int,
+    fallback: str = "Offen / Zeitlos",
+) -> str:
+    """
+    Gespeichertes datetime → dynamischer Discord-Timestamp (pro Betrachter
+    lokalisiert, mit relativer Angabe). Fällt auf `fallback` zurück wenn kein Datum.
+    """
+    dt = parse_stored_datetime(value, guild_id)
+    if dt is None:
+        return fallback
+    ts = int(dt.timestamp())
+    return f"<t:{ts}:F> (<t:{ts}:R>)"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
