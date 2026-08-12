@@ -192,8 +192,8 @@ class Muhfrage(commands.Cog):
             return
         try:
             msg = await channel.fetch_message(pub["message_id"])
-            count = await self.store.response_count(guild, slug)
-            await msg.edit(embed=views.build_public_embed(survey, count),
+            responses = await self.store.get_responses(guild, slug)
+            await msg.edit(embed=views.build_public_embed(survey, len(responses), responses, guild),
                            view=views.build_join_view(survey))
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
@@ -208,15 +208,15 @@ class Muhfrage(commands.Cog):
         roles = set(survey.get("allowed_role_ids", []))
         if not users and not roles:
             return None
-        eligible = set()
-        for uid in users:
-            m = guild.get_member(uid)
-            if m and not m.bot:
-                eligible.add(uid)
-        if roles:
-            for m in guild.members:
-                if not m.bot and any(r.id in roles for r in m.roles):
-                    eligible.add(m.id)
+        # Explizit eingetragene User zählen direkt (unabhängig vom Member-Cache),
+        # damit die "alle Berechtigten"-Bedingung auch bei einzelnen Usern greift.
+        eligible = set(users)
+        for role_id in roles:
+            role = guild.get_role(role_id)
+            if role:
+                for m in role.members:
+                    if not m.bot:
+                        eligible.add(m.id)
         return len(eligible)
 
     async def on_response_saved(self, guild: discord.Guild, slug: str) -> None:
@@ -496,8 +496,8 @@ class Muhfrage(commands.Cog):
 
         target = kanal or ctx.channel
         survey["status"] = "open"
-        count = await self.store.response_count(ctx.guild, id)
-        embed = views.build_public_embed(survey, count)
+        responses = await self.store.get_responses(ctx.guild, id)
+        embed = views.build_public_embed(survey, len(responses), responses, ctx.guild)
         view = views.build_join_view(survey)
 
         try:

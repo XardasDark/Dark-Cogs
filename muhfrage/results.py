@@ -117,6 +117,24 @@ def aggregate_field(question: Dict[str, Any], responses: Dict[str, Dict[str, Any
 # EMBEDS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def live_result_value(question: Dict[str, Any], responses: Dict[str, Dict[str, Any]],
+                      anonymous: bool, guild: Optional[discord.Guild]) -> str:
+    """Ergebnis-Text einer Frage für die Live-Anzeige (mit Einzelstimmen, wenn nicht anonym)."""
+    text = aggregate_field(question, responses)
+    if not anonymous:
+        voters = []
+        for i, (uid, ua) in enumerate(responses.items(), start=1):
+            if question["id"] in ua and ua[question["id"]] is not None:
+                name = _voter_name(guild, False, uid, i)
+                voters.append(f"• {name}: {_answer_to_text(question, ua[question['id']])}")
+        if voters:
+            shown = voters[:15]
+            text += "\n\n__Einzelstimmen:__\n" + "\n".join(shown)
+            if len(voters) > len(shown):
+                text += f"\n… und {len(voters) - len(shown)} weitere"
+    return text[:1024]
+
+
 def build_results_embed(survey: Dict[str, Any], responses: Dict[str, Dict[str, Any]]) -> discord.Embed:
     """Ergebnis-Embed für eine Umfrage (ein Feld pro Frage)."""
     embed = discord.Embed(

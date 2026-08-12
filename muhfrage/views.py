@@ -6,7 +6,7 @@ Baut die veröffentlichte Teilnehmen-Nachricht, deren persistenten Button sowie
 wird zentral über on_interaction im Cog geroutet (übersteht Neustarts).
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import discord
 
@@ -15,7 +15,7 @@ from .constants import (
     STATUS_LABELS, VISIBILITY_OPTIONS, TIMING_OPTIONS,
     QUESTION_TYPES, option_letter,
 )
-from . import models
+from . import models, results
 
 JOIN_PREFIX = "muhfrage_join"   # custom_id: f"{JOIN_PREFIX}:{slug}"
 
@@ -28,33 +28,57 @@ def _status_color(status: str) -> int:
 # ÖFFENTLICHE TEILNEHMEN-NACHRICHT
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_public_embed(survey: Dict[str, Any], response_count: int) -> discord.Embed:
+def build_public_embed(survey: Dict[str, Any], response_count: int,
+                       responses: Optional[Dict[str, Dict[str, Any]]] = None,
+                       guild: Optional["discord.Guild"] = None) -> discord.Embed:
+    # Live nur öffentlich zeigen, wenn Ergebnisse auch öffentlich sind (kein Manager-Leak)
+    is_live = (survey.get("results_timing") == "live"
+               and survey.get("results_visibility") == "public")
     embed = discord.Embed(
         title=f"📊 {survey['title']}",
         description=survey.get("description") or None,
         color=_status_color(survey["status"]),
     )
 
-    # Fragen-Übersicht (ohne Ergebnisse zu verraten)
-    lines = []
-    for pos, q in enumerate(survey["questions"], start=1):
-        meta = QUESTION_TYPES.get(q["type"], {})
-        lines.append(f"**{pos}.** {q['text']}  ·  _{meta.get('name', q['type'])}_")
-        if q.get("options"):
-            opts = "  ".join(f"`{option_letter(i)}` {o}" for i, o in enumerate(q["options"]))
-            lines.append(opts)
-    if lines:
-        embed.add_field(name="Fragen", value="\n".join(lines)[:1024], inline=False)
+    # Fragen-Übersicht (bei Live-Umfragen mit aktuellem Zwischenstand)
+    if is_live and responses is not None:
+        for pos, q in enumerate(survey["questions"], start=1):
+            embed.add_field(
+                name=f"{pos}. {q['text']}",
+                value=results.live_result_value(q, responses, survey.get("anonymous", False), guild),
+                inline=False,
+            )
+    else:
+        lines = []
+        for pos, q in enumerate(survey["questions"], start=1):
+            meta = QUESTION_TYPES.get(q["type"], {})
+            lines.append(f"**{pos}.** {q['text']}  ·  _{meta.get('name', q['type'])}_")
+            if q.get("options"):
+                opts = "  ".join(f"`{option_letter(i)}` {o}" for i, o in enumerate(q["options"]))
+                lines.append(opts)
+        if lines:
+            embed.add_field(name="Fragen", value="\n".join(lines)[:1024], inline=False)
 
     hinweise = []
     if survey.get("anonymous"):
         hinweise.append("🕵️ Anonyme Abstimmung")
-    if survey.get("allowed_user_ids") or survey.get("allowed_role_ids"):
-        hinweise.append("🔒 Nur berechtigte Teilnehmer")
     if survey.get("allow_change"):
         hinweise.append("🔁 Antwort änderbar bis zum Ende")
+    if is_live:
+        hinweise.append("👀 Ergebnisse sind live sichtbar")
     if hinweise:
         embed.add_field(name="Hinweise", value=" · ".join(hinweise), inline=False)
+
+    # Wer darf teilnehmen (Allowlist)
+    users = survey.get("allowed_user_ids", [])
+    roles = survey.get("allowed_role_ids", [])
+    if users or roles:
+        teile = []
+        if roles:
+            teile.append(" ".join(f"<@&{r}>" for r in roles))
+        if users:
+            teile.append(" ".join(f"<@{u}>" for u in users))
+        embed.add_field(name="🔒 Berechtigt zur Teilnahme", value="\n".join(teile)[:1024], inline=False)
 
     # Automatisches Ende (nur bei laufenden Umfragen relevant)
     if survey["status"] == "open" and models.has_autoclose(survey):
