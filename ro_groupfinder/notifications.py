@@ -26,7 +26,7 @@ import discord
 from typing import Optional, Dict, List
 
 from .constants import RECURRENCE_OPTIONS, COLOR_OPEN, COLOR_CLOSED, COLOR_EXPIRED
-from .data_manager import format_datetime_display
+from .data_manager import format_datetime_display, is_notif_enabled
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -61,6 +61,21 @@ async def _send_dm(
         return True
     except (discord.Forbidden, discord.HTTPException):
         return False
+
+
+async def _send_dm_cat(
+    user:     discord.User,
+    embed:    discord.Embed,
+    category: str,
+    view:     Optional[discord.ui.View] = None,
+) -> bool:
+    """
+    Wie _send_dm, aber respektiert die Benachrichtigungs-Einstellungen des
+    Empfängers: Hat der Nutzer die Kategorie deaktiviert, wird nichts gesendet.
+    """
+    if not is_notif_enabled(user.id, category):
+        return False
+    return await _send_dm(user, embed, view)
 
 
 def _dm_button_view(label: str, custom_id: str, style: discord.ButtonStyle) -> discord.ui.View:
@@ -117,7 +132,7 @@ async def notify_creator_join(
         ),
         color=COLOR_OPEN,
     )
-    await _send_dm(creator, embed)
+    await _send_dm_cat(creator, embed, "beitritte")
 
 
 async def notify_creator_leave(
@@ -142,7 +157,7 @@ async def notify_creator_leave(
         ),
         color=0xFFAB00,
     )
-    await _send_dm(creator, embed)
+    await _send_dm_cat(creator, embed, "beitritte")
 
 
 async def notify_creator_removed(
@@ -167,7 +182,7 @@ async def notify_creator_removed(
         ),
         color=COLOR_OPEN,
     )
-    await _send_dm(creator, embed)
+    await _send_dm_cat(creator, embed, "beitritte")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -195,7 +210,7 @@ async def notify_player_removed(
         ),
         color=COLOR_CLOSED,
     )
-    await _send_dm(player, embed)
+    await _send_dm_cat(player, embed, "status")
 
 
 async def notify_group_full(
@@ -222,7 +237,7 @@ async def notify_group_full(
     for uid in member_ids:
         user = await _get_user(bot, uid)
         if user:
-            await _send_dm(user, embed)
+            await _send_dm_cat(user, embed, "gruppe_voll")
 
 
 async def notify_group_deleted(
@@ -249,7 +264,7 @@ async def notify_group_deleted(
     for uid in all_ids:
         user = await _get_user(bot, uid)
         if user:
-            await _send_dm(user, embed)
+            await _send_dm_cat(user, embed, "status")
 
 
 async def notify_group_finished(
@@ -277,7 +292,7 @@ async def notify_group_finished(
     for uid in all_ids:
         user = await _get_user(bot, uid)
         if user:
-            await _send_dm(user, embed)
+            await _send_dm_cat(user, embed, "status")
 
 
 async def notify_expiry_warning(
@@ -316,7 +331,7 @@ async def notify_expiry_warning(
         custom_id=f"group_extend:{group['guild_id']}:{group['message_id']}",
         style=discord.ButtonStyle.success,
     )
-    await _send_dm(creator, embed, view)
+    await _send_dm_cat(creator, embed, "status", view)
 
 
 async def notify_group_expired(
@@ -366,9 +381,9 @@ async def notify_group_expired(
         if not user:
             continue
         if uid == creator_id:
-            await _send_dm(user, creator_embed, recreate_view)
+            await _send_dm_cat(user, creator_embed, "status", recreate_view)
         else:
-            await _send_dm(user, member_embed)
+            await _send_dm_cat(user, member_embed, "status")
 
 
 async def notify_reminder(
@@ -394,7 +409,7 @@ async def notify_reminder(
     for uid in member_ids:
         user = await _get_user(bot, uid)
         if user:
-            await _send_dm(user, embed)
+            await _send_dm_cat(user, embed, "erinnerung")
 
 
 async def notify_edit(
@@ -435,7 +450,7 @@ async def notify_edit(
     for uid in member_ids:
         user = await _get_user(bot, uid)
         if user:
-            await _send_dm(user, embed)
+            await _send_dm_cat(user, embed, "aenderungen")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -464,7 +479,7 @@ async def notify_waitlist_joined(
         ),
         color=0xFFAB00,
     )
-    await _send_dm(player, embed)
+    await _send_dm_cat(player, embed, "warteliste")
 
 
 async def notify_waitlist_slot_free(
@@ -490,7 +505,7 @@ async def notify_waitlist_slot_free(
         ),
         color=COLOR_OPEN,
     )
-    await _send_dm(player, embed)
+    await _send_dm_cat(player, embed, "warteliste")
 
 
 async def notify_waitlist_timeout(
@@ -514,7 +529,7 @@ async def notify_waitlist_timeout(
         ),
         color=0xFFAB00,
     )
-    await _send_dm(player, embed)
+    await _send_dm_cat(player, embed, "warteliste")
 
 
 async def notify_waitlist_removed(
@@ -537,7 +552,7 @@ async def notify_waitlist_removed(
         ),
         color=COLOR_CLOSED,
     )
-    await _send_dm(player, embed)
+    await _send_dm_cat(player, embed, "warteliste")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -576,7 +591,7 @@ async def notify_recurrence_new_post(
     for uid in member_ids:
         user = await _get_user(bot, uid)
         if user:
-            await _send_dm(user, embed)
+            await _send_dm_cat(user, embed, "wiederholung")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

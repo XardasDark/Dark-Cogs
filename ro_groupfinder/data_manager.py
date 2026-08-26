@@ -36,6 +36,7 @@ from .constants import (
     DEFAULT_TIMEZONE,
     EXPIRED_SNAPSHOT_RETENTION_DAYS,
     GROUP_STATUS,
+    DEFAULT_NOTIFICATION_PREFS,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ _BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 _DATA_DIR      = os.path.join(_BASE_DIR, "data")
 _GROUPS_FILE   = os.path.join(_DATA_DIR, "groups.json")
 _SETTINGS_FILE = os.path.join(_DATA_DIR, "settings.json")
+_USER_PREFS_FILE = os.path.join(_DATA_DIR, "user_prefs.json")
 _EXPIRED_FILE  = os.path.join(_DATA_DIR, "expired_snapshots.json")
 _GOALS_FILE    = os.path.join(_DATA_DIR, "goals.json")
 _CLASSES_FILE  = os.path.join(_DATA_DIR, "classes.json")
@@ -166,6 +168,52 @@ def set_forum_channel(guild_id: int, channel_id: int) -> None:
 def get_forum_channel(guild_id: int) -> Optional[int]:
     """Gibt die Forum-Channel-ID für Diskussionsposts zurück, oder None."""
     return get_guild_settings(guild_id).get("forum_channel_id")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BENACHRICHTIGUNGS-EINSTELLUNGEN (pro Spieler, guild-übergreifend)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# DMs erreichen einen Spieler unabhängig von der Guild, daher werden die
+# Präferenzen global pro User-ID gespeichert. Fehlende Kategorien gelten als
+# aktiv (Standard aus DEFAULT_NOTIFICATION_PREFS).
+
+def load_user_prefs() -> Dict:
+    """Lädt alle Benachrichtigungs-Einstellungen (Key = User-ID als String)."""
+    return _load_json(_USER_PREFS_FILE, {})
+
+
+def save_user_prefs(prefs: Dict) -> None:
+    """Speichert alle Benachrichtigungs-Einstellungen."""
+    _save_json(_USER_PREFS_FILE, prefs)
+
+
+def get_user_notif_prefs(user_id: int) -> Dict[str, bool]:
+    """
+    Gibt die Benachrichtigungs-Präferenzen eines Spielers zurück.
+    Fehlende Kategorien werden mit dem Standard (aktiv) aufgefüllt.
+    """
+    stored = load_user_prefs().get(str(user_id), {})
+    merged = dict(DEFAULT_NOTIFICATION_PREFS)
+    for key, value in stored.items():
+        if key in merged:
+            merged[key] = bool(value)
+    return merged
+
+
+def set_user_notif_prefs(user_id: int, prefs: Dict[str, bool]) -> None:
+    """Speichert die vollständigen Präferenzen eines Spielers."""
+    all_prefs = load_user_prefs()
+    all_prefs[str(user_id)] = {
+        key: bool(prefs.get(key, DEFAULT_NOTIFICATION_PREFS[key]))
+        for key in DEFAULT_NOTIFICATION_PREFS
+    }
+    save_user_prefs(all_prefs)
+
+
+def is_notif_enabled(user_id: int, category: str) -> bool:
+    """True wenn der Spieler die Benachrichtigungs-Kategorie aktiviert hat."""
+    return get_user_notif_prefs(user_id).get(category, True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

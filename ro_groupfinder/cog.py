@@ -69,6 +69,8 @@ from .data_manager import (
     is_valid_timezone,
     load_goals,
     load_classes,
+    get_user_notif_prefs,
+    set_user_notif_prefs,
 )
 from .group_embed import (
     build_group_embed,
@@ -100,6 +102,7 @@ from .forum import (
 from .constants import (
     COLOR_OPEN, COLOR_CLOSED, RECURRENCE_OPTIONS, ROLE_TYPES,
     DEFAULT_CLEANUP_DAYS, DEFAULT_REMINDER_MINUTES, DEFAULT_WAITLIST_TIMEOUT_MINUTES,
+    NOTIFICATION_CATEGORIES,
 )
 
 
@@ -361,6 +364,23 @@ class ROGroupFinder(commands.Cog):
         )
         _wizard_sessions[interaction.user.id] = session
         await session.start(interaction)
+
+    @gruppe.command(name="benachrichtigungen", description="Stelle ein welche Benachrichtigungen du erhalten möchtest")
+    @commands.guild_only()
+    async def gruppe_benachrichtigungen(self, ctx: commands.Context) -> None:
+        if not ctx.interaction:
+            await ctx.send(
+                "❌ Dieser Befehl funktioniert nur als Slash-Command: `/gruppe benachrichtigungen`"
+            )
+            return
+
+        interaction = ctx.interaction
+        prefs = get_user_notif_prefs(interaction.user.id)
+        await interaction.response.send_message(
+            embed=_notif_prefs_embed(prefs),
+            view=_NotifPrefsView(interaction.user.id, prefs),
+            ephemeral=True,
+        )
 
     # ── Admin-Befehle /gruppe-setup ────────────────────
     @commands.hybrid_group(name="gruppe-setup", description="RO Gruppen-Einstellungen (nur Admins)")
@@ -1571,6 +1591,71 @@ class ROGroupFinder(commands.Cog):
             )
         except Exception:
             pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BENACHRICHTIGUNGS-EINSTELLUNGEN (pro Spieler)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _notif_prefs_embed(prefs: Dict[str, bool]) -> discord.Embed:
+    """Baut das Übersichts-Embed für die Benachrichtigungs-Einstellungen."""
+    lines = []
+    for key, meta in NOTIFICATION_CATEGORIES.items():
+        state = "✅" if prefs.get(key, True) else "🚫"
+        lines.append(f"{state} {meta['emoji']} **{meta['label']}** – {meta['desc']}")
+    return discord.Embed(
+        title="🔔 Deine Benachrichtigungen",
+        description=(
+            "Wähle unten aus, welche **DMs** du vom Bot erhalten möchtest. "
+            "Alles was du **abwählst**, wird nicht mehr gesendet.\n\n"
+            + "\n".join(lines)
+        ),
+        color=COLOR_OPEN,
+    )
+
+
+class _NotifPrefsView(ui.View):
+    """Ephemeral-View mit Mehrfachauswahl zum An-/Abschalten von Benachrichtigungen."""
+
+    def __init__(self, user_id: int, prefs: Dict[str, bool]):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+
+        options = [
+            discord.SelectOption(
+                label=meta["label"],
+                value=key,
+                emoji=meta["emoji"],
+                description=meta["desc"][:100],
+                default=prefs.get(key, True),
+            )
+            for key, meta in NOTIFICATION_CATEGORIES.items()
+        ]
+        sel = ui.Select(
+            placeholder="Aktive Benachrichtigungen wählen...",
+            min_values=0,
+            max_values=len(options),
+            options=options,
+        )
+        sel.callback = self._callback
+        self.add_item(sel)
+
+    async def _callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "❌ Das sind nicht deine Einstellungen.", ephemeral=True
+            )
+            return
+
+        selected  = set(interaction.data.get("values", []))
+        new_prefs = {key: (key in selected) for key in NOTIFICATION_CATEGORIES}
+        set_user_notif_prefs(self.user_id, new_prefs)
+
+        # View mit aktualisierten Häkchen neu aufbauen
+        await interaction.response.edit_message(
+            embed=_notif_prefs_embed(new_prefs),
+            view=_NotifPrefsView(self.user_id, new_prefs),
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

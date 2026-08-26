@@ -112,6 +112,53 @@ DEFAULT_TIMEZONE                 = "Europe/Berlin"
 EXPIRED_SNAPSHOT_RETENTION_DAYS  = 30
 
 # ─────────────────────────────────────────────────────────────────────────────
+# BENACHRICHTIGUNGS-KATEGORIEN
+# Jeder Spieler kann pro Kategorie einstellen ob er die zugehörigen DM-
+# Benachrichtigungen des Bots erhalten möchte (/gruppe benachrichtigungen).
+# Reihenfolge = Anzeige-Reihenfolge im Auswahlmenü.
+# ─────────────────────────────────────────────────────────────────────────────
+NOTIFICATION_CATEGORIES: Dict[str, Dict[str, str]] = {
+    "beitritte": {
+        "emoji": "🟢",
+        "label": "Bei- & Austritte",
+        "desc":  "Wenn Spieler deiner Gruppe bei- oder austreten (für Gruppenführer)",
+    },
+    "gruppe_voll": {
+        "emoji": "🎉",
+        "label": "Gruppe ist voll",
+        "desc":  "Wenn alle Slots deiner Gruppe belegt sind",
+    },
+    "erinnerung": {
+        "emoji": "⏰",
+        "label": "Start-Erinnerung",
+        "desc":  "Kurz bevor eine Gruppe startet",
+    },
+    "aenderungen": {
+        "emoji": "✏️",
+        "label": "Änderungen",
+        "desc":  "Wenn Gruppendetails (Termin, Ziel, ...) bearbeitet werden",
+    },
+    "warteliste": {
+        "emoji": "⏳",
+        "label": "Warteliste",
+        "desc":  "Rund um deinen Wartelisten-Platz (frei, Timeout, ...)",
+    },
+    "status": {
+        "emoji": "📢",
+        "label": "Gruppen-Status",
+        "desc":  "Auflösung, Abschluss, Ablauf oder Entfernung aus einer Gruppe",
+    },
+    "wiederholung": {
+        "emoji": "🔄",
+        "label": "Wiederholungen",
+        "desc":  "Wenn eine wiederkehrende Gruppe neu gepostet wird",
+    },
+}
+
+# Standard: alle Benachrichtigungen aktiv.
+DEFAULT_NOTIFICATION_PREFS: Dict[str, bool] = {key: True for key in NOTIFICATION_CATEGORIES}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SLOT-AUSWAHLTYPEN
 # Gibt an wie ein Slot im Wizard definiert wurde.
 # ─────────────────────────────────────────────────────────────────────────────
