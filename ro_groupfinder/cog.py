@@ -86,7 +86,7 @@ from .notifications import (
     notify_edit,
 )
 from .scheduler import GroupScheduler
-from .forum import create_forum_post, close_forum_post
+from .forum import create_forum_post, close_forum_post, notify_join_in_forum
 from .constants import (
     COLOR_OPEN, COLOR_CLOSED, RECURRENCE_OPTIONS, ROLE_TYPES,
     DEFAULT_CLEANUP_DAYS, DEFAULT_REMINDER_MINUTES, DEFAULT_WAITLIST_TIMEOUT_MINUTES,
@@ -797,6 +797,13 @@ class ROGroupFinder(commands.Cog):
         # Ersteller benachrichtigen
         await notify_creator_join(
             self.bot, group, ingame_name, class_display, class_emoji, slot_index
+        )
+
+        # Beigetretenen Spieler im Forum-Thread pingen (findet so sofort den
+        # richtigen Diskussionsbeitrag – auch bei vielen Beiträgen).
+        await notify_join_in_forum(
+            self.bot, group, user_id,
+            ingame_name=ingame_name, class_display=class_display, class_emoji=class_emoji,
         )
 
         # Embed aktualisieren

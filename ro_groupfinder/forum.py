@@ -113,6 +113,53 @@ async def create_forum_post(bot, group: Dict) -> Optional[int]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# BEITRITT IM FORUM ANKÜNDIGEN
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def notify_join_in_forum(
+    bot,
+    group:         Dict,
+    user_id:       int,
+    *,
+    ingame_name:   Optional[str] = None,
+    class_display: Optional[str] = None,
+    class_emoji:   Optional[str] = None,
+) -> None:
+    """
+    Pingt einen neu beigetretenen Spieler im Forum-Thread der Gruppe.
+
+    Der Ping erzeugt eine Benachrichtigung, die den Spieler direkt in DIESEN
+    Thread führt, so findet er den richtigen Diskussionsbeitrag sofort, auch
+    wenn es viele Beiträge gibt. Zudem wird er dem Thread als Teilnehmer
+    hinzugefügt.
+    """
+    thread_id = group.get("forum_thread_id")
+    if not thread_id:
+        return
+
+    thread = await _resolve_channel(bot, thread_id)
+    if not isinstance(thread, discord.Thread):
+        return
+    # In bereits geschlossene/archivierte Threads nicht mehr hineinpingen.
+    if thread.archived or thread.locked:
+        return
+
+    name = ingame_name or "Spieler"
+    role = f" als {class_emoji or ''} {class_display}".rstrip() if class_display else ""
+    text = (
+        f"👋 <@{user_id}> (**{name}**) ist der Gruppe beigetreten{role}!"
+    )
+
+    try:
+        await thread.send(
+            text,
+            allowed_mentions=discord.AllowedMentions(users=True),
+        )
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # FORUM-POST SCHLIESSEN
 # ─────────────────────────────────────────────────────────────────────────────
 
