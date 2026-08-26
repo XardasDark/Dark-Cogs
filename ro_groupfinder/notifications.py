@@ -241,25 +241,30 @@ async def notify_group_full(
 
 
 async def notify_group_deleted(
-    bot:    discord.Client,
-    group:  Dict,
-    reason: str = "manuell vom Ersteller gelöscht",
+    bot:        discord.Client,
+    group:      Dict,
+    reason:     str = "aufgelöst",
+    exclude_id: Optional[int] = None,
 ) -> None:
     """
     Informiert alle Mitglieder und Wartelisten-Spieler wenn eine Gruppe gelöscht wird.
+
+    exclude_id: wird NICHT benachrichtigt (i.d.R. die Person, die gelöscht hat).
+    So bekommt z.B. der Gruppenleiter eine Info, wenn ein Admin seine Gruppe löscht.
     """
     embed = _base_embed(
         title="🗑️ Gruppe wurde aufgelöst",
         description=(
             f"Die Gruppe **{_group_title(group)}** wurde {reason}.\n\n"
-            f"👑 **Ersteller:** {group.get('creator_name', '?')}"
+            f"👑 **Gruppenleiter:** {group.get('creator_name', '?')}"
         ),
         color=COLOR_CLOSED,
     )
 
     all_ids = _get_all_member_ids(group) + _get_waitlist_ids(group)
-    # Ersteller nicht doppelt benachrichtigen
-    all_ids = list({uid for uid in all_ids if uid != group["creator_id"]})
+    if exclude_id is not None:
+        all_ids = [uid for uid in all_ids if uid != exclude_id]
+    all_ids = list(set(all_ids))
 
     for uid in all_ids:
         user = await _get_user(bot, uid)

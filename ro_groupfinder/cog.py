@@ -987,6 +987,11 @@ class ROGroupFinder(commands.Cog):
         guild_id = interaction.guild_id
         msg_id   = group["message_id"]
 
+        # Interaktion sofort bestätigen, bevor DMs/Übersicht laufen (10062-Schutz).
+        await interaction.response.edit_message(
+            content="⏳ Du verlässt die Gruppe …", view=None
+        )
+
         player_name = (
             group["slots"][slot_index].get("filled_by_ingame")
             or group["slots"][slot_index].get("filled_by_name", "?")
@@ -1015,9 +1020,12 @@ class ROGroupFinder(commands.Cog):
         # Nächsten Wartelisten-Spieler benachrichtigen
         await self.scheduler.notify_next_waitlist_public(group)
 
-        await interaction.response.edit_message(
-            content="✅ Du hast die Gruppe verlassen.", view=None
-        )
+        try:
+            await interaction.edit_original_response(
+                content="✅ Du hast die Gruppe verlassen.", view=None
+            )
+        except discord.HTTPException:
+            pass
 
     # ─────────────────────────────────────────────────────────────────────────
     # VERWALTUNG
@@ -1072,15 +1080,15 @@ class ROGroupFinder(commands.Cog):
     async def _handle_finish(
         self, interaction: discord.Interaction, msg_id: int, parts: list
     ) -> None:
-        """Gruppenersteller markiert die Gruppe als abgeschlossen."""
+        """Gruppenleiter oder Admin markiert die Gruppe als abgeschlossen."""
         group = get_group_by_message(interaction.guild_id, msg_id)
         if not group:
             await interaction.response.send_message("❌ Gruppe nicht gefunden.", ephemeral=True)
             return
 
-        if interaction.user.id != group.get("creator_id"):
+        if not await self._is_leader_or_admin(interaction, group):
             await interaction.response.send_message(
-                "❌ Nur der Gruppenersteller kann die Gruppe abschließen.", ephemeral=True
+                "❌ Nur der Gruppenleiter oder ein Admin kann die Gruppe abschließen.", ephemeral=True
             )
             return
 
@@ -1105,6 +1113,11 @@ class ROGroupFinder(commands.Cog):
         guild_id  = interaction.guild_id
         msg_id    = group.get("message_id")
 
+        # Interaktion sofort bestätigen, bevor DMs/Forum/Übersicht laufen (10062-Schutz).
+        await interaction.response.edit_message(
+            content="⏳ Gruppe wird abgeschlossen …", view=None
+        )
+
         # Status setzen und speichern (bleibt erhalten)
         group["status"] = "finished"
         save_group(guild_id, group)
@@ -1126,10 +1139,13 @@ class ROGroupFinder(commands.Cog):
         # Übersicht aktualisieren (Gruppe ist nicht mehr offen)
         await refresh_overview(self.bot, guild_id)
 
-        await interaction.response.edit_message(
-            content="✅ **Gruppe wurde abgeschlossen. GG!**",
-            view=None,
-        )
+        try:
+            await interaction.edit_original_response(
+                content="✅ **Gruppe wurde abgeschlossen. GG!**",
+                view=None,
+            )
+        except discord.HTTPException:
+            pass
 
     async def _handle_manage_members(
         self, interaction: discord.Interaction, msg_id: int, parts: list
@@ -1292,6 +1308,11 @@ class ROGroupFinder(commands.Cog):
         new_name   = slot.get("filled_by_name") or slot.get("filled_by_ingame") or "?"
         new_ingame = slot.get("filled_by_ingame")
 
+        # Interaktion sofort bestätigen, bevor Post/Forum/Übersicht laufen (10062-Schutz).
+        await interaction.response.edit_message(
+            content="⏳ Führung wird übergeben …", embed=None, view=None
+        )
+
         set_group_leader(group, new_id, new_name, new_ingame)
         touch_group_activity(group)
         save_group(interaction.guild_id, group)
@@ -1303,11 +1324,14 @@ class ROGroupFinder(commands.Cog):
         )
         await refresh_overview(self.bot, interaction.guild_id)
 
-        await interaction.response.edit_message(
-            content=f"✅ Die Gruppenführung wurde an **{new_name}** übergeben.",
-            embed=None,
-            view=None,
-        )
+        try:
+            await interaction.edit_original_response(
+                content=f"✅ Die Gruppenführung wurde an **{new_name}** übergeben.",
+                embed=None,
+                view=None,
+            )
+        except discord.HTTPException:
+            pass
 
     async def _handle_manage_delete(
         self, interaction: discord.Interaction, msg_id: int, parts: list
@@ -1375,9 +1399,23 @@ class ROGroupFinder(commands.Cog):
         guild_id  = interaction.guild_id
         msg_id    = group.get("message_id")
 
-        # Alle Beteiligten benachrichtigen
+        # Interaktion SOFORT bestätigen (3-Sekunden-Fenster), bevor die langsamen
+        # Aufgaben (DMs, Forum, Übersicht) laufen – sonst läuft der Interaktions-
+        # Token ab (404 "Unknown interaction", 10062).
+        await interaction.response.edit_message(
+            content="🗑️ **Gruppe wird gelöscht …**", embed=None, view=None
+        )
+
+        # Wer hat gelöscht? Ersteller vs. Admin → korrekte Meldung, und der
+        # Gruppenleiter wird informiert, wenn ein Admin gelöscht hat.
+        if interaction.user.id == group.get("creator_id"):
+            reason = "vom Gruppenleiter gelöscht"
+        else:
+            reason = f"von einem Admin (**{interaction.user.display_name}**) gelöscht"
+
+        # Alle Beteiligten außer der löschenden Person benachrichtigen
         await notify_group_deleted(
-            self.bot, group, reason="manuell vom Ersteller gelöscht"
+            self.bot, group, reason=reason, exclude_id=interaction.user.id
         )
 
         # Forum-Diskussionspost sofort schließen (bleibt erhalten, nicht gelöscht).
@@ -1399,9 +1437,12 @@ class ROGroupFinder(commands.Cog):
         # Übersicht aktualisieren
         await refresh_overview(self.bot, guild_id)
 
-        await interaction.response.edit_message(
-            content="🗑️ **Gruppe wurde gelöscht.**", embed=None, view=None
-        )
+        try:
+            await interaction.edit_original_response(
+                content="🗑️ **Gruppe wurde gelöscht.**", embed=None, view=None
+            )
+        except discord.HTTPException:
+            pass
 
     async def apply_group_edit(
         self,
