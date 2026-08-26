@@ -645,7 +645,46 @@ class _CancelBtn(ui.Button):
         self.session = session
 
     async def callback(self, interaction: discord.Interaction):
+        # Vor dem endgültigen Abbruch nachfragen – sonst gehen alle Eingaben
+        # unbeabsichtigt verloren.
+        embed = discord.Embed(
+            title="⚠️ Erstellung abbrechen?",
+            description=(
+                "Wenn du abbrichst, gehen **alle bisherigen Eingaben verloren**.\n\n"
+                "Möchtest du die Gruppen-Erstellung wirklich abbrechen?"
+            ),
+            color=0xFFAB00,
+        )
+        await interaction.response.edit_message(embed=embed, view=_CancelConfirmView(self.session))
+
+
+class _CancelConfirmView(ui.View):
+    """Sicherheitsabfrage bevor der Wizard abgebrochen wird."""
+
+    def __init__(self, session: WizardSession):
+        super().__init__(timeout=600)
+        self.session = session
+        self.add_item(_CancelConfirmYesBtn(session))
+        self.add_item(_CancelConfirmNoBtn(session))
+
+
+class _CancelConfirmYesBtn(ui.Button):
+    def __init__(self, session: WizardSession):
+        super().__init__(label="✕ Ja, abbrechen", style=discord.ButtonStyle.danger, row=0)
+        self.session = session
+
+    async def callback(self, interaction: discord.Interaction):
         await self.session.on_cancel(interaction)
+
+
+class _CancelConfirmNoBtn(ui.Button):
+    def __init__(self, session: WizardSession):
+        super().__init__(label="← Nein, weiter bearbeiten", style=discord.ButtonStyle.secondary, row=0)
+        self.session = session
+
+    async def callback(self, interaction: discord.Interaction):
+        # Zurück zum aktuellen Schritt – nichts geht verloren.
+        await self.session.refresh(interaction)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
