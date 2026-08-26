@@ -502,8 +502,9 @@ def _build_slots_step(session: WizardSession):
 def _build_members_step(session: WizardSession):
     s     = session.state
     slots = s.expand_slots()
-    desc  = "**Füge vorab bekannte Mitglieder hinzu.**\n"
-    desc += "Du **musst** dich selbst hinzufügen. 👑 = du\n\n"
+    desc  = "**Füge optional bereits bekannte Mitglieder hinzu.**\n"
+    desc += "Du musst dich **nicht** selbst eintragen, du kannst die Gruppe auch nur "
+    desc += "für andere erstellen, oder später beitreten. 👑 = du\n\n"
 
     for i, slot in enumerate(slots):
         pm = next((m for m in s.prefilled_members if m["slot_index"] == i), None)
@@ -514,7 +515,7 @@ def _build_members_step(session: WizardSession):
             desc += f"{slot['emoji']} **Slot {i + 1}** ({slot['display_name']}): *Offen*\n"
 
     if not s.creator_added:
-        desc += "\n⚠️ **Du hast dich noch nicht hinzugefügt!**"
+        desc += "\nℹ️ Du wirst nicht automatisch in die Gruppe eingetragen.."
 
     return _base_embed(s, "Mitglieder", desc), MembersView(session, slots)
 
@@ -987,7 +988,9 @@ class MembersView(_BaseWizardView):
             self.add_item(_RemoveMemberSelect(session, remove_options))
 
         # ── Row 4: Navigation ─────────────────────────────────────────────────
-        self.add_nav(can_back=True, can_next=s.creator_added)
+        # Sich selbst hinzuzufügen ist optional – der Ersteller kann eine Gruppe
+        # auch nur für andere Spieler erstellen (ohne selbst mitzuspielen).
+        self.add_nav(can_back=True, can_next=True)
 
 
 class _MemberSlotSelect(ui.Select):
