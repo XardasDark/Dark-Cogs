@@ -283,13 +283,55 @@ def build_manage_view(group: Dict) -> ui.View:
     msg_id = str(group.get("message_id", ""))
 
     buttons = [
-        ("👥 Mitglieder verwalten", f"manage_members:{msg_id}", discord.ButtonStyle.primary),
-        ("✏️ Gruppe bearbeiten",    f"manage_edit:{msg_id}",    discord.ButtonStyle.primary),
-        ("🗑️ Gruppe löschen",       f"manage_delete:{msg_id}",  discord.ButtonStyle.danger),
+        ("👥 Mitglieder verwalten", f"manage_members:{msg_id}",  discord.ButtonStyle.primary),
+        ("✏️ Gruppe bearbeiten",    f"manage_edit:{msg_id}",     discord.ButtonStyle.primary),
+        ("👑 Führung übergeben",     f"manage_transfer:{msg_id}", discord.ButtonStyle.secondary),
+        ("🗑️ Gruppe löschen",       f"manage_delete:{msg_id}",   discord.ButtonStyle.danger),
     ]
     for label, custom_id, style in buttons:
         view.add_item(ui.Button(label=label, style=style, custom_id=custom_id))
 
+    return view
+
+
+def build_transfer_view(group: Dict) -> ui.View:
+    """
+    Zeigt die aktuellen Mitglieder (außer dem derzeitigen Führer) zur Auswahl
+    des neuen Gruppenführers. Leer-View wenn keine übergabefähigen Mitglieder.
+    """
+    view      = ui.View(timeout=120)
+    msg_id    = str(group.get("message_id", ""))
+    leader_id = group.get("creator_id")
+
+    candidates = [
+        s for s in get_filled_slots(group)
+        if s.get("filled_by_id") and s.get("filled_by_id") != leader_id
+    ]
+
+    if candidates:
+        options = [
+            discord.SelectOption(
+                label=f"{s.get('filled_by_ingame') or s.get('filled_by_name', '?')} "
+                      f"(Slot {s['slot_index'] + 1}: {s['display_name']})"[:100],
+                value=str(s["slot_index"]),
+            )
+            for s in candidates[:25]
+        ]
+        sel = ui.Select(
+            placeholder="Neuen Gruppenführer wählen...",
+            options=options,
+            custom_id=f"manage_transfer_select:{msg_id}",
+            row=0,
+        )
+        view.add_item(sel)
+
+    back_btn = ui.Button(
+        label="← Zurück",
+        style=discord.ButtonStyle.secondary,
+        custom_id=f"manage_back:{msg_id}",
+        row=4,
+    )
+    view.add_item(back_btn)
     return view
 
 

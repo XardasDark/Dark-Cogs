@@ -21,6 +21,8 @@ Persistent Interaction Handlers (Button/Select custom_id):
   join_cancel:<msg_id>:<uid>        → Beitritts-Flow abbrechen
   manage_members:<msg_id>           → Mitglieder-Verwaltung
   manage_edit:<msg_id>              → Bearbeitungs-Menü
+  manage_transfer:<msg_id>          → Führung übergeben (Mitglied auswählen)
+  manage_transfer_select:<msg_id>   → Neuen Gruppenführer bestätigen
   manage_delete:<msg_id>            → Gruppe löschen (mit Bestätigung)
   manage_remove_member:<msg_id>     → Spieler entfernen (Select-Callback)
   manage_back:<msg_id>              → Zurück zum Hauptmenü
@@ -56,6 +58,7 @@ from .data_manager import (
     remove_from_waitlist,
     create_group,
     set_group_message_id,
+    set_group_leader,
     update_group_fields,
     touch_group_activity,
     reset_slots,
@@ -74,6 +77,7 @@ from .group_embed import (
     build_manage_members_view,
     build_edit_view,
     build_join_slot_view,
+    build_transfer_view,
 )
 from .notifications import (
     notify_creator_join,
@@ -86,7 +90,13 @@ from .notifications import (
     notify_edit,
 )
 from .scheduler import GroupScheduler
-from .forum import create_forum_post, close_forum_post, notify_join_in_forum
+from .forum import (
+    create_forum_post,
+    close_forum_post,
+    notify_join_in_forum,
+    notify_leave_in_forum,
+    notify_leader_change_in_forum,
+)
 from .constants import (
     COLOR_OPEN, COLOR_CLOSED, RECURRENCE_OPTIONS, ROLE_TYPES,
     DEFAULT_CLEANUP_DAYS, DEFAULT_REMINDER_MINUTES, DEFAULT_WAITLIST_TIMEOUT_MINUTES,
@@ -605,6 +615,8 @@ class ROGroupFinder(commands.Cog):
             "join_cancel":            self._handle_join_cancel,
             "manage_members":         self._handle_manage_members,
             "manage_edit":            self._handle_manage_edit,
+            "manage_transfer":        self._handle_manage_transfer,
+            "manage_transfer_select": self._handle_manage_transfer_select,
             "manage_delete":          self._handle_manage_delete,
             "manage_remove_member":   self._handle_manage_remove_member,
             "manage_back":            self._handle_manage_back,
@@ -895,6 +907,7 @@ class ROGroupFinder(commands.Cog):
         save_group(guild_id, group)
 
         await notify_creator_leave(self.bot, group, player_name, slot_index)
+        await notify_leave_in_forum(self.bot, group, player_name)
 
         # Embed aktualisieren
         channel = interaction.guild.get_channel(group["channel_id"])
@@ -919,6 +932,29 @@ class ROGroupFinder(commands.Cog):
     # VERWALTUNG
     # ─────────────────────────────────────────────────────────────────────────
 
+    async def _is_leader_or_admin(
+        self, interaction: discord.Interaction, group: Dict
+    ) -> bool:
+        """
+        True wenn der Nutzer der aktuelle Gruppenführer ODER ein Server-Admin ist
+        (Server-Owner, Discord-Rechte Administrator/Server verwalten, oder Reds
+        Admin-/Owner-Modell).
+        """
+        user = interaction.user
+        if user.id == group.get("creator_id"):
+            return True
+        if interaction.guild and interaction.guild.owner_id == user.id:
+            return True
+        perms = getattr(user, "guild_permissions", None)
+        if perms and (perms.administrator or perms.manage_guild):
+            return True
+        try:
+            if await self.bot.is_owner(user) or await self.bot.is_admin(user):
+                return True
+        except Exception:
+            pass
+        return False
+
     async def _handle_manage(
         self, interaction: discord.Interaction, msg_id: int, parts: list
     ) -> None:
@@ -927,9 +963,9 @@ class ROGroupFinder(commands.Cog):
             await interaction.response.send_message("❌ Gruppe nicht gefunden.", ephemeral=True)
             return
 
-        if interaction.user.id != group["creator_id"]:
+        if not await self._is_leader_or_admin(interaction, group):
             await interaction.response.send_message(
-                "❌ Nur der Gruppenersteller kann die Gruppe verwalten.", ephemeral=True
+                "❌ Nur der Gruppenführer oder ein Admin kann die Gruppe verwalten.", ephemeral=True
             )
             return
 
@@ -1048,6 +1084,7 @@ class ROGroupFinder(commands.Cog):
             await notify_player_removed(self.bot, group, player_id)
 
         await notify_creator_removed(self.bot, group, player_name, slot_index)
+        await notify_leave_in_forum(self.bot, group, player_name, removed=True)
 
         # Nächsten Wartelisten-Spieler benachrichtigen
         await self.scheduler.notify_next_waitlist_public(group)
@@ -1112,6 +1149,70 @@ class ROGroupFinder(commands.Cog):
             await interaction.response.send_message(
                 "Wiederholung:", view=EditRecurrenceView(group, self), ephemeral=True
             )
+
+    async def _handle_manage_transfer(
+        self, interaction: discord.Interaction, msg_id: int, parts: list
+    ) -> None:
+        group = get_group_by_message(interaction.guild_id, msg_id)
+        if not group:
+            await interaction.response.defer()
+            return
+
+        view = build_transfer_view(group)
+        has_candidates = any(isinstance(c, ui.Select) for c in view.children)
+        if not has_candidates:
+            await interaction.response.edit_message(
+                content="ℹ️ Es gibt keine anderen Mitglieder, an die du die Führung übergeben könntest.",
+                embed=None,
+                view=build_manage_view(group),
+            )
+            return
+
+        embed = discord.Embed(
+            title="👑 Führung übergeben",
+            description="Wähle das Mitglied, das die neue Gruppenführung übernehmen soll.",
+            color=COLOR_OPEN,
+        )
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+    async def _handle_manage_transfer_select(
+        self, interaction: discord.Interaction, msg_id: int, parts: list
+    ) -> None:
+        group = get_group_by_message(interaction.guild_id, msg_id)
+        if not group:
+            await interaction.response.defer()
+            return
+
+        slot_index = int(interaction.data["values"][0])
+        slot = next((s for s in group["slots"] if s["slot_index"] == slot_index), None)
+        if not slot or not slot.get("filled_by_id"):
+            await interaction.response.edit_message(
+                content="❌ Mitglied nicht gefunden.",
+                embed=None,
+                view=build_manage_view(group),
+            )
+            return
+
+        old_leader_name = group.get("creator_name", "?")
+        new_id     = slot["filled_by_id"]
+        new_name   = slot.get("filled_by_name") or slot.get("filled_by_ingame") or "?"
+        new_ingame = slot.get("filled_by_ingame")
+
+        set_group_leader(group, new_id, new_name, new_ingame)
+        touch_group_activity(group)
+        save_group(interaction.guild_id, group)
+
+        # Gruppen-Post aktualisieren (zeigt neuen Ersteller) + Forum benachrichtigen
+        await self._refresh_group_message(group)
+        await notify_leader_change_in_forum(
+            self.bot, group, new_id, new_name, old_leader_name
+        )
+
+        await interaction.response.edit_message(
+            content=f"✅ Die Gruppenführung wurde an **{new_name}** übergeben.",
+            embed=None,
+            view=None,
+        )
 
     async def _handle_manage_delete(
         self, interaction: discord.Interaction, msg_id: int, parts: list

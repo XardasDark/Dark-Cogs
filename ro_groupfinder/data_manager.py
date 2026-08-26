@@ -572,6 +572,25 @@ def is_user_in_group(group: Dict, user_id: int) -> bool:
 # GRUPPEN-BEARBEITUNG
 # ─────────────────────────────────────────────────────────────────────────────
 
+def set_group_leader(
+    group:          Dict,
+    new_leader_id:  int,
+    new_leader_name: str,
+    new_leader_ingame: Optional[str] = None,
+) -> Dict:
+    """
+    Übergibt die Gruppenführung an ein bestehendes Mitglied.
+
+    Aktualisiert nur die Ersteller-Felder – der bisherige Führer behält seinen
+    Slot und bleibt normales Mitglied. Slots werden nicht verändert.
+    """
+    group["creator_id"]   = new_leader_id
+    group["creator_name"] = new_leader_name
+    if new_leader_ingame is not None:
+        group["creator_ingame"] = new_leader_ingame
+    return group
+
+
 def update_group_fields(group: Dict, **kwargs) -> Dict:
     """
     Aktualisiert beliebige Felder einer Gruppe.

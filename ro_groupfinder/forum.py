@@ -160,6 +160,84 @@ async def notify_join_in_forum(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# AUSTRITT IM FORUM ANKÜNDIGEN
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def notify_leave_in_forum(
+    bot,
+    group:       Dict,
+    player_name: str,
+    *,
+    removed:     bool = False,
+) -> None:
+    """
+    Informiert den Forum-Thread, dass ein Spieler die Gruppe verlassen hat
+    (oder vom Ersteller entfernt wurde).
+
+    Es wird bewusst NICHT gepingt – die verbleibenden Mitglieder sehen die
+    Nachricht im Thread, der ausgetretene Spieler wird nicht belästigt.
+    Best effort: Fehler werden abgefangen.
+    """
+    thread_id = group.get("forum_thread_id")
+    if not thread_id:
+        return
+
+    thread = await _resolve_channel(bot, thread_id)
+    if not isinstance(thread, discord.Thread):
+        return
+    if thread.archived or thread.locked:
+        return
+
+    if removed:
+        text = f"➖ **{player_name}** wurde aus der Gruppe entfernt."
+    else:
+        text = f"👋 **{player_name}** hat die Gruppe verlassen."
+
+    try:
+        await thread.send(text, allowed_mentions=discord.AllowedMentions.none())
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FÜHRUNGS-WECHSEL IM FORUM ANKÜNDIGEN
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def notify_leader_change_in_forum(
+    bot,
+    group:          Dict,
+    new_leader_id:  int,
+    new_leader_name: str,
+    old_leader_name: Optional[str] = None,
+) -> None:
+    """
+    Kündigt im Forum-Thread an, dass die Gruppenführung gewechselt hat.
+
+    Der neue Führer wird gepingt (er soll es sofort mitbekommen). Best effort.
+    """
+    thread_id = group.get("forum_thread_id")
+    if not thread_id:
+        return
+
+    thread = await _resolve_channel(bot, thread_id)
+    if not isinstance(thread, discord.Thread):
+        return
+    if thread.archived or thread.locked:
+        return
+
+    prefix = f"von **{old_leader_name}** " if old_leader_name else ""
+    text = (
+        f"👑 Die Gruppenführung wurde {prefix}an <@{new_leader_id}> "
+        f"(**{new_leader_name}**) übergeben."
+    )
+
+    try:
+        await thread.send(text, allowed_mentions=discord.AllowedMentions(users=True))
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # FORUM-POST SCHLIESSEN
 # ─────────────────────────────────────────────────────────────────────────────
 
