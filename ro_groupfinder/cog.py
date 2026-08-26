@@ -69,6 +69,7 @@ from .data_manager import (
     is_valid_timezone,
     load_goals,
     load_classes,
+    get_class_by_key,
     get_user_notif_prefs,
     set_user_notif_prefs,
 )
@@ -102,7 +103,7 @@ from .forum import (
 from .constants import (
     COLOR_OPEN, COLOR_CLOSED, RECURRENCE_OPTIONS, ROLE_TYPES,
     DEFAULT_CLEANUP_DAYS, DEFAULT_REMINDER_MINUTES, DEFAULT_WAITLIST_TIMEOUT_MINUTES,
-    NOTIFICATION_CATEGORIES,
+    NOTIFICATION_CATEGORIES, SLOT_TYPE_CLASS,
 )
 
 
@@ -809,6 +810,15 @@ class ROGroupFinder(commands.Cog):
                 await interaction.followup.send("❌ Keine Slots mehr verfügbar.", ephemeral=True)
                 return
             slot_index = open_slots[0]["slot_index"]
+
+        # Bei klassenspezifischen Slots ist die Klasse durch den Slot festgelegt.
+        # Die Klassen-Auswahl aus dem Dropdown wird hier bewusst überschrieben,
+        target_slot = next((s for s in group["slots"] if s["slot_index"] == slot_index), None)
+        if target_slot and target_slot.get("slot_type") == SLOT_TYPE_CLASS and target_slot.get("class_key"):
+            slot_cls = get_class_by_key(target_slot["class_key"])
+            if slot_cls:
+                class_display = slot_cls["name"]
+                class_emoji   = slot_cls.get("emoji", target_slot.get("emoji", "⚔️"))
 
         success = fill_slot(
             group        = group,
