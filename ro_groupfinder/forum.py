@@ -22,7 +22,7 @@ import discord
 from typing import Optional, Dict
 
 from .constants import COLOR_OPEN
-from .data_manager import get_guild_settings
+from .data_manager import get_guild_settings, resolve_goal_name
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ def _short_id(group: Dict) -> str:
 
 
 def _goal_text(group: Dict) -> str:
-    return group.get("goal_custom") or group.get("goal") or "Gruppe"
+    return resolve_goal_name(group)
 
 
 def _group_jump_url(group: Dict) -> Optional[str]:

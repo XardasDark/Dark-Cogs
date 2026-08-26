@@ -29,6 +29,7 @@ from .data_manager import (
     set_guild_setting,
     get_guild_groups,
     parse_stored_datetime,
+    resolve_goal_name,
 )
 from .group_embed import build_group_embed, build_group_action_view
 
@@ -50,7 +51,7 @@ async def _resolve_channel(bot, channel_id: int):
 
 
 def _group_line(group: Dict) -> str:
-    goal    = group.get("goal_custom") or group.get("goal") or "Gruppe"
+    goal    = resolve_goal_name(group)
     filled  = sum(1 for s in group.get("slots", []) if s.get("filled_by_id"))
     total   = group.get("player_count", "?")
     icon    = "🟢" if group.get("status") == "open" else "🟡"

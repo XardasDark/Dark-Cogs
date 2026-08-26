@@ -22,7 +22,7 @@ from .constants import (
 from .data_manager import (
     load_classes, get_open_slots, get_filled_slots,
     is_user_in_group, is_user_in_waitlist,
-    format_datetime_display,
+    format_datetime_display, resolve_goal_name,
 )
 
 
@@ -43,8 +43,8 @@ def build_group_embed(group: Dict) -> discord.Embed:
     }
     color = color_map.get(status, COLOR_OPEN)
 
-    # Ziel-Anzeige
-    goal_text = group.get("goal_custom") or group.get("goal") or "–"
+    # Ziel-Anzeige (Key → lesbarer Name auflösen)
+    goal_text = resolve_goal_name(group)
 
     embed = discord.Embed(
         title=f"🗡️ Gruppenanfrage: {goal_text}",

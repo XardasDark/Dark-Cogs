@@ -70,6 +70,7 @@ from .data_manager import (
     load_goals,
     load_classes,
     get_class_by_key,
+    resolve_goal_name,
     get_user_notif_prefs,
     set_user_notif_prefs,
 )
@@ -311,7 +312,7 @@ class ROGroupFinder(commands.Cog):
         for g in active[:20]:
             filled  = sum(1 for s in g.get("slots", []) if s.get("filled_by_id"))
             total   = g.get("player_count", "?")
-            goal    = g.get("goal_custom") or g.get("goal") or "?"
+            goal    = resolve_goal_name(g)
             creator = g.get("creator_name", "?")
             icon    = "\U0001f7e2" if g.get("status") == "open" else "\U0001f7e1"
             lines.append(f"{icon} **{goal}** \u2013 {creator} ({filled}/{total})")

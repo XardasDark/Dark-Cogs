@@ -104,6 +104,30 @@ def get_class_by_key(key: str) -> Optional[Dict]:
     return None
 
 
+def resolve_goal_name(group: Dict) -> str:
+    """
+    Gibt den anzeigbaren Zielnamen einer Gruppe zurück.
+
+    Reihenfolge:
+      1. eigener Titel (goal_custom), falls gesetzt
+      2. der in goals.json hinterlegte Name zum gespeicherten Key
+         (z.B. "memorial_poring" → "Memorial Dungeon: Poring Village")
+      3. andernfalls der Key selbst
+
+    Das Feld `goal` bleibt bewusst der Key (wird u.a. für "Gruppe kopieren"
+    zum Abgleich mit goals.json genutzt); nur die Anzeige wird hier aufgelöst.
+    """
+    custom = group.get("goal_custom")
+    if custom:
+        return custom
+    key = group.get("goal") or ""
+    if key and key != "__custom__":
+        for g in load_goals():
+            if g.get("key") == key:
+                return g.get("name") or key
+    return key or "–"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SETTINGS  (Pro Guild)
 # ─────────────────────────────────────────────────────────────────────────────

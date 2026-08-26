@@ -26,7 +26,7 @@ import discord
 from typing import Optional, Dict, List
 
 from .constants import RECURRENCE_OPTIONS, COLOR_OPEN, COLOR_CLOSED, COLOR_EXPIRED
-from .data_manager import format_datetime_display, is_notif_enabled
+from .data_manager import format_datetime_display, is_notif_enabled, resolve_goal_name
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -92,8 +92,8 @@ def _dm_button_view(label: str, custom_id: str, style: discord.ButtonStyle) -> d
 
 
 def _group_title(group: Dict) -> str:
-    """Gibt den Anzeige-Titel einer Gruppe zurück."""
-    return group.get("goal_custom") or group.get("goal") or "Unbekannte Gruppe"
+    """Gibt den Anzeige-Titel einer Gruppe zurück (Key → lesbarer Name)."""
+    return resolve_goal_name(group)
 
 
 def _base_embed(title: str, description: str, color: int) -> discord.Embed:
@@ -121,7 +121,6 @@ async def notify_creator_join(
     if not creator:
         return
 
-    title = group.get("goal") or group.get("goal_custom") or "Gruppe"
     embed = _base_embed(
         title="🟢 Neuer Spieler in deiner Gruppe!",
         description=(
