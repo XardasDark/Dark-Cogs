@@ -31,6 +31,8 @@ from .constants import (
     DEFAULT_EXPIRY_WARNING_DAYS,
     DEFAULT_REMINDER_MINUTES,
     DEFAULT_WAITLIST_TIMEOUT_MINUTES,
+    DEFAULT_FORUM_CLOSE_DAYS,
+    DEFAULT_READONLY_ENFORCED,
     DEFAULT_TIMEZONE,
     EXPIRED_SNAPSHOT_RETENTION_DAYS,
     GROUP_STATUS,
@@ -122,6 +124,9 @@ def get_guild_settings(guild_id: int) -> Dict:
     guild_key = str(guild_id)
     defaults = {
         "group_channel_id":           None,
+        "forum_channel_id":           None,
+        "forum_close_days":           DEFAULT_FORUM_CLOSE_DAYS,
+        "readonly_enforced":          DEFAULT_READONLY_ENFORCED,
         "cleanup_days":               DEFAULT_CLEANUP_DAYS,
         "warning_days":               DEFAULT_EXPIRY_WARNING_DAYS,
         "reminder_minutes":           DEFAULT_REMINDER_MINUTES,
@@ -151,6 +156,16 @@ def set_group_channel(guild_id: int, channel_id: int) -> None:
 def get_group_channel(guild_id: int) -> Optional[int]:
     """Gibt die Channel-ID zurück in der Gruppen erlaubt sind, oder None."""
     return get_guild_settings(guild_id).get("group_channel_id")
+
+
+def set_forum_channel(guild_id: int, channel_id: int) -> None:
+    """Legt den Forum-Channel fest, in dem Diskussionsposts erstellt werden."""
+    set_guild_setting(guild_id, "forum_channel_id", channel_id)
+
+
+def get_forum_channel(guild_id: int) -> Optional[int]:
+    """Gibt die Forum-Channel-ID für Diskussionsposts zurück, oder None."""
+    return get_guild_settings(guild_id).get("forum_channel_id")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -352,6 +367,12 @@ def create_group(
         "expires_at":          expires_at,
         "expiry_warning_sent": False,
         "reminder_sent":       False,
+        # Forum-Diskussionspost (wird nach dem Gruppen-Post erstellt).
+        "forum_thread_id":     None,
+        # Zeitpunkt ab dem der Forum-Post nach Abschluss geschlossen wird.
+        "forum_close_at":      None,
+        # Verhindert doppeltes Schließen des Forum-Posts.
+        "forum_closed":        False,
     }
 
 

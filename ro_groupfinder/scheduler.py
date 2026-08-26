@@ -44,6 +44,7 @@ from .data_manager import (
     set_group_message_id,
 )
 from .group_embed import build_group_embed, build_group_action_view
+from .forum import create_forum_post, close_forum_post
 from .notifications import (
     notify_group_expired,
     notify_expiry_warning,
@@ -96,6 +97,7 @@ class GroupScheduler:
                 await self._task_reminders()
                 await self._task_waitlist_timeouts()
                 await self._task_recurrence()
+                await self._task_forum_cleanup()
             except Exception as e:
                 # Fehler loggen aber Loop nicht abbrechen
                 print(f"[RO GroupFinder Scheduler] Fehler: {e}")
@@ -167,6 +169,9 @@ class GroupScheduler:
 
             # c. Benachrichtigungen
             await notify_group_expired(self.bot, group, inactivity_days)
+
+            # c2. Forum-Diskussionspost sofort schließen (bleibt erhalten, nicht gelöscht)
+            await close_forum_post(self.bot, group)
 
             # d. Discord-Post löschen
             if message_id:
@@ -349,8 +354,15 @@ class GroupScheduler:
                 set_group_message_id(new_group, message.id)
                 save_group(guild_id, new_group)
 
-                # View mit korrekter Message-ID aktualisieren
-                await message.edit(view=build_group_action_view(new_group))
+                # Forum-Diskussionspost für die neue Gruppe erstellen (best effort)
+                await create_forum_post(self.bot, new_group)
+                save_group(guild_id, new_group)
+
+                # View + Embed mit korrekter Message-ID / Forum-Link aktualisieren
+                await message.edit(
+                    embed=build_group_embed(new_group),
+                    view=build_group_action_view(new_group),
+                )
 
             except Exception as e:
                 print(f"[RO GroupFinder Scheduler] Fehler beim Erstellen des Wiederholungs-Posts: {e}")
@@ -364,10 +376,50 @@ class GroupScheduler:
             group["status"]             = "closed"
             save_group(guild_id, group)
 
+            # Alten Forum-Diskussionspost sofort schließen (nicht gelöscht)
+            await close_forum_post(self.bot, group)
+
             # Alten Discord-Post schließen (Embed-Update)
             old_msg_id = group.get("message_id")
             if old_msg_id:
                 await self._update_group_embed(guild_id, channel_id, old_msg_id, group)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # TASK 5 – FORUM-POSTS ABGESCHLOSSENER GRUPPEN SCHLIESSEN
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _task_forum_cleanup(self) -> None:
+        """
+        Schließt die Forum-Diskussionsposts abgeschlossener Gruppen, sobald deren
+        Frist (forum_close_at) erreicht ist.
+
+        Ablauf pro Gruppe mit status == 'finished':
+          - forum_thread_id gesetzt, forum_closed noch False
+          - forum_close_at liegt in der Vergangenheit
+          → Ankündigung im Thread posten + Thread sperren/archivieren (NICHT löschen)
+          → forum_closed = True setzen und speichern
+        """
+        now = datetime.now(timezone.utc)
+
+        for group in get_all_groups_flat():
+            if group.get("status") != "finished":
+                continue
+            if not group.get("forum_thread_id") or group.get("forum_closed"):
+                continue
+
+            close_str = group.get("forum_close_at")
+            if not close_str:
+                continue
+            try:
+                close_dt = datetime.fromisoformat(close_str)
+            except ValueError:
+                continue
+            if close_dt > now:
+                continue
+
+            await close_forum_post(self.bot, group, announce_deletion=True)
+            group["forum_closed"] = True
+            save_group(group["guild_id"], group)
 
     # ─────────────────────────────────────────────────────────────────────────
     # HILFSMETHODEN

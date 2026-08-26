@@ -96,6 +96,16 @@ def build_group_embed(group: Dict) -> discord.Embed:
     if comment:
         embed.add_field(name="💬 Kommentar", value=comment, inline=False)
 
+    # ── Forum-Diskussionspost ─────────────────────────────────────────────────
+    forum_thread_id = group.get("forum_thread_id")
+    if forum_thread_id:
+        guild_id = group.get("guild_id")
+        embed.add_field(
+            name="💬 Diskussion",
+            value=f"[Zum Diskussionsbeitrag](https://discord.com/channels/{guild_id}/{forum_thread_id})",
+            inline=False,
+        )
+
     # ── Footer ────────────────────────────────────────────────────────────────
     expires = group.get("expires_at", "")[:10]
     embed.set_footer(text=f"ID: {group.get('group_id', '?')[:8]}  |  Läuft bei Inaktivität ab: {expires}")

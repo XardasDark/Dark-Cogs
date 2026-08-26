@@ -97,6 +97,13 @@ DEFAULT_EXPIRY_WARNING_DAYS      = 3    # Tage vor Ablauf → Vorwarnung an den 
 DEFAULT_REMINDER_MINUTES         = 30   # Minuten vor Gruppenstart → Erinnerungs-DM
 DEFAULT_WAITLIST_TIMEOUT_MINUTES = 30   # Minuten die ein Wartelisten-Spieler Zeit hat
 
+# Tage nach Abschluss einer Gruppe bis der zugehörige Forum-Diskussionspost
+# geschlossen (gesperrt + archiviert) wird. Der Post wird NIE automatisch gelöscht.
+DEFAULT_FORUM_CLOSE_DAYS         = 7
+
+# Ob der Bot den Gruppen-Channel automatisch read-only für @everyone hält.
+DEFAULT_READONLY_ENFORCED        = True
+
 # IANA-Zeitzone in der Termin-Eingaben interpretiert werden (pro Guild überschreibbar).
 # Nutzereingaben (z.B. "20:30") gelten als lokale Zeit dieser Zone; gespeichert wird UTC.
 DEFAULT_TIMEZONE                 = "Europe/Berlin"

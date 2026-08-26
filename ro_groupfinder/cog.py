@@ -33,12 +33,13 @@ import discord
 from discord import app_commands, ui
 from redbot.core import commands
 from typing import Optional, Dict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .wizard import WizardSession, WizardState, build_state_from_group
 from .data_manager import (
     get_group_channel,
     set_group_channel,
+    set_forum_channel,
     set_guild_setting,
     get_guild_settings,
     get_guild_groups,
@@ -85,6 +86,7 @@ from .notifications import (
     notify_edit,
 )
 from .scheduler import GroupScheduler
+from .forum import create_forum_post, close_forum_post
 from .constants import (
     COLOR_OPEN, COLOR_CLOSED, RECURRENCE_OPTIONS, ROLE_TYPES,
     DEFAULT_CLEANUP_DAYS, DEFAULT_REMINDER_MINUTES, DEFAULT_WAITLIST_TIMEOUT_MINUTES,
@@ -223,7 +225,11 @@ class ROGroupFinder(commands.Cog):
         message = await channel.send(embed=build_group_embed(group), view=build_group_action_view(group))
         set_group_message_id(group, message.id)
         save_group(state.guild_id, group)
-        await message.edit(view=build_group_action_view(group))
+
+        # Forum-Diskussionspost erstellen (best effort) und Embed mit Link aktualisieren.
+        await create_forum_post(self.bot, group)
+        save_group(state.guild_id, group)
+        await message.edit(embed=build_group_embed(group), view=build_group_action_view(group))
 
         if interaction.user.id in _wizard_sessions:
             del _wizard_sessions[interaction.user.id]
@@ -360,17 +366,85 @@ class ROGroupFinder(commands.Cog):
     @commands.admin()
     async def gruppe_config_channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
         set_group_channel(ctx.guild.id, channel.id)
-        await self._reply(ctx, f"\u2705 Gruppen-Channel auf {channel.mention} gesetzt.")
+
+        note = ""
+        if get_guild_settings(ctx.guild.id).get("readonly_enforced"):
+            ok = await self._apply_readonly(channel)
+            note = (
+                "\n\U0001f512 Der Channel wurde **read-only** gesetzt \u2013 normale User "
+                "k\u00f6nnen keine Nachrichten mehr schreiben, die `/gruppe`-Befehle bleiben nutzbar."
+                if ok else
+                "\n\u26a0\ufe0f Read-only konnte nicht gesetzt werden (fehlende Rechte?). "
+                "Bitte pr\u00fcfe die Berechtigungen des Bots."
+            )
+        await self._reply(ctx, f"\u2705 Gruppen-Channel auf {channel.mention} gesetzt.{note}")
+
+    @gruppe_setup.command(name="forum", description="Legt den Forum-Channel f\u00fcr Diskussionsposts fest")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_forum(self, ctx: commands.Context, forum: discord.ForumChannel) -> None:
+        set_forum_channel(ctx.guild.id, forum.id)
+        await self._reply(
+            ctx,
+            f"\u2705 Forum-Channel auf {forum.mention} gesetzt. F\u00fcr jede neue Gruppe wird "
+            f"dort automatisch ein Diskussionsbeitrag erstellt.",
+        )
+
+    @gruppe_setup.command(name="forumschliessen", description="Tage nach Abschluss bis der Forum-Post geschlossen wird")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_forumschliessen(self, ctx: commands.Context, tage: int) -> None:
+        if tage < 1 or tage > 90:
+            await self._reply(ctx, "\u274c Wert muss zwischen 1 und 90 Tagen liegen.")
+            return
+        set_guild_setting(ctx.guild.id, "forum_close_days", tage)
+        await self._reply(
+            ctx,
+            f"\u2705 Forum-Posts werden **{tage} Tage** nach Abschluss der Gruppe geschlossen "
+            f"(nicht gel\u00f6scht).",
+        )
+
+    @gruppe_setup.command(name="readonly", description="Read-only-Modus f\u00fcr den Gruppen-Channel an/aus")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_readonly(self, ctx: commands.Context, status: str) -> None:
+        val = status.strip().lower()
+        if val in ("an", "on", "true", "ja", "1"):
+            enabled = True
+        elif val in ("aus", "off", "false", "nein", "0"):
+            enabled = False
+        else:
+            await self._reply(ctx, "\u274c Bitte **an** oder **aus** angeben.")
+            return
+
+        set_guild_setting(ctx.guild.id, "readonly_enforced", enabled)
+
+        channel_id = get_group_channel(ctx.guild.id)
+        channel    = ctx.guild.get_channel(channel_id) if channel_id else None
+        applied    = None
+        if isinstance(channel, discord.TextChannel):
+            applied = await (self._apply_readonly(channel) if enabled else self._clear_readonly(channel))
+
+        if enabled:
+            extra = f" {channel.mention} ist jetzt read-only." if applied else ""
+            await self._reply(ctx, f"\u2705 Read-only-Modus **aktiviert**.{extra}")
+        else:
+            extra = f" Die Schreibsperre in {channel.mention} wurde aufgehoben." if applied else ""
+            await self._reply(ctx, f"\u2705 Read-only-Modus **deaktiviert**.{extra}")
 
     @gruppe_setup.command(name="info", description="Zeigt die aktuelle Konfiguration")
     @commands.guild_only()
     @commands.admin()
     async def gruppe_config_info(self, ctx: commands.Context) -> None:
-        s  = get_guild_settings(ctx.guild.id)
-        ch = ctx.guild.get_channel(s.get("group_channel_id") or 0)
+        s     = get_guild_settings(ctx.guild.id)
+        ch    = ctx.guild.get_channel(s.get("group_channel_id") or 0)
+        forum = ctx.guild.get_channel(s.get("forum_channel_id") or 0)
 
         embed = discord.Embed(title="\u2699\ufe0f RO Group Finder \u2013 Konfiguration", color=COLOR_OPEN)
         embed.add_field(name="\U0001f4cc Gruppen-Channel",    value=ch.mention if ch else "Nicht gesetzt", inline=False)
+        embed.add_field(name="\U0001f4ac Forum-Channel",      value=forum.mention if forum else "Nicht gesetzt", inline=False)
+        embed.add_field(name="\U0001f512 Read-only",          value="An" if s.get("readonly_enforced") else "Aus", inline=True)
+        embed.add_field(name="\U0001f4d5 Forum schlie\u00dfen", value=f"Nach {s['forum_close_days']} Tagen (Abschluss)", inline=True)
         embed.add_field(name="\u23f0 Erinnerung",              value=f"{s['reminder_minutes']} Min. vor Start",  inline=True)
         embed.add_field(name="\U0001f5d1\ufe0f Cleanup",      value=f"Nach {s['cleanup_days']} Tagen Inaktivit\u00e4t", inline=True)
         embed.add_field(name="\u26a0\ufe0f Vorwarnung",        value=f"{s['warning_days']} Tage vor Ablauf",      inline=True)
@@ -443,6 +517,9 @@ class ROGroupFinder(commands.Cog):
         await self._reply(ctx, f"\u2705 Wartelisten-Timeout auf **{minuten} Minuten** gesetzt.")
 
     @gruppe_config_channel.error
+    @gruppe_config_forum.error
+    @gruppe_config_forumschliessen.error
+    @gruppe_config_readonly.error
     @gruppe_config_info.error
     @gruppe_config_erinnerung.error
     @gruppe_config_cleanup.error
@@ -896,6 +973,15 @@ class ROGroupFinder(commands.Cog):
 
         # Status setzen und speichern (bleibt erhalten)
         group["status"] = "finished"
+
+        # Forum-Diskussionspost wird nach der konfigurierten Frist vom Scheduler
+        # geschlossen (nicht gelöscht). Deadline hier setzen.
+        if group.get("forum_thread_id"):
+            settings = get_guild_settings(guild_id)
+            close_at = datetime.now(timezone.utc) + timedelta(days=settings["forum_close_days"])
+            group["forum_close_at"] = close_at.isoformat()
+            group["forum_closed"]   = False
+
         save_group(guild_id, group)
 
         # Alle Mitglieder benachrichtigen
@@ -1091,6 +1177,9 @@ class ROGroupFinder(commands.Cog):
             self.bot, group, reason="manuell vom Ersteller gelöscht"
         )
 
+        # Forum-Diskussionspost sofort schließen (bleibt erhalten, nicht gelöscht).
+        await close_forum_post(self.bot, group)
+
         # Discord-Post löschen
         channel = interaction.guild.get_channel(group["channel_id"])
         if channel and msg_id:
@@ -1281,7 +1370,14 @@ class ROGroupFinder(commands.Cog):
             )
             set_group_message_id(new_group, message.id)
             save_group(guild_id, new_group)
-            await message.edit(view=build_group_action_view(new_group))
+
+            # Forum-Diskussionspost erstellen (best effort).
+            await create_forum_post(self.bot, new_group)
+            save_group(guild_id, new_group)
+            await message.edit(
+                embed=build_group_embed(new_group),
+                view=build_group_action_view(new_group),
+            )
         except Exception:
             await interaction.response.edit_message(
                 content="❌ Die Suche konnte nicht erneut erstellt werden.",
@@ -1300,6 +1396,52 @@ class ROGroupFinder(commands.Cog):
             ),
             embed=None, view=None,
         )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # READ-ONLY-ENFORCEMENT
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _apply_readonly(self, channel: discord.TextChannel) -> bool:
+        """
+        Setzt den Gruppen-Channel read-only für normale User:
+          - @everyone darf ansehen, aber nicht schreiben / Threads erstellen
+          - der Bot behält explizit Schreibrechte (postet die Gruppen-Embeds)
+        Gibt True bei Erfolg zurück, False bei fehlenden Rechten.
+        """
+        guild = channel.guild
+        try:
+            await channel.set_permissions(
+                guild.default_role,
+                send_messages=False,
+                create_public_threads=False,
+                create_private_threads=False,
+                send_messages_in_threads=False,
+                view_channel=True,
+                reason="RO Group Finder: Gruppen-Channel read-only",
+            )
+            await channel.set_permissions(
+                guild.me,
+                send_messages=True,
+                reason="RO Group Finder: Bot behält Schreibrechte",
+            )
+            return True
+        except discord.Forbidden:
+            return False
+        except discord.HTTPException:
+            return False
+
+    async def _clear_readonly(self, channel: discord.TextChannel) -> bool:
+        """Hebt die read-only-Overwrites für @everyone wieder auf."""
+        guild = channel.guild
+        try:
+            await channel.set_permissions(
+                guild.default_role,
+                overwrite=None,
+                reason="RO Group Finder: read-only aufgehoben",
+            )
+            return True
+        except (discord.Forbidden, discord.HTTPException):
+            return False
 
     async def _refresh_group_message(self, group: Dict) -> None:
         """Aktualisiert Embed + View des Gruppen-Posts im Channel (best effort)."""
