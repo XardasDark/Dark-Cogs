@@ -106,6 +106,11 @@ DEFAULT_FORUM_CLOSE_HOURS        = 168
 # Ob der Bot den Gruppen-Channel automatisch read-only für @everyone hält.
 DEFAULT_READONLY_ENFORCED        = True
 
+# Was mit geschlossenen/abgeschlossenen Gruppen-Posts passiert, wenn KEIN
+# Archiv-Channel gesetzt ist: "keep" = im Channel belassen, "delete" = löschen.
+# Ein gesetzter Archiv-Channel hat Vorrang (Posts werden dorthin verschoben).
+DEFAULT_CLOSED_POST_ACTION       = "keep"
+
 # IANA-Zeitzone in der Termin-Eingaben interpretiert werden (pro Guild überschreibbar).
 # Nutzereingaben (z.B. "20:30") gelten als lokale Zeit dieser Zone; gespeichert wird UTC.
 DEFAULT_TIMEZONE                 = "Europe/Berlin"

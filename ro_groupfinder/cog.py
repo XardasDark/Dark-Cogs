@@ -100,6 +100,7 @@ from .forum import (
     notify_leave_in_forum,
     notify_leader_change_in_forum,
 )
+from .overview import refresh_overview, finalize_group_post
 from .constants import (
     COLOR_OPEN, COLOR_CLOSED, RECURRENCE_OPTIONS, ROLE_TYPES,
     DEFAULT_CLEANUP_DAYS, DEFAULT_REMINDER_MINUTES, DEFAULT_WAITLIST_TIMEOUT_MINUTES,
@@ -244,6 +245,9 @@ class ROGroupFinder(commands.Cog):
         await create_forum_post(self.bot, group)
         save_group(state.guild_id, group)
         await message.edit(embed=build_group_embed(group), view=build_group_action_view(group))
+
+        # Übersicht offener Gruppen wieder nach unten schieben
+        await refresh_overview(self.bot, state.guild_id, move_to_bottom=True)
 
         if interaction.user.id in _wizard_sessions:
             del _wizard_sessions[interaction.user.id]
@@ -409,6 +413,9 @@ class ROGroupFinder(commands.Cog):
                 "\n\u26a0\ufe0f Der Nur-Befehle-Modus konnte nicht eingerichtet werden. "
                 "Bitte pr\u00fcfe die Berechtigungen des Bots."
             )
+        # \u00dcbersicht offener Gruppen (neu) unten im Channel posten
+        await refresh_overview(self.bot, ctx.guild.id, move_to_bottom=True)
+
         await self._reply(ctx, f"\u2705 Gruppen-Channel auf {channel.mention} gesetzt.{note}")
 
     @gruppe_setup.command(name="forum", description="Legt den Forum-Channel f\u00fcr Diskussionsposts fest")
@@ -469,6 +476,40 @@ class ROGroupFinder(commands.Cog):
             extra = f" In {channel.mention} werden Nachrichten nicht mehr gel\u00f6scht." if applied else ""
             await self._reply(ctx, f"\u2705 Nur-Befehle-Modus **deaktiviert**.{extra}")
 
+    @gruppe_setup.command(name="archiv", description="Legt einen Archiv-Channel f\u00fcr geschlossene Gruppen-Posts fest")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_archiv(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
+        set_guild_setting(ctx.guild.id, "archive_channel_id", channel.id)
+        await self._reply(
+            ctx,
+            f"\u2705 Archiv-Channel auf {channel.mention} gesetzt. Geschlossene, abgeschlossene "
+            f"und abgelaufene Gruppen-Posts werden k\u00fcnftig dorthin verschoben.",
+        )
+
+    @gruppe_setup.command(name="geschlossen", description="Was mit geschlossenen Posts passiert (behalten/loeschen)")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_geschlossen(self, ctx: commands.Context, modus: str) -> None:
+        val = modus.strip().lower()
+        if val in ("behalten", "keep", "bleiben"):
+            action = "keep"
+        elif val in ("loeschen", "l\u00f6schen", "delete", "entfernen"):
+            action = "delete"
+        else:
+            await self._reply(ctx, "\u274c Bitte **behalten** oder **loeschen** angeben.")
+            return
+
+        # Ein Archiv-Channel hat Vorrang \u2013 bei Wahl von behalten/loeschen wird er
+        # deaktiviert, damit die Einstellung eindeutig greift.
+        set_guild_setting(ctx.guild.id, "archive_channel_id", None)
+        set_guild_setting(ctx.guild.id, "closed_post_action", action)
+
+        if action == "keep":
+            await self._reply(ctx, "\u2705 Geschlossene Posts bleiben **im Channel** (kein Archiv).")
+        else:
+            await self._reply(ctx, "\u2705 Geschlossene Posts werden **gel\u00f6scht** (kein Archiv).")
+
     @gruppe_setup.command(name="info", description="Zeigt die aktuelle Konfiguration")
     @commands.guild_only()
     @commands.admin()
@@ -480,6 +521,14 @@ class ROGroupFinder(commands.Cog):
         embed = discord.Embed(title="\u2699\ufe0f RO Group Finder \u2013 Konfiguration", color=COLOR_OPEN)
         embed.add_field(name="\U0001f4cc Gruppen-Channel",    value=ch.mention if ch else "Nicht gesetzt", inline=False)
         embed.add_field(name="\U0001f4ac Forum-Channel",      value=forum.mention if forum else "Nicht gesetzt", inline=False)
+
+        archive = ctx.guild.get_channel(s.get("archive_channel_id") or 0)
+        if archive:
+            closed_val = f"Archiv: {archive.mention}"
+        else:
+            closed_val = "Löschen" if s.get("closed_post_action") == "delete" else "Im Channel behalten"
+        embed.add_field(name="\U0001f5c4️ Geschlossene Posts", value=closed_val, inline=False)
+
         embed.add_field(name="\U0001f512 Nur-Befehle",        value="An" if s.get("readonly_enforced") else "Aus", inline=True)
         embed.add_field(name="\U0001f4d5 Forum schlie\u00dfen", value=f"{s['forum_close_hours']} Std. nach Start", inline=True)
         embed.add_field(name="\u23f0 Erinnerung",              value=f"{s['reminder_minutes']} Min. vor Start",  inline=True)
@@ -557,6 +606,8 @@ class ROGroupFinder(commands.Cog):
     @gruppe_config_forum.error
     @gruppe_config_forumschliessen.error
     @gruppe_config_readonly.error
+    @gruppe_config_archiv.error
+    @gruppe_config_geschlossen.error
     @gruppe_config_info.error
     @gruppe_config_erinnerung.error
     @gruppe_config_cleanup.error
@@ -870,6 +921,9 @@ class ROGroupFinder(commands.Cog):
         if not get_open_slots(group):
             await notify_group_full(self.bot, group)
 
+        # Übersicht aktualisieren (Belegung/Status geändert)
+        await refresh_overview(self.bot, guild_id)
+
         await interaction.followup.send(
             f"✅ Du bist der Gruppe beigetreten als **{class_emoji} {class_display}**!",
             ephemeral=True,
@@ -944,6 +998,7 @@ class ROGroupFinder(commands.Cog):
 
         await notify_creator_leave(self.bot, group, player_name, slot_index)
         await notify_leave_in_forum(self.bot, group, player_name)
+        await refresh_overview(self.bot, guild_id)
 
         # Embed aktualisieren
         channel = interaction.guild.get_channel(group["channel_id"])
@@ -1063,11 +1118,16 @@ class ROGroupFinder(commands.Cog):
         # Alle Mitglieder benachrichtigen
         await notify_group_finished(self.bot, group)
 
-        # Post aktualisieren (abgeschlossen-Ansicht, Buttons deaktiviert)
-        await self._refresh_group_message(group)
+        # Post gemäß Guild-Richtlinie behandeln (Archiv / löschen / behalten)
+        removed = await finalize_group_post(self.bot, group)
+        if removed:
+            delete_group(guild_id, msg_id)
+
+        # Übersicht aktualisieren (Gruppe ist nicht mehr offen)
+        await refresh_overview(self.bot, guild_id)
 
         await interaction.response.edit_message(
-            content="✅ **Gruppe wurde abgeschlossen. GG!** Der Beitrag bleibt erhalten.",
+            content="✅ **Gruppe wurde abgeschlossen. GG!**",
             view=None,
         )
 
@@ -1118,6 +1178,7 @@ class ROGroupFinder(commands.Cog):
 
         await notify_creator_removed(self.bot, group, player_name, slot_index)
         await notify_leave_in_forum(self.bot, group, player_name, removed=True)
+        await refresh_overview(self.bot, interaction.guild_id)
 
         # Nächsten Wartelisten-Spieler benachrichtigen
         await self.scheduler.notify_next_waitlist_public(group)
@@ -1240,6 +1301,7 @@ class ROGroupFinder(commands.Cog):
         await notify_leader_change_in_forum(
             self.bot, group, new_id, new_name, old_leader_name
         )
+        await refresh_overview(self.bot, interaction.guild_id)
 
         await interaction.response.edit_message(
             content=f"✅ Die Gruppenführung wurde an **{new_name}** übergeben.",
@@ -1334,6 +1396,9 @@ class ROGroupFinder(commands.Cog):
         # Aus JSON entfernen
         delete_group(guild_id, msg_id)
 
+        # Übersicht aktualisieren
+        await refresh_overview(self.bot, guild_id)
+
         await interaction.response.edit_message(
             content="🗑️ **Gruppe wurde gelöscht.**", embed=None, view=None
         )
@@ -1365,6 +1430,7 @@ class ROGroupFinder(commands.Cog):
                 pass
 
         await notify_edit(self.bot, group, changes)
+        await refresh_overview(self.bot, interaction.guild_id)
 
     # ─────────────────────────────────────────────────────────────────────────
     # DM-AKTIONEN: SUCHE AKTIV HALTEN / ERNEUT SUCHEN
@@ -1520,6 +1586,7 @@ class ROGroupFinder(commands.Cog):
                 embed=build_group_embed(new_group),
                 view=build_group_action_view(new_group),
             )
+            await refresh_overview(self.bot, guild_id, move_to_bottom=True)
         except Exception:
             await interaction.response.edit_message(
                 content="❌ Die Suche konnte nicht erneut erstellt werden.",

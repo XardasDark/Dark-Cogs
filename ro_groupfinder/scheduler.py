@@ -45,6 +45,7 @@ from .data_manager import (
 )
 from .group_embed import build_group_embed, build_group_action_view
 from .forum import create_forum_post, close_forum_post
+from .overview import refresh_overview, finalize_group_post
 from .notifications import (
     notify_group_expired,
     notify_expiry_warning,
@@ -174,12 +175,13 @@ class GroupScheduler:
             if group.get("forum_thread_id") and not group.get("forum_closed"):
                 await close_forum_post(self.bot, group)
 
-            # d. Discord-Post löschen
-            if message_id:
-                await self._delete_discord_message(guild_id, group["channel_id"], message_id)
+            # d. Post gemäß Richtlinie behandeln – abgelaufene Gruppen verlassen den
+            #    Channel immer (Archiv, sonst löschen; kein "behalten").
+            await finalize_group_post(self.bot, group, allow_keep=False)
 
-            # e. Aus JSON entfernen
+            # e. Aus JSON entfernen + Übersicht aktualisieren
             delete_group(guild_id, message_id)
+            await refresh_overview(self.bot, guild_id)
 
     # ─────────────────────────────────────────────────────────────────────────
     # TASK 2 – ERINNERUNGEN
@@ -365,6 +367,9 @@ class GroupScheduler:
                     view=build_group_action_view(new_group),
                 )
 
+                # Übersicht wieder nach unten schieben (neuer Post)
+                await refresh_overview(self.bot, guild_id, move_to_bottom=True)
+
             except Exception as e:
                 print(f"[RO GroupFinder Scheduler] Fehler beim Erstellen des Wiederholungs-Posts: {e}")
                 continue
@@ -380,10 +385,11 @@ class GroupScheduler:
             # Der alte Forum-Post wird NICHT beim Erreichen des Termins geschlossen –
             # das übernimmt _task_forum_cleanup automatisch nach forum_close_hours ab Start.
 
-            # Alten Discord-Post schließen (Embed-Update)
+            # Alten Post gemäß Richtlinie behandeln (Archiv / löschen / behalten)
             old_msg_id = group.get("message_id")
-            if old_msg_id:
-                await self._update_group_embed(guild_id, channel_id, old_msg_id, group)
+            removed = await finalize_group_post(self.bot, group)
+            if removed and old_msg_id:
+                delete_group(guild_id, old_msg_id)
 
     # ─────────────────────────────────────────────────────────────────────────
     # TASK 5 – FORUM-POSTS ABGESCHLOSSENER GRUPPEN SCHLIESSEN
@@ -459,47 +465,6 @@ class GroupScheduler:
         await notify_waitlist_slot_free(
             self.bot, group, next_entry["user_id"], timeout_minutes
         )
-
-    async def _delete_discord_message(
-        self,
-        guild_id:   int,
-        channel_id: int,
-        message_id: int,
-    ) -> None:
-        """Löscht eine Discord-Nachricht. Ignoriert Fehler (bereits gelöscht etc.)."""
-        channel = self.bot.get_channel(channel_id)
-        if not channel:
-            try:
-                channel = await self.bot.fetch_channel(channel_id)
-            except Exception:
-                return
-        try:
-            message = await channel.fetch_message(message_id)
-            await message.delete()
-        except Exception:
-            pass
-
-    async def _update_group_embed(
-        self,
-        guild_id:   int,
-        channel_id: int,
-        message_id: int,
-        group:      Dict,
-    ) -> None:
-        """Aktualisiert das Embed einer bestehenden Discord-Nachricht."""
-        channel = self.bot.get_channel(channel_id)
-        if not channel:
-            try:
-                channel = await self.bot.fetch_channel(channel_id)
-            except Exception:
-                return
-        try:
-            message = await channel.fetch_message(message_id)
-            embed   = build_group_embed(group)
-            view    = build_group_action_view(group)
-            await message.edit(embed=embed, view=view)
-        except Exception:
-            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
