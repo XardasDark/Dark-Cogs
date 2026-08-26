@@ -171,7 +171,8 @@ class GroupScheduler:
             await notify_group_expired(self.bot, group, inactivity_days)
 
             # c2. Forum-Diskussionspost sofort schließen (bleibt erhalten, nicht gelöscht)
-            await close_forum_post(self.bot, group)
+            if group.get("forum_thread_id") and not group.get("forum_closed"):
+                await close_forum_post(self.bot, group)
 
             # d. Discord-Post löschen
             if message_id:
@@ -376,8 +377,8 @@ class GroupScheduler:
             group["status"]             = "closed"
             save_group(guild_id, group)
 
-            # Alten Forum-Diskussionspost sofort schließen (nicht gelöscht)
-            await close_forum_post(self.bot, group)
+            # Der alte Forum-Post wird NICHT beim Erreichen des Termins geschlossen –
+            # das übernimmt _task_forum_cleanup automatisch nach forum_close_hours ab Start.
 
             # Alten Discord-Post schließen (Embed-Update)
             old_msg_id = group.get("message_id")
@@ -390,31 +391,42 @@ class GroupScheduler:
 
     async def _task_forum_cleanup(self) -> None:
         """
-        Schließt die Forum-Diskussionsposts abgeschlossener Gruppen, sobald deren
-        Frist (forum_close_at) erreicht ist.
+        Schließt Forum-Diskussionsposts automatisch, sobald seit dem START der
+        Gruppe die konfigurierte Zeit (forum_close_hours) verstrichen ist.
 
-        Ablauf pro Gruppe mit status == 'finished':
-          - forum_thread_id gesetzt, forum_closed noch False
-          - forum_close_at liegt in der Vergangenheit
-          → Ankündigung im Thread posten + Thread sperren/archivieren (NICHT löschen)
-          → forum_closed = True setzen und speichern
+        Wichtig: Beim bloßen Erreichen des Starttermins wird NICHT geschlossen –
+        zu diesem Zeitpunkt beginnt die Gruppe ja erst. Erst forum_close_hours
+        SPÄTER schließt der Post.
+
+        Referenzzeitpunkt:
+          - Startzeit der Gruppe (datetime), wenn gesetzt
+          - sonst der Erstellzeitpunkt (created_at)
+
+        Übersprungen werden Gruppen ohne Forum-Thread sowie Posts, die bereits
+        geschlossen sind (z.B. weil der Leiter die Gruppe abgeschlossen/gelöscht
+        hat oder sie abgelaufen ist). Der Post wird NIE gelöscht.
         """
         now = datetime.now(timezone.utc)
 
         for group in get_all_groups_flat():
-            if group.get("status") != "finished":
-                continue
             if not group.get("forum_thread_id") or group.get("forum_closed"):
                 continue
 
-            close_str = group.get("forum_close_at")
-            if not close_str:
-                continue
-            try:
-                close_dt = datetime.fromisoformat(close_str)
-            except ValueError:
-                continue
-            if close_dt > now:
+            ref = parse_stored_datetime(group.get("datetime"), group["guild_id"])
+            if ref is None:
+                created = group.get("created_at")
+                if not created:
+                    continue
+                try:
+                    ref = datetime.fromisoformat(created)
+                except ValueError:
+                    continue
+                if ref.tzinfo is None:
+                    ref = ref.replace(tzinfo=timezone.utc)
+
+            settings = get_guild_settings(group["guild_id"])
+            close_at = ref + timedelta(hours=settings["forum_close_hours"])
+            if close_at > now:
                 continue
 
             await close_forum_post(self.bot, group, announce_deletion=True)

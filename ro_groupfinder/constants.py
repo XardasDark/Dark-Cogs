@@ -97,9 +97,11 @@ DEFAULT_EXPIRY_WARNING_DAYS      = 3    # Tage vor Ablauf → Vorwarnung an den 
 DEFAULT_REMINDER_MINUTES         = 30   # Minuten vor Gruppenstart → Erinnerungs-DM
 DEFAULT_WAITLIST_TIMEOUT_MINUTES = 30   # Minuten die ein Wartelisten-Spieler Zeit hat
 
-# Tage nach Abschluss einer Gruppe bis der zugehörige Forum-Diskussionspost
-# geschlossen (gesperrt + archiviert) wird. Der Post wird NIE automatisch gelöscht.
-DEFAULT_FORUM_CLOSE_DAYS         = 7
+# Stunden nach dem Gruppen-START (bzw. der Erstellung, falls keine Startzeit
+# gesetzt ist), nach denen der Forum-Diskussionspost automatisch geschlossen
+# (gesperrt + archiviert) wird – sofern der Leiter die Gruppe nicht vorher
+# selbst beendet. 168 Std. = 7 Tage. Der Post wird NIE automatisch gelöscht.
+DEFAULT_FORUM_CLOSE_HOURS        = 168
 
 # Ob der Bot den Gruppen-Channel automatisch read-only für @everyone hält.
 DEFAULT_READONLY_ENFORCED        = True

@@ -31,7 +31,7 @@ from .constants import (
     DEFAULT_EXPIRY_WARNING_DAYS,
     DEFAULT_REMINDER_MINUTES,
     DEFAULT_WAITLIST_TIMEOUT_MINUTES,
-    DEFAULT_FORUM_CLOSE_DAYS,
+    DEFAULT_FORUM_CLOSE_HOURS,
     DEFAULT_READONLY_ENFORCED,
     DEFAULT_TIMEZONE,
     EXPIRED_SNAPSHOT_RETENTION_DAYS,
@@ -127,7 +127,7 @@ def get_guild_settings(guild_id: int) -> Dict:
     defaults = {
         "group_channel_id":           None,
         "forum_channel_id":           None,
-        "forum_close_days":           DEFAULT_FORUM_CLOSE_DAYS,
+        "forum_close_hours":          DEFAULT_FORUM_CLOSE_HOURS,
         "readonly_enforced":          DEFAULT_READONLY_ENFORCED,
         "cleanup_days":               DEFAULT_CLEANUP_DAYS,
         "warning_days":               DEFAULT_EXPIRY_WARNING_DAYS,
@@ -417,8 +417,6 @@ def create_group(
         "reminder_sent":       False,
         # Forum-Diskussionspost (wird nach dem Gruppen-Post erstellt).
         "forum_thread_id":     None,
-        # Zeitpunkt ab dem der Forum-Post nach Abschluss geschlossen wird.
-        "forum_close_at":      None,
         # Verhindert doppeltes Schließen des Forum-Posts.
         "forum_closed":        False,
     }

@@ -35,7 +35,7 @@ import discord
 from discord import app_commands, ui
 from redbot.core import commands
 from typing import Optional, Dict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from .wizard import WizardSession, WizardState, build_state_from_group
 from .data_manager import (
@@ -420,18 +420,19 @@ class ROGroupFinder(commands.Cog):
             f"dort automatisch ein Diskussionsbeitrag erstellt.",
         )
 
-    @gruppe_setup.command(name="forumschliessen", description="Tage nach Abschluss bis der Forum-Post geschlossen wird")
+    @gruppe_setup.command(name="forumschliessen", description="Stunden nach Gruppenstart bis der Forum-Post automatisch schlie\u00dft")
     @commands.guild_only()
     @commands.admin()
-    async def gruppe_config_forumschliessen(self, ctx: commands.Context, tage: int) -> None:
-        if tage < 1 or tage > 90:
-            await self._reply(ctx, "\u274c Wert muss zwischen 1 und 90 Tagen liegen.")
+    async def gruppe_config_forumschliessen(self, ctx: commands.Context, stunden: int) -> None:
+        if stunden < 1 or stunden > 2160:
+            await self._reply(ctx, "\u274c Wert muss zwischen 1 und 2160 Stunden (90 Tagen) liegen.")
             return
-        set_guild_setting(ctx.guild.id, "forum_close_days", tage)
+        set_guild_setting(ctx.guild.id, "forum_close_hours", stunden)
         await self._reply(
             ctx,
-            f"\u2705 Forum-Posts werden **{tage} Tage** nach Abschluss der Gruppe geschlossen "
-            f"(nicht gel\u00f6scht).",
+            f"\u2705 Forum-Posts schlie\u00dfen automatisch **{stunden} Stunden** nach dem Gruppenstart "
+            f"(bzw. nach der Erstellung, wenn keine Startzeit gesetzt ist). Beendet der Leiter "
+            f"die Gruppe vorher, schlie\u00dft der Post sofort. Gel\u00f6scht wird nie.",
         )
 
     @gruppe_setup.command(name="readonly", description="Read-only-Modus f\u00fcr den Gruppen-Channel an/aus")
@@ -474,7 +475,7 @@ class ROGroupFinder(commands.Cog):
         embed.add_field(name="\U0001f4cc Gruppen-Channel",    value=ch.mention if ch else "Nicht gesetzt", inline=False)
         embed.add_field(name="\U0001f4ac Forum-Channel",      value=forum.mention if forum else "Nicht gesetzt", inline=False)
         embed.add_field(name="\U0001f512 Read-only",          value="An" if s.get("readonly_enforced") else "Aus", inline=True)
-        embed.add_field(name="\U0001f4d5 Forum schlie\u00dfen", value=f"Nach {s['forum_close_days']} Tagen (Abschluss)", inline=True)
+        embed.add_field(name="\U0001f4d5 Forum schlie\u00dfen", value=f"{s['forum_close_hours']} Std. nach Start", inline=True)
         embed.add_field(name="\u23f0 Erinnerung",              value=f"{s['reminder_minutes']} Min. vor Start",  inline=True)
         embed.add_field(name="\U0001f5d1\ufe0f Cleanup",      value=f"Nach {s['cleanup_days']} Tagen Inaktivit\u00e4t", inline=True)
         embed.add_field(name="\u26a0\ufe0f Vorwarnung",        value=f"{s['warning_days']} Tage vor Ablauf",      inline=True)
@@ -1036,16 +1037,13 @@ class ROGroupFinder(commands.Cog):
 
         # Status setzen und speichern (bleibt erhalten)
         group["status"] = "finished"
-
-        # Forum-Diskussionspost wird nach der konfigurierten Frist vom Scheduler
-        # geschlossen (nicht gelöscht). Deadline hier setzen.
-        if group.get("forum_thread_id"):
-            settings = get_guild_settings(guild_id)
-            close_at = datetime.now(timezone.utc) + timedelta(days=settings["forum_close_days"])
-            group["forum_close_at"] = close_at.isoformat()
-            group["forum_closed"]   = False
-
         save_group(guild_id, group)
+
+        # Forum-Diskussionspost sofort schließen (bleibt erhalten, nicht gelöscht).
+        if group.get("forum_thread_id") and not group.get("forum_closed"):
+            await close_forum_post(self.bot, group)
+            group["forum_closed"] = True
+            save_group(guild_id, group)
 
         # Alle Mitglieder benachrichtigen
         await notify_group_finished(self.bot, group)
@@ -1306,7 +1304,8 @@ class ROGroupFinder(commands.Cog):
         )
 
         # Forum-Diskussionspost sofort schließen (bleibt erhalten, nicht gelöscht).
-        await close_forum_post(self.bot, group)
+        if group.get("forum_thread_id") and not group.get("forum_closed"):
+            await close_forum_post(self.bot, group)
 
         # Discord-Post löschen
         channel = interaction.guild.get_channel(group["channel_id"])
