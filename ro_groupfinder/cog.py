@@ -402,10 +402,11 @@ class ROGroupFinder(commands.Cog):
         if get_guild_settings(ctx.guild.id).get("readonly_enforced"):
             ok = await self._apply_readonly(channel)
             note = (
-                "\n\U0001f512 Der Channel wurde **read-only** gesetzt \u2013 normale User "
-                "k\u00f6nnen keine Nachrichten mehr schreiben, die `/gruppe`-Befehle bleiben nutzbar."
+                "\n\U0001f512 **Nur-Befehle-Modus** aktiv: normale Nachrichten werden hier "
+                "automatisch gel\u00f6scht, die `/gruppe`-Befehle bleiben nutzbar.\n"
+                "\u2139\ufe0f Der Bot braucht daf\u00fcr das Recht **Nachrichten verwalten** in diesem Channel."
                 if ok else
-                "\n\u26a0\ufe0f Read-only konnte nicht gesetzt werden (fehlende Rechte?). "
+                "\n\u26a0\ufe0f Der Nur-Befehle-Modus konnte nicht eingerichtet werden. "
                 "Bitte pr\u00fcfe die Berechtigungen des Bots."
             )
         await self._reply(ctx, f"\u2705 Gruppen-Channel auf {channel.mention} gesetzt.{note}")
@@ -436,7 +437,7 @@ class ROGroupFinder(commands.Cog):
             f"die Gruppe vorher, schlie\u00dft der Post sofort. Gel\u00f6scht wird nie.",
         )
 
-    @gruppe_setup.command(name="readonly", description="Read-only-Modus f\u00fcr den Gruppen-Channel an/aus")
+    @gruppe_setup.command(name="readonly", description="Nur-Befehle-Modus f\u00fcr den Gruppen-Channel an/aus")
     @commands.guild_only()
     @commands.admin()
     async def gruppe_config_readonly(self, ctx: commands.Context, status: str) -> None:
@@ -458,11 +459,15 @@ class ROGroupFinder(commands.Cog):
             applied = await (self._apply_readonly(channel) if enabled else self._clear_readonly(channel))
 
         if enabled:
-            extra = f" {channel.mention} ist jetzt read-only." if applied else ""
-            await self._reply(ctx, f"\u2705 Read-only-Modus **aktiviert**.{extra}")
+            extra = (
+                f" In {channel.mention} werden getippte Nachrichten jetzt automatisch gel\u00f6scht "
+                f"(Bot braucht **Nachrichten verwalten**); `/gruppe`-Befehle bleiben nutzbar."
+                if applied else ""
+            )
+            await self._reply(ctx, f"\u2705 Nur-Befehle-Modus **aktiviert**.{extra}")
         else:
-            extra = f" Die Schreibsperre in {channel.mention} wurde aufgehoben." if applied else ""
-            await self._reply(ctx, f"\u2705 Read-only-Modus **deaktiviert**.{extra}")
+            extra = f" In {channel.mention} werden Nachrichten nicht mehr gel\u00f6scht." if applied else ""
+            await self._reply(ctx, f"\u2705 Nur-Befehle-Modus **deaktiviert**.{extra}")
 
     @gruppe_setup.command(name="info", description="Zeigt die aktuelle Konfiguration")
     @commands.guild_only()
@@ -475,7 +480,7 @@ class ROGroupFinder(commands.Cog):
         embed = discord.Embed(title="\u2699\ufe0f RO Group Finder \u2013 Konfiguration", color=COLOR_OPEN)
         embed.add_field(name="\U0001f4cc Gruppen-Channel",    value=ch.mention if ch else "Nicht gesetzt", inline=False)
         embed.add_field(name="\U0001f4ac Forum-Channel",      value=forum.mention if forum else "Nicht gesetzt", inline=False)
-        embed.add_field(name="\U0001f512 Read-only",          value="An" if s.get("readonly_enforced") else "Aus", inline=True)
+        embed.add_field(name="\U0001f512 Nur-Befehle",        value="An" if s.get("readonly_enforced") else "Aus", inline=True)
         embed.add_field(name="\U0001f4d5 Forum schlie\u00dfen", value=f"{s['forum_close_hours']} Std. nach Start", inline=True)
         embed.add_field(name="\u23f0 Erinnerung",              value=f"{s['reminder_minutes']} Min. vor Start",  inline=True)
         embed.add_field(name="\U0001f5d1\ufe0f Cleanup",      value=f"Nach {s['cleanup_days']} Tagen Inaktivit\u00e4t", inline=True)
@@ -1540,26 +1545,28 @@ class ROGroupFinder(commands.Cog):
 
     async def _apply_readonly(self, channel: discord.TextChannel) -> bool:
         """
-        Setzt den Gruppen-Channel read-only für normale User:
-          - @everyone darf ansehen, aber nicht schreiben / Threads erstellen
-          - der Bot behält explizit Schreibrechte (postet die Gruppen-Embeds)
+        Macht den Gruppen-Channel zu einem "nur Befehle"-Channel.
+
+        Wichtig: Das Eingabefeld muss AKTIV bleiben, sonst lassen sich auch keine
+        Slash-Commands tippen. Deshalb wird hier NICHT die Schreibrechte-Sperre
+        gesetzt, stattdessen bleibt Schreiben+Slash-Commands erlaubt, und der
+        on_message-Listener (_enforce_command_only) löscht jede getippte Nachricht
+        sofort wieder. So wirkt der Channel wie read-only, Befehle gehen aber.
+
+        Thread-Erstellung wird weiterhin per Permission unterbunden.
         Gibt True bei Erfolg zurück, False bei fehlenden Rechten.
         """
         guild = channel.guild
         try:
             await channel.set_permissions(
                 guild.default_role,
-                send_messages=False,
+                send_messages=True,
+                use_application_commands=True,
                 create_public_threads=False,
                 create_private_threads=False,
                 send_messages_in_threads=False,
                 view_channel=True,
-                reason="RO Group Finder: Gruppen-Channel read-only",
-            )
-            await channel.set_permissions(
-                guild.me,
-                send_messages=True,
-                reason="RO Group Finder: Bot behält Schreibrechte",
+                reason="RO Group Finder: Gruppen-Channel nur für Befehle (Auto-Löschung)",
             )
             return True
         except discord.Forbidden:
@@ -1568,17 +1575,55 @@ class ROGroupFinder(commands.Cog):
             return False
 
     async def _clear_readonly(self, channel: discord.TextChannel) -> bool:
-        """Hebt die read-only-Overwrites für @everyone wieder auf."""
+        """Hebt die Channel-Overwrites für @everyone wieder auf."""
         guild = channel.guild
         try:
             await channel.set_permissions(
                 guild.default_role,
                 overwrite=None,
-                reason="RO Group Finder: read-only aufgehoben",
+                reason="RO Group Finder: Befehls-Modus aufgehoben",
             )
             return True
         except (discord.Forbidden, discord.HTTPException):
             return False
+
+    @commands.Cog.listener("on_message")
+    async def _enforce_command_only(self, message: discord.Message) -> None:
+        """
+        Hält den Gruppen-Channel frei von normalem Chat: löscht jede von einem
+        normalen User getippte Nachricht sofort. Slash-Commands erzeugen keine
+        Nachricht und bleiben daher unberührt.
+
+        Ausgenommen: der Bot selbst und Moderatoren (Nachrichten verwalten).
+        Greift nur wenn readonly_enforced für die Guild aktiv ist.
+        """
+        if message.guild is None or message.author.bot:
+            return
+
+        channel_id = get_group_channel(message.guild.id)
+        if not channel_id or message.channel.id != channel_id:
+            return
+
+        if not get_guild_settings(message.guild.id).get("readonly_enforced"):
+            return
+
+        perms = getattr(message.author, "guild_permissions", None)
+        if perms and (perms.manage_messages or perms.administrator):
+            return
+
+        try:
+            await message.delete()
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            return
+
+        try:
+            await message.channel.send(
+                f"{message.author.mention} ℹ️ Dieser Channel ist nur für **/gruppe**-Befehle. "
+                f"Zum Austausch nutzt bitte den Forum-Beitrag der jeweiligen Gruppe.",
+                delete_after=8,
+            )
+        except discord.HTTPException:
+            pass
 
     async def _refresh_group_message(self, group: Dict) -> None:
         """Aktualisiert Embed + View des Gruppen-Posts im Channel (best effort)."""
