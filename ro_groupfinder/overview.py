@@ -64,13 +64,17 @@ def _group_line(group: Dict) -> str:
     msg_id     = group.get("message_id")
 
     dt   = parse_stored_datetime(group.get("datetime"), guild_id)
-    when = f" · <t:{int(dt.timestamp())}:R>" if dt else ""
+    when = f"⏰ <t:{int(dt.timestamp())}:R>" if dt else "🕓 zeitlos"
 
-    line = f"{icon} **{goal}** — {creator_txt} · {filled}/{total}{when}"
+    # Der Titel selbst ist der Klick-Link zum Post (kein separates "→ Post",
+    # das sonst hässlich umbricht). Details ruhig in eine zweite, eingerückte Zeile.
     if guild_id and channel_id and msg_id:
-        jump = f"https://discord.com/channels/{guild_id}/{channel_id}/{msg_id}"
-        line += f" · [→ Post]({jump})"
-    return line
+        jump  = f"https://discord.com/channels/{guild_id}/{channel_id}/{msg_id}"
+        title = f"[**{goal}**]({jump})"
+    else:
+        title = f"**{goal}**"
+
+    return f"{icon} {title}\n　└ `{filled}/{total}` · {when} · 👑 {creator_txt}"
 
 
 def _sort_key(group: Dict):
@@ -90,21 +94,25 @@ def build_overview_embed(guild_id: int) -> discord.Embed:
     ]
     active.sort(key=_sort_key)
 
-    embed = discord.Embed(title="📋 Offene Gruppensuchen", color=COLOR_OPEN)
     if not active:
+        embed = discord.Embed(title="📋 Offene Gruppensuchen", color=COLOR_OPEN)
         embed.description = (
             "Aktuell keine offenen Gruppensuchen.\n"
             "Erstelle eine mit `/gruppe erstellen`!"
         )
     else:
+        embed = discord.Embed(
+            title=f"📋 Offene Gruppensuchen ({len(active)})",
+            color=COLOR_OPEN,
+        )
         lines = [_group_line(g) for g in active[:MAX_OVERVIEW_GROUPS]]
-        desc  = "\n".join(lines)
+        desc  = "\n\n".join(lines)
         extra = len(active) - MAX_OVERVIEW_GROUPS
         if extra > 0:
             desc += f"\n\n… und **{extra}** weitere. Nutze `/gruppe liste`."
         embed.description = desc
 
-    embed.set_footer(text="Diese Übersicht aktualisiert sich automatisch.")
+    embed.set_footer(text="Aktualisiert sich automatisch · /gruppe meine zeigt deine Gruppen")
     return embed
 
 

@@ -324,6 +324,53 @@ class ROGroupFinder(commands.Cog):
         )
         await self._reply(ctx, embed=embed)
 
+    @gruppe.command(name="meine", description="Zeigt dir (privat) in welchen Gruppen du gerade bist")
+    @commands.guild_only()
+    async def gruppe_meine(self, ctx: commands.Context) -> None:
+        guild_id = ctx.guild.id
+        user_id  = ctx.author.id
+        groups   = get_guild_groups(guild_id)
+
+        lines = []
+        for g in groups.values():
+            if g.get("status") not in ("open", "full"):
+                continue
+
+            # Rolle des Nutzers in dieser Gruppe bestimmen
+            if g.get("creator_id") == user_id:
+                role = "\ud83d\udc51 Leiter"
+            else:
+                slot_idx = find_user_slot(g, user_id)
+                if slot_idx is not None:
+                    slot = next((s for s in g.get("slots", []) if s["slot_index"] == slot_idx), None)
+                    cls  = (slot.get("filled_class") or slot.get("display_name")) if slot else "?"
+                    role = f"\ud83c\udfaf {cls} \u00b7 Slot {slot_idx + 1}"
+                elif is_user_in_waitlist(g, user_id):
+                    role = "\u23f3 Warteliste"
+                else:
+                    continue
+
+            goal   = resolve_goal_name(g)
+            msg_id = g.get("message_id")
+            icon   = "\ud83d\udfe2" if g.get("status") == "open" else "\ud83d\udfe1"
+            if msg_id:
+                jump  = f"https://discord.com/channels/{guild_id}/{g.get('channel_id')}/{msg_id}"
+                title = f"[**{goal}**]({jump})"
+            else:
+                title = f"**{goal}**"
+            lines.append(f"{icon} {title} \u2014 {role}")
+
+        if not lines:
+            await self._reply(ctx, "\u2139\ufe0f Du bist aktuell in **keiner** offenen Gruppe.")
+            return
+
+        embed = discord.Embed(
+            title="\ud83d\udccd Deine Gruppen",
+            description="\n\n".join(lines),
+            color=COLOR_OPEN,
+        )
+        await self._reply(ctx, embed=embed)
+
     @gruppe.command(name="kopieren", description="Erstelle eine Gruppe per ID erneut (mit Bearbeitung vor dem Posten)")
     @commands.guild_only()
     async def gruppe_kopieren(self, ctx: commands.Context, gruppen_id: str) -> None:
