@@ -245,15 +245,20 @@ class ROGroupFinder(commands.Cog):
             )
             return
 
+        # Ohne Buttons senden: die echte message_id ist noch unbekannt. Buttons mit
+        # message_id=0 würden bis zum Edit ins Leere zeigen ("Gruppe nicht gefunden").
         group["message_id"] = 0
-        message = await channel.send(embed=build_group_embed(group), view=build_group_action_view(group))
+        message = await channel.send(embed=build_group_embed(group))
         set_group_message_id(group, message.id)
         save_group(state.guild_id, group)
+
+        # Buttons mit korrekter message_id SOFORT setzen (noch vor dem langsamen Forum-Call).
+        await message.edit(view=build_group_action_view(group))
 
         # Forum-Diskussionspost erstellen (best effort) und Embed mit Link aktualisieren.
         await create_forum_post(self.bot, group)
         save_group(state.guild_id, group)
-        await message.edit(embed=build_group_embed(group), view=build_group_action_view(group))
+        await message.edit(embed=build_group_embed(group))
 
         # Übersicht offener Gruppen wieder nach unten schieben
         await refresh_overview(self.bot, state.guild_id, move_to_bottom=True)
@@ -832,6 +837,12 @@ class ROGroupFinder(commands.Cog):
         self, interaction: discord.Interaction, msg_id: int, parts: list
     ) -> None:
         group = get_group_by_message(interaction.guild_id, msg_id)
+        # Sicherheitsnetz: falls der Button eine veraltete/temporäre ID trägt,
+        # ist die Nachricht des Buttons selbst der Gruppen-Post.
+        if not group and interaction.message:
+            group = get_group_by_message(interaction.guild_id, interaction.message.id)
+            if group:
+                msg_id = interaction.message.id
         if not group:
             await interaction.response.send_message("❌ Gruppe nicht gefunden.", ephemeral=True)
             return
@@ -1770,23 +1781,18 @@ class ROGroupFinder(commands.Cog):
                 slot["filled_class"]     = old_slot.get("filled_class") or slot["display_name"]
                 slot["filled_emoji"]     = old_slot.get("filled_emoji") or slot["emoji"]
 
-        # Posten
+        # Posten – ohne Buttons senden, echte ID holen, dann Buttons setzen.
         try:
             new_group["message_id"] = 0
-            message = await channel.send(
-                embed=build_group_embed(new_group),
-                view=build_group_action_view(new_group),
-            )
+            message = await channel.send(embed=build_group_embed(new_group))
             set_group_message_id(new_group, message.id)
             save_group(guild_id, new_group)
+            await message.edit(view=build_group_action_view(new_group))
 
             # Forum-Diskussionspost erstellen (best effort).
             await create_forum_post(self.bot, new_group)
             save_group(guild_id, new_group)
-            await message.edit(
-                embed=build_group_embed(new_group),
-                view=build_group_action_view(new_group),
-            )
+            await message.edit(embed=build_group_embed(new_group))
             await refresh_overview(self.bot, guild_id, move_to_bottom=True)
             await notify_subscribers(self.bot, new_group)
         except Exception:

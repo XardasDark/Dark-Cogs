@@ -343,24 +343,19 @@ class GroupScheduler:
                     continue
 
             try:
-                embed   = build_group_embed(new_group)
-                # Temporäre Message-ID für die View nötig → danach aktualisieren
+                # Ohne Buttons senden (message_id noch unbekannt), dann echte ID
+                # holen und Buttons setzen – sonst zeigen :0-Buttons ins Leere.
                 new_group["message_id"] = 0
-                view    = build_group_action_view(new_group)
-                message = await channel.send(embed=embed, view=view)
+                message = await channel.send(embed=build_group_embed(new_group))
 
                 set_group_message_id(new_group, message.id)
                 save_group(guild_id, new_group)
+                await message.edit(view=build_group_action_view(new_group))
 
                 # Forum-Diskussionspost für die neue Gruppe erstellen (best effort)
                 await create_forum_post(self.bot, new_group)
                 save_group(guild_id, new_group)
-
-                # View + Embed mit korrekter Message-ID / Forum-Link aktualisieren
-                await message.edit(
-                    embed=build_group_embed(new_group),
-                    view=build_group_action_view(new_group),
-                )
+                await message.edit(embed=build_group_embed(new_group))
 
                 # Übersicht wieder nach unten schieben (neuer Post)
                 await refresh_overview(self.bot, guild_id, move_to_bottom=True)
