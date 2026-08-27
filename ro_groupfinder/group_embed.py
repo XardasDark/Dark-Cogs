@@ -127,6 +127,16 @@ def build_group_action_view(group: Dict) -> ui.View:
     status  = group.get("status", "open")
     msg_id  = str(group.get("message_id", ""))
 
+    # Abgeschlossene Gruppen: nur ein "Wieder öffnen"-Button (Leiter/Admin,
+    # Prüfung im Callback). Solange der Post existiert, ist Reopen möglich.
+    if status == "finished":
+        view.add_item(ui.Button(
+            label="🔓 Wieder öffnen",
+            style=discord.ButtonStyle.success,
+            custom_id=f"group_reopen:{msg_id}",
+        ))
+        return view
+
     inactive = status in ("closed", "expired", "finished")
 
     # Beitreten (auch bei vollen Gruppen möglich → landet auf Warteliste)

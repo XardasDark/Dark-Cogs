@@ -13,6 +13,7 @@ Commands:
 
 Persistent Interaction Handlers (Button/Select custom_id):
   group_join:<msg_id>               → Beitretens-Flow starten
+  group_reopen:<msg_id>             → Abgeschlossene Gruppe wieder öffnen (Leiter/Admin)
   group_leave:<msg_id>              → Verlassens-Flow
   group_manage:<msg_id>             → Verwaltungsmenü öffnen
   join_slot_select:<msg_id>:<uid>   → Slot-Auswahl beim Beitreten
@@ -59,6 +60,8 @@ from .data_manager import (
     create_group,
     set_group_message_id,
     set_group_leader,
+    set_group_ended,
+    reopen_group,
     update_group_fields,
     touch_group_activity,
     reset_slots,
@@ -97,6 +100,8 @@ from .scheduler import GroupScheduler
 from .forum import (
     create_forum_post,
     close_forum_post,
+    delete_forum_post,
+    reopen_forum_post,
     notify_join_in_forum,
     notify_leave_in_forum,
     notify_leader_change_in_forum,
@@ -477,19 +482,57 @@ class ROGroupFinder(commands.Cog):
             f"dort automatisch ein Diskussionsbeitrag erstellt.",
         )
 
-    @gruppe_setup.command(name="forumschliessen", description="Stunden nach Gruppenstart bis der Forum-Post automatisch schlie\u00dft")
+    @gruppe_setup.command(name="startende", description="Stunden nach Gruppenstart bis die Gruppe automatisch beendet wird (0 = aus)")
     @commands.guild_only()
     @commands.admin()
-    async def gruppe_config_forumschliessen(self, ctx: commands.Context, stunden: int) -> None:
-        if stunden < 1 or stunden > 2160:
-            await self._reply(ctx, "\u274c Wert muss zwischen 1 und 2160 Stunden (90 Tagen) liegen.")
+    async def gruppe_config_startende(self, ctx: commands.Context, stunden: int) -> None:
+        if stunden < 0 or stunden > 2160:
+            await self._reply(ctx, "\u274c Wert muss zwischen 0 und 2160 Stunden liegen (0 = aus).")
             return
-        set_guild_setting(ctx.guild.id, "forum_close_hours", stunden)
+        set_guild_setting(ctx.guild.id, "group_finish_after_start_hours", stunden)
+        if stunden == 0:
+            await self._reply(ctx, "\u2705 Auto-Ende nach Start **deaktiviert**.")
+        else:
+            await self._reply(
+                ctx,
+                f"\u2705 Gruppen mit Termin werden **{stunden} Stunden** nach dem Start automatisch "
+                f"beendet. Der Leiter kann sie am Post wieder \u00f6ffnen (setzt den Timer zur\u00fcck).",
+            )
+
+    @gruppe_setup.command(name="threadschliessen", description="Stunden nach Gruppen-Ende bis der Forum-Thread geschlossen wird")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_threadschliessen(self, ctx: commands.Context, stunden: int) -> None:
+        if stunden < 0 or stunden > 2160:
+            await self._reply(ctx, "\u274c Wert muss zwischen 0 und 2160 Stunden liegen.")
+            return
+        set_guild_setting(ctx.guild.id, "thread_close_hours", stunden)
         await self._reply(
             ctx,
-            f"\u2705 Forum-Posts schlie\u00dfen automatisch **{stunden} Stunden** nach dem Gruppenstart "
-            f"(bzw. nach der Erstellung, wenn keine Startzeit gesetzt ist). Beendet der Leiter "
-            f"die Gruppe vorher, schlie\u00dft der Post sofort. Gel\u00f6scht wird nie.",
+            f"\u2705 Forum-Threads werden **{stunden} Stunden** nach dem Gruppen-Ende geschlossen "
+            f"(gesperrt + archiviert).",
+        )
+
+    @gruppe_setup.command(name="threadloeschen", description="Stunden nach Gruppen-Ende bis der Forum-Thread gel\u00f6scht/archiviert wird")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_threadloeschen(self, ctx: commands.Context, stunden: int) -> None:
+        if stunden < 1 or stunden > 4320:
+            await self._reply(ctx, "\u274c Wert muss zwischen 1 und 4320 Stunden liegen.")
+            return
+        close_h = get_guild_settings(ctx.guild.id)["thread_close_hours"]
+        if stunden < close_h:
+            await self._reply(
+                ctx,
+                f"\u274c Der L\u00f6schzeitpunkt ({stunden} Std.) muss **>= dem Schlie\u00dfzeitpunkt** "
+                f"({close_h} Std.) liegen. Passe zuerst `threadschliessen` an.",
+            )
+            return
+        set_guild_setting(ctx.guild.id, "thread_delete_hours", stunden)
+        await self._reply(
+            ctx,
+            f"\u2705 Forum-Threads werden **{stunden} Stunden** nach dem Gruppen-Ende gel\u00f6scht "
+            f"(mit Zusammenfassung in den Archiv-Channel, falls gesetzt).",
         )
 
     @gruppe_setup.command(name="readonly", description="Nur-Befehle-Modus f\u00fcr den Gruppen-Channel an/aus")
@@ -578,7 +621,10 @@ class ROGroupFinder(commands.Cog):
         embed.add_field(name="\U0001f5c4️ Geschlossene Posts", value=closed_val, inline=False)
 
         embed.add_field(name="\U0001f512 Nur-Befehle",        value="An" if s.get("readonly_enforced") else "Aus", inline=True)
-        embed.add_field(name="\U0001f4d5 Forum schlie\u00dfen", value=f"{s['forum_close_hours']} Std. nach Start", inline=True)
+        se_val = "Aus" if not s.get("group_finish_after_start_hours") else f"{s['group_finish_after_start_hours']} Std. nach Start"
+        embed.add_field(name="\U0001f3c1 Auto-Ende",          value=se_val, inline=True)
+        embed.add_field(name="\U0001f4d5 Thread schlie\u00dfen",   value=f"{s['thread_close_hours']} Std. nach Ende", inline=True)
+        embed.add_field(name="\U0001f5d1\ufe0f Thread l\u00f6schen",    value=f"{s['thread_delete_hours']} Std. nach Ende", inline=True)
         embed.add_field(name="\u23f0 Erinnerung",              value=f"{s['reminder_minutes']} Min. vor Start",  inline=True)
         embed.add_field(name="\U0001f5d1\ufe0f Cleanup",      value=f"Nach {s['cleanup_days']} Tagen Inaktivit\u00e4t", inline=True)
         embed.add_field(name="\u26a0\ufe0f Vorwarnung",        value=f"{s['warning_days']} Tage vor Ablauf",      inline=True)
@@ -652,7 +698,9 @@ class ROGroupFinder(commands.Cog):
 
     @gruppe_config_channel.error
     @gruppe_config_forum.error
-    @gruppe_config_forumschliessen.error
+    @gruppe_config_startende.error
+    @gruppe_config_threadschliessen.error
+    @gruppe_config_threadloeschen.error
     @gruppe_config_readonly.error
     @gruppe_config_archiv.error
     @gruppe_config_geschlossen.error
@@ -734,6 +782,7 @@ class ROGroupFinder(commands.Cog):
             "group_join":             self._handle_join,
             "group_leave":            self._handle_leave,
             "group_finish":           self._handle_finish,
+            "group_reopen":           self._handle_group_reopen,
             "group_manage":           self._handle_manage,
             "join_slot_select":       self._handle_join_slot_select,
             "join_class_select":      self._handle_join_class_select,
@@ -1125,6 +1174,49 @@ class ROGroupFinder(commands.Cog):
             embed=embed, view=build_manage_view(group), ephemeral=True
         )
 
+    async def _handle_group_reopen(
+        self, interaction: discord.Interaction, msg_id: int, parts: list
+    ) -> None:
+        """Öffnet eine abgeschlossene Gruppe wieder (Leiter/Admin)."""
+        group = get_group_by_message(interaction.guild_id, msg_id)
+        if not group:
+            await interaction.response.send_message("❌ Gruppe nicht gefunden.", ephemeral=True)
+            return
+
+        if group.get("status") != "finished":
+            await interaction.response.send_message(
+                "ℹ️ Diese Gruppe kann nicht mehr wieder geöffnet werden.", ephemeral=True
+            )
+            return
+
+        if not await self._is_leader_or_admin(interaction, group):
+            await interaction.response.send_message(
+                "❌ Nur der Gruppenleiter oder ein Admin kann die Gruppe wieder öffnen.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        # Status/Timer zurücksetzen (setzt auch reopened_at → Auto-Ende-Timer neu)
+        reopen_group(group)
+
+        # Thread reaktivieren – oder neu erstellen, falls schon gelöscht.
+        if group.get("thread_deleted") or not group.get("forum_thread_id"):
+            group["forum_thread_id"] = None
+            await create_forum_post(self.bot, group)
+        else:
+            reopened = await reopen_forum_post(self.bot, group)
+            if not reopened:
+                group["forum_thread_id"] = None
+                await create_forum_post(self.bot, group)
+
+        save_group(interaction.guild_id, group)
+
+        # Post-Ansicht + Übersicht aktualisieren
+        await self._refresh_group_message(group)
+        await refresh_overview(self.bot, interaction.guild_id)
+
     async def _handle_finish(
         self, interaction: discord.Interaction, msg_id: int, parts: list
     ) -> None:
@@ -1143,8 +1235,9 @@ class ROGroupFinder(commands.Cog):
         view = _FinishConfirmView(group, self)
         await interaction.response.send_message(
             "✅ Gruppe als abgeschlossen markieren? "
-            "Alle Mitglieder werden benachrichtigt. Der Beitrag bleibt zur Ansicht "
-            "im Channel erhalten und wird nicht gelöscht.",
+            "Alle Mitglieder werden benachrichtigt. Der Beitrag bekommt einen "
+            "**🔓 Wieder öffnen**-Button; der Diskussions-Thread wird später "
+            "automatisch geschlossen und aufgeräumt.",
             view=view,
             ephemeral=True,
         )
@@ -1153,43 +1246,31 @@ class ROGroupFinder(commands.Cog):
         self, interaction: discord.Interaction, group: dict
     ) -> None:
         """
-        Markiert die Gruppe als abgeschlossen.
-        Der Post bleibt erhalten (Status 'finished', Buttons deaktiviert) und
-        wird nicht gelöscht. Der Scheduler räumt 'finished'-Gruppen nicht ab.
+        Markiert die Gruppe als abgeschlossen (Status 'finished'). Der Post bleibt
+        mit "Wieder öffnen"-Button erhalten; Thread & Post werden anschließend von
+        der Aufräum-Pipeline (_task_lifecycle) zeitgesteuert behandelt.
         """
         from .notifications import notify_group_finished
         guild_id  = interaction.guild_id
-        msg_id    = group.get("message_id")
 
-        # Interaktion sofort bestätigen, bevor DMs/Forum/Übersicht laufen (10062-Schutz).
+        # Interaktion sofort bestätigen, bevor DMs/Übersicht laufen (10062-Schutz).
         await interaction.response.edit_message(
             content="⏳ Gruppe wird abgeschlossen …", view=None
         )
 
-        # Status setzen und speichern (bleibt erhalten)
-        group["status"] = "finished"
+        # Gruppe beenden – Post bleibt vorerst mit "Wieder öffnen"-Button erhalten.
+        # Thread schließen/löschen übernimmt die Aufräum-Pipeline (_task_lifecycle).
+        set_group_ended(group, "finished")
         save_group(guild_id, group)
 
-        # Forum-Diskussionspost sofort schließen (bleibt erhalten, nicht gelöscht).
-        if group.get("forum_thread_id") and not group.get("forum_closed"):
-            await close_forum_post(self.bot, group)
-            group["forum_closed"] = True
-            save_group(guild_id, group)
-
-        # Alle Mitglieder benachrichtigen
+        # Alle Mitglieder benachrichtigen + Post auf Abgeschlossen-Ansicht bringen
         await notify_group_finished(self.bot, group)
-
-        # Post gemäß Guild-Richtlinie behandeln (Archiv / löschen / behalten)
-        removed = await finalize_group_post(self.bot, group)
-        if removed:
-            delete_group(guild_id, msg_id)
-
-        # Übersicht aktualisieren (Gruppe ist nicht mehr offen)
+        await self._refresh_group_message(group)
         await refresh_overview(self.bot, guild_id)
 
         try:
             await interaction.edit_original_response(
-                content="✅ **Gruppe wurde abgeschlossen. GG!**",
+                content="✅ **Gruppe wurde abgeschlossen. GG!** Du kannst sie am Post wieder öffnen.",
                 view=None,
             )
         except discord.HTTPException:
@@ -1391,7 +1472,12 @@ class ROGroupFinder(commands.Cog):
 
         confirm_view = _DeleteConfirmView(group, self)
         await interaction.response.edit_message(
-            content="⚠️ **Sicher?** Diese Aktion kann nicht rückgängig gemacht werden.",
+            content=(
+                "⚠️ **Gruppe löschen?**\n"
+                "• **Normal** – Post wird entfernt, der Diskussions-Thread wird erst später "
+                "geschlossen und dann gelöscht/archiviert.\n"
+                "• **Sofort** – Post **und** Thread werden sofort komplett entfernt."
+            ),
             embed=None,
             view=confirm_view,
         )
@@ -1404,7 +1490,8 @@ class ROGroupFinder(commands.Cog):
             await interaction.response.defer()
             return
 
-        await self._delete_group(interaction, group)
+        mode = parts[2] if len(parts) > 2 else "normal"
+        await self._delete_group(interaction, group, mode=mode)
 
     async def _handle_manage_delete_cancel(
         self, interaction: discord.Interaction, msg_id: int, parts: list
@@ -1441,54 +1528,57 @@ class ROGroupFinder(commands.Cog):
         )
 
     async def _delete_group(
-        self, interaction: discord.Interaction, group: Dict
+        self, interaction: discord.Interaction, group: Dict, *, mode: str = "normal"
     ) -> None:
-        """Führt die Löschung durch: Benachrichtigungen → Post löschen → JSON-Eintrag entfernen."""
+        """
+        Löscht eine Gruppe.
+
+        mode="normal": Post wird entfernt; der Thread durchläuft die Aufräum-
+                       Pipeline (erst schließen, dann löschen/archivieren).
+        mode="sofort": Post UND Thread werden sofort entfernt, Record gelöscht.
+        """
         guild_id  = interaction.guild_id
         msg_id    = group.get("message_id")
 
         # Interaktion SOFORT bestätigen (3-Sekunden-Fenster), bevor die langsamen
-        # Aufgaben (DMs, Forum, Übersicht) laufen – sonst läuft der Interaktions-
-        # Token ab (404 "Unknown interaction", 10062).
+        # Aufgaben (DMs, Forum, Übersicht) laufen (10062-Schutz).
         await interaction.response.edit_message(
             content="🗑️ **Gruppe wird gelöscht …**", embed=None, view=None
         )
 
-        # Wer hat gelöscht? Ersteller vs. Admin → korrekte Meldung, und der
-        # Gruppenleiter wird informiert, wenn ein Admin gelöscht hat.
+        # Wer hat gelöscht? Ersteller vs. Admin → korrekte Meldung, Leiter wird
+        # informiert, wenn ein Admin gelöscht hat.
         if interaction.user.id == group.get("creator_id"):
             reason = "vom Gruppenleiter gelöscht"
         else:
             reason = f"von einem Admin (**{interaction.user.display_name}**) gelöscht"
-
-        # Alle Beteiligten außer der löschenden Person benachrichtigen
         await notify_group_deleted(
             self.bot, group, reason=reason, exclude_id=interaction.user.id
         )
 
-        # Forum-Diskussionspost sofort schließen (bleibt erhalten, nicht gelöscht).
-        if group.get("forum_thread_id") and not group.get("forum_closed"):
-            await close_forum_post(self.bot, group)
+        # Gruppe als beendet markieren und Post finalisieren (Archiv/löschen)
+        set_group_ended(group, "deleted")
+        await finalize_group_post(self.bot, group, allow_keep=False)
+        group["post_finalized"] = True
+        group["post_removed"]   = True
 
-        # Discord-Post löschen
-        channel = interaction.guild.get_channel(group["channel_id"])
-        if channel and msg_id:
-            try:
-                message = await channel.fetch_message(msg_id)
-                await message.delete()
-            except Exception:
-                pass
+        if mode == "sofort":
+            # Thread sofort löschen (Zusammenfassung ins Archiv, falls gesetzt)
+            await delete_forum_post(self.bot, group, archive=True)
+            delete_group(guild_id, msg_id)
+            final_txt = "🗑️ **Gruppe und Thread wurden gelöscht.**"
+        else:
+            # Thread der Pipeline überlassen (erst schließen, dann löschen)
+            save_group(guild_id, group)
+            final_txt = (
+                "🗑️ **Gruppe gelöscht.** Der Diskussions-Thread wird noch "
+                "geschlossen und später gelöscht/archiviert."
+            )
 
-        # Aus JSON entfernen
-        delete_group(guild_id, msg_id)
-
-        # Übersicht aktualisieren
         await refresh_overview(self.bot, guild_id)
 
         try:
-            await interaction.edit_original_response(
-                content="🗑️ **Gruppe wurde gelöscht.**", embed=None, view=None
-            )
+            await interaction.edit_original_response(content=final_txt, embed=None, view=None)
         except discord.HTTPException:
             pass
 
@@ -1920,9 +2010,14 @@ class _DeleteConfirmView(ui.View):
         self.cog   = cog
         msg_id     = str(group.get("message_id", ""))
         self.add_item(ui.Button(
-            label="🗑️ Ja, löschen",
+            label="🗑️ Normal löschen",
             style=discord.ButtonStyle.danger,
-            custom_id=f"manage_delete_confirm:{msg_id}",
+            custom_id=f"manage_delete_confirm:{msg_id}:normal",
+        ))
+        self.add_item(ui.Button(
+            label="💥 Sofort alles löschen",
+            style=discord.ButtonStyle.danger,
+            custom_id=f"manage_delete_confirm:{msg_id}:sofort",
         ))
         self.add_item(ui.Button(
             label="✕ Abbrechen",

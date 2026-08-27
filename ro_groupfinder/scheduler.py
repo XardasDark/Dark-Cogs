@@ -42,12 +42,15 @@ from .data_manager import (
     get_next_waitlist,
     create_group,
     set_group_message_id,
+    set_group_ended,
+    group_finish_deadline,
 )
 from .group_embed import build_group_embed, build_group_action_view
-from .forum import create_forum_post, close_forum_post
+from .forum import create_forum_post, close_forum_post, delete_forum_post
 from .overview import refresh_overview, finalize_group_post
 from .notifications import (
     notify_group_expired,
+    notify_group_finished,
     notify_expiry_warning,
     notify_reminder,
     notify_waitlist_slot_free,
@@ -98,7 +101,8 @@ class GroupScheduler:
                 await self._task_reminders()
                 await self._task_waitlist_timeouts()
                 await self._task_recurrence()
-                await self._task_forum_cleanup()
+                await self._task_auto_finish()
+                await self._task_lifecycle()
             except Exception as e:
                 # Fehler loggen aber Loop nicht abbrechen
                 print(f"[RO GroupFinder Scheduler] Fehler: {e}")
@@ -158,29 +162,19 @@ class GroupScheduler:
                     save_group(guild_id, group)
                 continue
 
-            # ── 2. Gruppe ist abgelaufen ──────────────────────────────────────
-            message_id = group.get("message_id")
-
-            # a. Status setzen
-            group["status"] = "expired"
-            save_group(guild_id, group)
-
-            # b. Snapshot für "Erneut suchen"
+            # ── 2. Gruppe ist abgelaufen (Inaktivität) ────────────────────────
+            # Gruppe beenden → die Aufräum-Pipeline (_task_lifecycle) übernimmt
+            # Thread schließen/löschen und das Entfernen des Records.
+            set_group_ended(group, "expired")
             save_expired_snapshot(group)
-
-            # c. Benachrichtigungen
             await notify_group_expired(self.bot, group, inactivity_days)
 
-            # c2. Forum-Diskussionspost sofort schließen (bleibt erhalten, nicht gelöscht)
-            if group.get("forum_thread_id") and not group.get("forum_closed"):
-                await close_forum_post(self.bot, group)
-
-            # d. Post gemäß Richtlinie behandeln – abgelaufene Gruppen verlassen den
-            #    Channel immer (Archiv, sonst löschen; kein "behalten").
+            # Post sofort finalisieren (abgelaufene Posts bleiben nicht offen);
+            # Thread/Record der Pipeline überlassen.
             await finalize_group_post(self.bot, group, allow_keep=False)
-
-            # e. Aus JSON entfernen + Übersicht aktualisieren
-            delete_group(guild_id, message_id)
+            group["post_finalized"] = True
+            group["post_removed"]   = True
+            save_group(guild_id, group)
             await refresh_overview(self.bot, guild_id)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -377,67 +371,127 @@ class GroupScheduler:
             # ── Alte Mitglieder benachrichtigen ──────────────────────────────
             await notify_recurrence_new_post(self.bot, group, channel, message.id)
 
-            # ── Alte Gruppe schließen ─────────────────────────────────────────
+            # ── Alte Gruppe beenden – Aufräum-Pipeline übernimmt Thread & Record ──
             group["recurrence_handled"] = True
-            group["status"]             = "closed"
+            set_group_ended(group, "deleted")
+            await finalize_group_post(self.bot, group, allow_keep=False)
+            group["post_finalized"] = True
+            group["post_removed"]   = True
             save_group(guild_id, group)
 
-            # Der alte Forum-Post wird NICHT beim Erreichen des Termins geschlossen –
-            # das übernimmt _task_forum_cleanup automatisch nach forum_close_hours ab Start.
-
-            # Alten Post gemäß Richtlinie behandeln (Archiv / löschen / behalten)
-            old_msg_id = group.get("message_id")
-            removed = await finalize_group_post(self.bot, group)
-            if removed and old_msg_id:
-                delete_group(guild_id, old_msg_id)
-
     # ─────────────────────────────────────────────────────────────────────────
-    # TASK 5 – FORUM-POSTS ABGESCHLOSSENER GRUPPEN SCHLIESSEN
+    # TASK 5 – AUTO-ENDE NACH START
     # ─────────────────────────────────────────────────────────────────────────
 
-    async def _task_forum_cleanup(self) -> None:
+    async def _task_auto_finish(self) -> None:
         """
-        Schließt Forum-Diskussionsposts automatisch, sobald seit dem START der
-        Gruppe die konfigurierte Zeit (forum_close_hours) verstrichen ist.
-
-        Wichtig: Beim bloßen Erreichen des Starttermins wird NICHT geschlossen –
-        zu diesem Zeitpunkt beginnt die Gruppe ja erst. Erst forum_close_hours
-        SPÄTER schließt der Post.
-
-        Referenzzeitpunkt:
-          - Startzeit der Gruppe (datetime), wenn gesetzt
-          - sonst der Erstellzeitpunkt (created_at)
-
-        Übersprungen werden Gruppen ohne Forum-Thread sowie Posts, die bereits
-        geschlossen sind (z.B. weil der Leiter die Gruppe abgeschlossen/gelöscht
-        hat oder sie abgelaufen ist). Der Post wird NIE gelöscht.
+        Beendet aktive Gruppen mit Termin automatisch, sobald
+        Start + group_finish_after_start_hours erreicht ist. Der Leiter kann sie
+        über den "Wieder öffnen"-Button reaktivieren (setzt den Timer zurück).
         """
         now = datetime.now(timezone.utc)
 
         for group in get_all_groups_flat():
-            if not group.get("forum_thread_id") or group.get("forum_closed"):
+            if group.get("status") not in ("open", "full"):
                 continue
 
-            ref = parse_stored_datetime(group.get("datetime"), group["guild_id"])
-            if ref is None:
-                created = group.get("created_at")
-                if not created:
-                    continue
-                try:
-                    ref = datetime.fromisoformat(created)
-                except ValueError:
-                    continue
-                if ref.tzinfo is None:
-                    ref = ref.replace(tzinfo=timezone.utc)
-
-            settings = get_guild_settings(group["guild_id"])
-            close_at = ref + timedelta(hours=settings["forum_close_hours"])
-            if close_at > now:
+            deadline = group_finish_deadline(group)
+            if deadline is None or now < deadline:
                 continue
 
-            await close_forum_post(self.bot, group, announce_deletion=True)
-            group["forum_closed"] = True
-            save_group(group["guild_id"], group)
+            guild_id = group["guild_id"]
+            set_group_ended(group, "finished")   # ended_at = jetzt
+            save_group(guild_id, group)
+
+            await notify_group_finished(self.bot, group)
+            # Post auf Abgeschlossen-Ansicht (mit "Wieder öffnen"-Button) bringen.
+            await self._edit_group_post(group)
+            await refresh_overview(self.bot, guild_id)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # TASK 6 – AUFRÄUM-PIPELINE (Thread schließen/löschen, Record entfernen)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _task_lifecycle(self) -> None:
+        """
+        Räumt beendete Gruppen (ended_at gesetzt) zeitgesteuert auf:
+          1. Post finalisieren – nur 'finished' erst bei Erreichen der Löschfrist
+             (expired/deleted wurden bereits im jeweiligen Handler finalisiert)
+          2. Thread schließen nach thread_close_hours ab Gruppen-Ende
+          3. Thread löschen nach thread_delete_hours (Zusammenfassung ins Archiv)
+          4. Record entfernen, sobald Thread weg UND Post entfernt ist
+        """
+        now = datetime.now(timezone.utc)
+
+        for group in get_all_groups_flat():
+            ended_str = group.get("ended_at")
+            if not ended_str:
+                continue
+            try:
+                ended = datetime.fromisoformat(ended_str)
+            except ValueError:
+                continue
+            if ended.tzinfo is None:
+                ended = ended.replace(tzinfo=timezone.utc)
+
+            guild_id   = group["guild_id"]
+            settings   = get_guild_settings(guild_id)
+            close_at   = ended + timedelta(hours=settings["thread_close_hours"])
+            delete_at  = ended + timedelta(hours=settings["thread_delete_hours"])
+            has_thread = bool(group.get("forum_thread_id"))
+            changed    = False
+
+            # 1. Post finalisieren (abgeschlossene Gruppe erst zur Löschfrist)
+            if (not group.get("post_finalized")
+                    and group.get("end_kind") == "finished"
+                    and now >= delete_at):
+                removed = await finalize_group_post(self.bot, group)
+                group["post_finalized"] = True
+                group["post_removed"]   = removed
+                changed = True
+
+            # 2. Thread schließen
+            if has_thread and not group.get("thread_closed") and now >= close_at:
+                await close_forum_post(self.bot, group, announce_deletion=True)
+                group["thread_closed"] = True
+                changed = True
+
+            # 3. Thread löschen (mit Archiv-Zusammenfassung, falls Archiv-Channel)
+            if has_thread and not group.get("thread_deleted") and now >= delete_at:
+                await delete_forum_post(self.bot, group, archive=True)
+                group["thread_deleted"] = True
+                changed = True
+
+            # 4. Record entfernen, wenn nichts mehr aussteht
+            thread_done = (not has_thread) or group.get("thread_deleted")
+            if thread_done and group.get("post_finalized") and group.get("post_removed"):
+                delete_group(guild_id, group.get("message_id"))
+                await refresh_overview(self.bot, guild_id)
+                continue
+
+            if changed:
+                save_group(guild_id, group)
+
+    async def _edit_group_post(self, group: Dict) -> None:
+        """Aktualisiert Embed + View des Gruppen-Posts im Channel (best effort)."""
+        channel_id = group.get("channel_id")
+        msg_id     = group.get("message_id")
+        if not channel_id or not msg_id:
+            return
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except Exception:
+                return
+        try:
+            message = await channel.fetch_message(msg_id)
+            await message.edit(
+                embed=build_group_embed(group),
+                view=build_group_action_view(group),
+            )
+        except Exception:
+            pass
 
     # ─────────────────────────────────────────────────────────────────────────
     # HILFSMETHODEN

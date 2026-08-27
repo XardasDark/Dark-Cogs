@@ -31,7 +31,9 @@ from .constants import (
     DEFAULT_EXPIRY_WARNING_DAYS,
     DEFAULT_REMINDER_MINUTES,
     DEFAULT_WAITLIST_TIMEOUT_MINUTES,
-    DEFAULT_FORUM_CLOSE_HOURS,
+    DEFAULT_GROUP_FINISH_AFTER_START_HOURS,
+    DEFAULT_THREAD_CLOSE_HOURS,
+    DEFAULT_THREAD_DELETE_HOURS,
     DEFAULT_READONLY_ENFORCED,
     DEFAULT_CLOSED_POST_ACTION,
     DEFAULT_TIMEZONE,
@@ -152,7 +154,9 @@ def get_guild_settings(guild_id: int) -> Dict:
     defaults = {
         "group_channel_id":           None,
         "forum_channel_id":           None,
-        "forum_close_hours":          DEFAULT_FORUM_CLOSE_HOURS,
+        "group_finish_after_start_hours": DEFAULT_GROUP_FINISH_AFTER_START_HOURS,
+        "thread_close_hours":         DEFAULT_THREAD_CLOSE_HOURS,
+        "thread_delete_hours":        DEFAULT_THREAD_DELETE_HOURS,
         "readonly_enforced":          DEFAULT_READONLY_ENFORCED,
         "archive_channel_id":         None,
         "closed_post_action":         DEFAULT_CLOSED_POST_ACTION,
@@ -445,8 +449,14 @@ def create_group(
         "reminder_sent":       False,
         # Forum-Diskussionspost (wird nach dem Gruppen-Post erstellt).
         "forum_thread_id":     None,
-        # Verhindert doppeltes Schließen des Forum-Posts.
-        "forum_closed":        False,
+        # Lebenszyklus-Ende (steuert die Aufräum-Pipeline für Thread & Post).
+        "ended_at":            None,     # ISO-Zeit des Gruppen-Endes
+        "end_kind":            None,     # "finished" | "expired" | "deleted"
+        "post_finalized":      False,    # Post wurde archiviert/gelöscht/final behandelt
+        "post_removed":        False,    # Post wurde aus dem Gruppen-Channel entfernt
+        "thread_closed":       False,    # Thread gesperrt + archiviert
+        "thread_deleted":      False,    # Thread gelöscht
+        "reopened_at":         None,     # ISO-Zeit des letzten Wieder-Öffnens (Timer-Reset)
     }
 
 
@@ -468,6 +478,73 @@ def touch_group_activity(group: Dict) -> Dict:
     group["expires_at"]          = (now + timedelta(days=settings["cleanup_days"])).isoformat()
     group["expiry_warning_sent"] = False
     return group
+
+
+def set_group_ended(group: Dict, end_kind: str) -> Dict:
+    """
+    Markiert eine Gruppe als beendet und startet damit die Aufräum-Pipeline
+    (Thread schließen/löschen) über ended_at.
+
+    end_kind: "finished" | "expired" | "deleted"
+    Der Aufrufer speichert die Gruppe anschließend selbst (save_group).
+    """
+    group["status"]      = end_kind if end_kind == "expired" else \
+                           ("finished" if end_kind == "finished" else "closed")
+    group["end_kind"]    = end_kind
+    group["ended_at"]    = datetime.now(timezone.utc).isoformat()
+    group["reopened_at"] = None
+    return group
+
+
+def reopen_group(group: Dict) -> Dict:
+    """
+    Öffnet eine beendete Gruppe wieder: setzt Ende-/Thread-Marker zurück,
+    merkt sich reopened_at (Referenz für das Auto-Ende nach Start) und lässt
+    den Status wieder von der Slot-Belegung bestimmen (open/full).
+
+    Der Aufrufer speichert die Gruppe anschließend selbst (save_group).
+    """
+    group["ended_at"]       = None
+    group["end_kind"]       = None
+    group["post_finalized"] = False
+    group["thread_closed"]  = False
+    group["thread_deleted"] = False
+    group["reopened_at"]    = datetime.now(timezone.utc).isoformat()
+    group["status"]         = "open"
+    _update_status(group)          # setzt je nach freien Slots open/full
+    touch_group_activity(group)    # Inaktivitäts-Timer ebenfalls zurücksetzen
+    return group
+
+
+def group_finish_deadline(group: Dict) -> Optional[datetime]:
+    """
+    Zeitpunkt, ab dem eine aktive Gruppe automatisch beendet wird:
+    max(Startzeit, reopened_at) + group_finish_after_start_hours.
+
+    Gilt NUR für Gruppen mit Termin (datetime). Ein Wiederöffnen (reopened_at)
+    verschiebt die Referenz nach vorn (Timer-Reset). None, wenn kein Termin
+    gesetzt ist oder das Auto-Ende deaktiviert (0) ist.
+    """
+    settings = get_guild_settings(group["guild_id"])
+    hours = settings.get("group_finish_after_start_hours", 0)
+    if not hours:
+        return None
+
+    base = parse_stored_datetime(group.get("datetime"), group["guild_id"])
+    if base is None:
+        return None   # nur Gruppen mit Termin
+
+    reopened = group.get("reopened_at")
+    if reopened:
+        try:
+            r = datetime.fromisoformat(reopened)
+            if r.tzinfo is None:
+                r = r.replace(tzinfo=timezone.utc)
+            base = max(base, r)
+        except ValueError:
+            pass
+
+    return base + timedelta(hours=hours)
 
 
 def reset_slots(slots: List[Dict]) -> List[Dict]:

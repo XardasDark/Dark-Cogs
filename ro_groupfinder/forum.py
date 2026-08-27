@@ -246,7 +246,7 @@ async def close_forum_post(bot, group: Dict, *, announce_deletion: bool = True) 
     Schließt den Forum-Thread einer Gruppe: Ankündigung senden, dann sperren +
     archivieren. Der Thread wird NICHT gelöscht.
 
-    Der Aufrufer sollte group["forum_closed"] = True setzen und speichern.
+    Der Aufrufer sollte group["thread_closed"] = True setzen und speichern.
     """
     thread_id = group.get("forum_thread_id")
     if not thread_id:
@@ -275,5 +275,94 @@ async def close_forum_post(bot, group: Dict, *, announce_deletion: bool = True) 
 
     try:
         await thread.edit(archived=True, locked=True)
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FORUM-THREAD WIEDER ÖFFNEN
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def reopen_forum_post(bot, group: Dict) -> bool:
+    """
+    Öffnet einen geschlossenen Forum-Thread wieder (entsperren + entarchivieren).
+    Gibt True zurück, wenn ein Thread reaktiviert wurde; False, wenn keiner
+    (mehr) existiert – dann sollte der Aufrufer per create_forum_post einen neuen
+    anlegen.
+    """
+    thread_id = group.get("forum_thread_id")
+    if not thread_id:
+        return False
+
+    thread = await _resolve_channel(bot, thread_id)
+    if thread is None or not isinstance(thread, discord.Thread):
+        return False
+
+    try:
+        # Entsperren + entarchivieren (locked zuerst lösen, sonst schlägt edit fehl)
+        await thread.edit(archived=False, locked=False)
+    except Exception:
+        return False
+
+    try:
+        await thread.send(f"🔓 **Die Gruppe {_goal_text(group)} wurde wieder geöffnet.**")
+    except Exception:
+        pass
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FORUM-THREAD LÖSCHEN (optional mit Archiv-Zusammenfassung)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_archive_summary(group: Dict) -> discord.Embed:
+    """Kurze Zusammenfassung einer Gruppe für den Archiv-Channel."""
+    goal    = _goal_text(group)
+    creator = group.get("creator_id")
+    creator_txt = f"<@{creator}>" if creator else group.get("creator_name", "?")
+
+    members = []
+    for slot in group.get("slots", []):
+        if slot.get("filled_by_id"):
+            name = slot.get("filled_by_ingame") or slot.get("filled_by_name") or "?"
+            cls  = slot.get("filled_class") or slot.get("display_name") or ""
+            members.append(f"• {name}" + (f" – {cls}" if cls else ""))
+
+    embed = discord.Embed(
+        title=f"🗄️ Archiv: {goal}",
+        description=f"👑 **Leiter:** {creator_txt}\n🆔 `{_short_id(group)}`",
+        color=COLOR_OPEN,
+    )
+    if members:
+        embed.add_field(name="👥 Mitglieder", value="\n".join(members)[:1024], inline=False)
+    return embed
+
+
+async def delete_forum_post(bot, group: Dict, *, archive: bool = True) -> None:
+    """
+    Löscht den Forum-Thread einer Gruppe. Ist `archive` gesetzt UND ein
+    Archiv-Channel konfiguriert, wird vorher eine Zusammenfassung dorthin
+    gepostet. Best effort.
+    """
+    thread_id = group.get("forum_thread_id")
+    if not thread_id:
+        return
+
+    if archive:
+        settings   = get_guild_settings(group["guild_id"])
+        archive_id = settings.get("archive_channel_id")
+        if archive_id:
+            archive_ch = await _resolve_channel(bot, archive_id)
+            if archive_ch is not None:
+                try:
+                    await archive_ch.send(embed=_build_archive_summary(group))
+                except Exception:
+                    pass
+
+    thread = await _resolve_channel(bot, thread_id)
+    if thread is None or not isinstance(thread, discord.Thread):
+        return
+    try:
+        await thread.delete()
     except Exception:
         pass
