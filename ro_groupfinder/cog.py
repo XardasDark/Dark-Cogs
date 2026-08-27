@@ -76,6 +76,8 @@ from .data_manager import (
     resolve_goal_name,
     get_user_notif_prefs,
     set_user_notif_prefs,
+    get_user_subscription,
+    set_user_subscription,
 )
 from .group_embed import (
     build_group_embed,
@@ -107,6 +109,7 @@ from .forum import (
     notify_leader_change_in_forum,
 )
 from .overview import refresh_overview, finalize_group_post
+from .subscriptions import notify_subscribers
 from .constants import (
     COLOR_OPEN, COLOR_CLOSED, RECURRENCE_OPTIONS, ROLE_TYPES,
     DEFAULT_CLEANUP_DAYS, DEFAULT_REMINDER_MINUTES, DEFAULT_WAITLIST_TIMEOUT_MINUTES,
@@ -254,6 +257,9 @@ class ROGroupFinder(commands.Cog):
 
         # Übersicht offener Gruppen wieder nach unten schieben
         await refresh_overview(self.bot, state.guild_id, move_to_bottom=True)
+
+        # Passende Abonnenten benachrichtigen (LFG-Alarm)
+        await notify_subscribers(self.bot, group)
 
         if interaction.user.id in _wizard_sessions:
             del _wizard_sessions[interaction.user.id]
@@ -437,6 +443,20 @@ class ROGroupFinder(commands.Cog):
         await interaction.response.send_message(
             embed=_notif_prefs_embed(prefs),
             view=_NotifPrefsView(interaction.user.id, prefs),
+            ephemeral=True,
+        )
+
+    @gruppe.command(name="abo", description="Abonniere Ziele/Rollen/Klassen – DM bei passenden Gruppen")
+    @commands.guild_only()
+    async def gruppe_abo(self, ctx: commands.Context) -> None:
+        if not ctx.interaction:
+            await ctx.send("❌ Dieser Befehl funktioniert nur als Slash-Command: `/gruppe abo`")
+            return
+        interaction = ctx.interaction
+        sub = get_user_subscription(ctx.guild.id, interaction.user.id)
+        await interaction.response.send_message(
+            embed=_abo_embed(sub),
+            view=_AboView(interaction.user.id, ctx.guild.id, sub),
             ephemeral=True,
         )
 
@@ -1101,6 +1121,7 @@ class ROGroupFinder(commands.Cog):
         await notify_creator_leave(self.bot, group, player_name, slot_index)
         await notify_leave_in_forum(self.bot, group, player_name)
         await refresh_overview(self.bot, guild_id)
+        await notify_subscribers(self.bot, group)   # freier Slot → Abonnenten
 
         # Embed aktualisieren
         channel = interaction.guild.get_channel(group["channel_id"])
@@ -1324,6 +1345,7 @@ class ROGroupFinder(commands.Cog):
         await notify_creator_removed(self.bot, group, player_name, slot_index)
         await notify_leave_in_forum(self.bot, group, player_name, removed=True)
         await refresh_overview(self.bot, interaction.guild_id)
+        await notify_subscribers(self.bot, group)   # freier Slot → Abonnenten
 
         # Nächsten Wartelisten-Spieler benachrichtigen
         await self.scheduler.notify_next_waitlist_public(group)
@@ -1766,6 +1788,7 @@ class ROGroupFinder(commands.Cog):
                 view=build_group_action_view(new_group),
             )
             await refresh_overview(self.bot, guild_id, move_to_bottom=True)
+            await notify_subscribers(self.bot, new_group)
         except Exception:
             await interaction.response.edit_message(
                 content="❌ Die Suche konnte nicht erneut erstellt werden.",
@@ -1958,6 +1981,126 @@ class _NotifPrefsView(ui.View):
             embed=_notif_prefs_embed(new_prefs),
             view=_NotifPrefsView(self.user_id, new_prefs),
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ABO / LFG-ALARM (pro Spieler)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _abo_embed(sub: Dict) -> discord.Embed:
+    """Übersichts-Embed des aktuellen Abos."""
+    lines = []
+    if sub.get("all"):
+        lines.append("🔔 **Alle neuen Gruppen**")
+    if sub.get("goals"):
+        gm = {g["key"]: g for g in load_goals()}
+        lines.append("🎯 **Ziele:** " + ", ".join(gm.get(k, {}).get("name", k) for k in sub["goals"]))
+    if sub.get("roles"):
+        lines.append("🎭 **Rollen:** " + ", ".join(ROLE_TYPES.get(k, {}).get("name", k) for k in sub["roles"]))
+    if sub.get("classes"):
+        cm = {c["key"]: c for c in load_classes()}
+        lines.append("⚔️ **Klassen:** " + ", ".join(cm.get(k, {}).get("name", k) for k in sub["classes"]))
+
+    desc = (
+        "Du bekommst eine **DM**, sobald eine passende Gruppe entsteht oder ein "
+        "passender Platz frei wird.\n\n"
+    )
+    desc += "\n".join(lines) if lines else "*Aktuell hast du nichts abonniert.*"
+    return discord.Embed(title="🔔 Deine Abos", description=desc, color=COLOR_OPEN)
+
+
+class _AboView(ui.View):
+    """Ephemere Verwaltung der Abos (Ziele / Rollen / Klassen / alle)."""
+
+    def __init__(self, user_id: int, guild_id: int, sub: Dict):
+        super().__init__(timeout=180)
+        self.user_id  = user_id
+        self.guild_id = guild_id
+        self.sub      = sub
+
+        goals = load_goals()
+        if goals:
+            g_opts = [
+                discord.SelectOption(
+                    label=g["name"][:100], value=g["key"],
+                    emoji=g.get("emoji") or None, default=g["key"] in sub["goals"],
+                )
+                for g in goals[:25]
+            ]
+            self.add_item(self._make_select("Ziele abonnieren…", g_opts, 0, self._on_goals))
+
+        r_opts = [
+            discord.SelectOption(
+                label=r["name"], value=k, emoji=r.get("emoji") or None,
+                default=k in sub["roles"],
+            )
+            for k, r in ROLE_TYPES.items()
+        ]
+        self.add_item(self._make_select("Rollen abonnieren…", r_opts, 1, self._on_roles))
+
+        classes = load_classes()
+        if classes:
+            c_opts = [
+                discord.SelectOption(
+                    label=c["name"][:100], value=c["key"],
+                    emoji=c.get("emoji") or None, default=c["key"] in sub["classes"],
+                )
+                for c in classes[:25]
+            ]
+            self.add_item(self._make_select("Klassen abonnieren…", c_opts, 2, self._on_classes))
+
+        all_on = sub.get("all")
+        btn = ui.Button(
+            label="🔔 Alle neuen Gruppen: AN" if all_on else "🔕 Alle neuen Gruppen: AUS",
+            style=discord.ButtonStyle.success if all_on else discord.ButtonStyle.secondary,
+            row=3,
+        )
+        btn.callback = self._on_toggle_all
+        self.add_item(btn)
+
+    @staticmethod
+    def _make_select(placeholder, options, row, callback) -> ui.Select:
+        sel = ui.Select(placeholder=placeholder, min_values=0,
+                        max_values=len(options), options=options, row=row)
+        sel.callback = callback
+        return sel
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Das sind nicht deine Abos.", ephemeral=True)
+            return False
+        return True
+
+    async def _save_and_refresh(self, interaction: discord.Interaction) -> None:
+        set_user_subscription(self.guild_id, self.user_id, self.sub)
+        await interaction.response.edit_message(
+            embed=_abo_embed(self.sub),
+            view=_AboView(self.user_id, self.guild_id, self.sub),
+        )
+
+    async def _on_goals(self, interaction: discord.Interaction) -> None:
+        if not await self._guard(interaction):
+            return
+        self.sub["goals"] = list(interaction.data.get("values", []))
+        await self._save_and_refresh(interaction)
+
+    async def _on_roles(self, interaction: discord.Interaction) -> None:
+        if not await self._guard(interaction):
+            return
+        self.sub["roles"] = list(interaction.data.get("values", []))
+        await self._save_and_refresh(interaction)
+
+    async def _on_classes(self, interaction: discord.Interaction) -> None:
+        if not await self._guard(interaction):
+            return
+        self.sub["classes"] = list(interaction.data.get("values", []))
+        await self._save_and_refresh(interaction)
+
+    async def _on_toggle_all(self, interaction: discord.Interaction) -> None:
+        if not await self._guard(interaction):
+            return
+        self.sub["all"] = not self.sub.get("all")
+        await self._save_and_refresh(interaction)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

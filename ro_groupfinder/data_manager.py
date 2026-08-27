@@ -50,6 +50,7 @@ _DATA_DIR      = os.path.join(_BASE_DIR, "data")
 _GROUPS_FILE   = os.path.join(_DATA_DIR, "groups.json")
 _SETTINGS_FILE = os.path.join(_DATA_DIR, "settings.json")
 _USER_PREFS_FILE = os.path.join(_DATA_DIR, "user_prefs.json")
+_SUBSCRIPTIONS_FILE = os.path.join(_DATA_DIR, "subscriptions.json")
 _EXPIRED_FILE  = os.path.join(_DATA_DIR, "expired_snapshots.json")
 _GOALS_FILE    = os.path.join(_DATA_DIR, "goals.json")
 _CLASSES_FILE  = os.path.join(_DATA_DIR, "classes.json")
@@ -246,6 +247,65 @@ def set_user_notif_prefs(user_id: int, prefs: Dict[str, bool]) -> None:
 def is_notif_enabled(user_id: int, category: str) -> bool:
     """True wenn der Spieler die Benachrichtigungs-Kategorie aktiviert hat."""
     return get_user_notif_prefs(user_id).get(category, True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ABOS / LFG-ALARM (pro Guild + Spieler)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Spieler abonnieren Ziele, Rollen, Klassen oder "alle neuen Gruppen" und werden
+# per DM benachrichtigt, wenn eine passende Gruppe entsteht oder ein passender
+# Slot frei wird. Gespeichert pro Guild (Abos gelten für Gruppen dieses Servers).
+
+_EMPTY_SUB = {"goals": [], "roles": [], "classes": [], "all": False}
+
+
+def load_subscriptions() -> Dict:
+    """Lädt alle Abos: { guild_id: { user_id: {goals,roles,classes,all} } }."""
+    return _load_json(_SUBSCRIPTIONS_FILE, {})
+
+
+def save_subscriptions(data: Dict) -> None:
+    _save_json(_SUBSCRIPTIONS_FILE, data)
+
+
+def get_user_subscription(guild_id: int, user_id: int) -> Dict:
+    """Gibt das Abo eines Spielers zurück (leeres Abo, falls keins gesetzt)."""
+    guild = load_subscriptions().get(str(guild_id), {})
+    stored = guild.get(str(user_id), {})
+    return {
+        "goals":   list(stored.get("goals", [])),
+        "roles":   list(stored.get("roles", [])),
+        "classes": list(stored.get("classes", [])),
+        "all":     bool(stored.get("all", False)),
+    }
+
+
+def set_user_subscription(guild_id: int, user_id: int, sub: Dict) -> None:
+    """Speichert das Abo eines Spielers. Ist es leer, wird der Eintrag entfernt."""
+    data  = load_subscriptions()
+    gkey  = str(guild_id)
+    ukey  = str(user_id)
+    clean = {
+        "goals":   list(sub.get("goals", [])),
+        "roles":   list(sub.get("roles", [])),
+        "classes": list(sub.get("classes", [])),
+        "all":     bool(sub.get("all", False)),
+    }
+    is_empty = not (clean["goals"] or clean["roles"] or clean["classes"] or clean["all"])
+    if is_empty:
+        if gkey in data and ukey in data[gkey]:
+            del data[gkey][ukey]
+            if not data[gkey]:
+                del data[gkey]
+    else:
+        data.setdefault(gkey, {})[ukey] = clean
+    save_subscriptions(data)
+
+
+def get_guild_subscriptions(guild_id: int) -> Dict:
+    """Gibt alle Abos einer Guild zurück ({ user_id(str): sub })."""
+    return load_subscriptions().get(str(guild_id), {})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -457,6 +517,8 @@ def create_group(
         "thread_closed":       False,    # Thread gesperrt + archiviert
         "thread_deleted":      False,    # Thread gelöscht
         "reopened_at":         None,     # ISO-Zeit des letzten Wieder-Öffnens (Timer-Reset)
+        # Abo-System: bereits über diese Gruppe benachrichtigte Abonnenten (Dedup).
+        "notified_subscribers": [],
     }
 
 

@@ -48,6 +48,7 @@ from .data_manager import (
 from .group_embed import build_group_embed, build_group_action_view
 from .forum import create_forum_post, close_forum_post, delete_forum_post
 from .overview import refresh_overview, finalize_group_post
+from .subscriptions import notify_subscribers
 from .notifications import (
     notify_group_expired,
     notify_group_finished,
@@ -363,6 +364,8 @@ class GroupScheduler:
 
                 # Übersicht wieder nach unten schieben (neuer Post)
                 await refresh_overview(self.bot, guild_id, move_to_bottom=True)
+                # Passende Abonnenten benachrichtigen
+                await notify_subscribers(self.bot, new_group)
 
             except Exception as e:
                 print(f"[RO GroupFinder Scheduler] Fehler beim Erstellen des Wiederholungs-Posts: {e}")
