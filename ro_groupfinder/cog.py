@@ -1725,13 +1725,15 @@ class ROGroupFinder(commands.Cog):
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):
             return
 
+        # Privat per DM hinweisen – kein öffentlicher Post im Channel. Sind die
+        # DMs des Nutzers zu, passiert nichts (die Nachricht ist trotzdem gelöscht).
         try:
-            await message.channel.send(
-                f"{message.author.mention} ℹ️ Dieser Channel ist nur für **/gruppe**-Befehle. "
-                f"Zum Austausch nutzt bitte den Forum-Beitrag der jeweiligen Gruppe.",
-                delete_after=8,
+            await message.author.send(
+                f"ℹ️ Der Kanal {message.channel.mention} ist **nur für `/gruppe`-Befehle** – "
+                f"deine Nachricht wurde dort entfernt.\n"
+                f"Zum Austausch nutze bitte den Forum-Beitrag der jeweiligen Gruppe."
             )
-        except discord.HTTPException:
+        except (discord.Forbidden, discord.HTTPException):
             pass
 
     async def _refresh_group_message(self, group: Dict) -> None:
