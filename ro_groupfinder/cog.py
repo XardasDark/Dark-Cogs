@@ -626,6 +626,44 @@ class ROGroupFinder(commands.Cog):
         else:
             await self._reply(ctx, "\u2705 Geschlossene Posts werden **gel\u00f6scht** (kein Archiv).")
 
+    @gruppe_setup.command(name="loeschen", description="L\u00f6scht eine Gruppe per ID (aus dem Post-Footer), z.B. f\u00fcr kaputte alte Posts")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_loeschen(self, ctx: commands.Context, gruppen_id: str) -> None:
+        guild_id = ctx.guild.id
+        group = find_group_by_public_id(guild_id, gruppen_id)
+        if not group or group.get("guild_id") != guild_id:
+            await self._reply(
+                ctx,
+                f"\u274c Keine Gruppe mit der ID **{gruppen_id}** gefunden. "
+                f"Die ID steht im Fu\u00dfzeilentext des Gruppen-Posts (z.B. `ID: a1b2c3d4`).",
+            )
+            return
+
+        msg_id  = group.get("message_id")
+        goal    = resolve_goal_name(group)
+
+        # Beteiligte informieren (au\u00dfer der l\u00f6schenden Person)
+        await notify_group_deleted(
+            self.bot, group,
+            reason=f"von einem Admin (**{ctx.author.display_name}**) gel\u00f6scht",
+            exclude_id=ctx.author.id,
+        )
+
+        # Forum-Thread (falls vorhanden) schlie\u00dfen/l\u00f6schen + Channel-Post entfernen
+        await delete_forum_post(self.bot, group, archive=True)
+        channel = ctx.guild.get_channel(group.get("channel_id") or 0)
+        if channel and msg_id:
+            try:
+                message = await channel.fetch_message(msg_id)
+                await message.delete()
+            except Exception:
+                pass
+
+        delete_group(guild_id, msg_id)
+        await refresh_overview(self.bot, guild_id)
+        await self._reply(ctx, f"\ud83d\uddd1\ufe0f Gruppe **{goal}** (ID `{gruppen_id}`) wurde gel\u00f6scht.")
+
     @gruppe_setup.command(name="info", description="Zeigt die aktuelle Konfiguration")
     @commands.guild_only()
     @commands.admin()
@@ -729,6 +767,7 @@ class ROGroupFinder(commands.Cog):
     @gruppe_config_readonly.error
     @gruppe_config_archiv.error
     @gruppe_config_geschlossen.error
+    @gruppe_config_loeschen.error
     @gruppe_config_info.error
     @gruppe_config_erinnerung.error
     @gruppe_config_cleanup.error
