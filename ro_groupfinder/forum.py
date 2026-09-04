@@ -22,7 +22,11 @@ import discord
 from typing import Optional, Dict
 
 from .constants import COLOR_OPEN
-from .data_manager import get_guild_settings, resolve_goal_name
+from .data_manager import (
+    get_guild_settings,
+    resolve_goal_name,
+    stored_datetime_to_local_str,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -83,9 +87,13 @@ async def create_forum_post(bot, group: Dict) -> Optional[int]:
     short   = _short_id(group)
     goal    = _goal_text(group)
     creator = group.get("creator_name", "Unbekannt")
+    date    = stored_datetime_to_local_str(group.get("datetime"), group["guild_id"])
 
     # Titel enthält die Gruppen-ID → Gruppe ↔ Forum-Post eindeutig zuordenbar.
-    title = f"[{short}] {goal} – {creator}"[:100]
+    # Das Start-Datum steht direkt hinter der ID, damit sich Threads leichter
+    # unterscheiden lassen und es bei der 100-Zeichen-Kürzung erhalten bleibt.
+    prefix = f"[{short}] " + (f"\U0001f4c5 {date} · " if date else "")
+    title = f"{prefix}{goal} – {creator}"[:100]
 
     embed = discord.Embed(
         title=f"💬 Diskussion: {goal}",
