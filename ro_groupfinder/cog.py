@@ -32,11 +32,15 @@ Persistent Interaction Handlers (Button/Select custom_id):
   edit_select:<msg_id>              → Bearbeitungs-Option ausgewählt
 """
 
+import logging
+
 import discord
 from discord import app_commands, ui
 from redbot.core import commands
 from typing import Optional, Dict
 from datetime import datetime, timezone
+
+log = logging.getLogger("red.ro_groupfinder")
 
 from .wizard import WizardSession, WizardState, build_state_from_group
 from .data_manager import (
@@ -150,6 +154,33 @@ class ROGroupFinder(commands.Cog):
 
     async def cog_unload(self) -> None:
         self.scheduler.stop()
+
+    async def cog_command_error(
+        self, ctx: commands.Context, error: Exception
+    ) -> None:
+        """Fängt ALLE Fehler dieses Cogs ab.
+
+        Red schluckt manche Fehler still, wodurch eine
+        Slash-Interaction unbeantwortet bleibt ("Die Anwendung reagiert nicht").
+        Dieser Handler loggt jeden Fehler mit vollem Traceback und versucht dem
+        Nutzer eine Meldung zu schicken, damit nichts mehr lautlos verschwindet.
+        """
+        orig = getattr(error, "original", error)
+        log.exception(
+            "Fehler in Command '%s' (slash=%s): %r",
+            getattr(ctx.command, "qualified_name", "?"),
+            ctx.interaction is not None,
+            orig,
+            exc_info=orig,
+        )
+        try:
+            await self._reply(
+                ctx,
+                f"⚠️ Fehler in `{getattr(ctx.command, 'qualified_name', '?')}`: "
+                f"`{type(orig).__name__}: {orig}`",
+            )
+        except Exception:
+            log.exception("Konnte die Fehlermeldung nicht an den Nutzer senden.")
 
     # ─────────────────────────────────────────────────────────────────────────
     # COMMANDS  (hybrid = Prefix UND Slash)
