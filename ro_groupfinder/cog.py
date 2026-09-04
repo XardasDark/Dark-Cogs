@@ -385,13 +385,13 @@ class ROGroupFinder(commands.Cog):
 
             # Rolle des Nutzers in dieser Gruppe bestimmen
             if g.get("creator_id") == user_id:
-                role = "\ud83d\udc51 Leiter"
+                role = "\U0001f451 Leiter"
             else:
                 slot_idx = find_user_slot(g, user_id)
                 if slot_idx is not None:
                     slot = next((s for s in g.get("slots", []) if s["slot_index"] == slot_idx), None)
                     cls  = (slot.get("filled_class") or slot.get("display_name")) if slot else "?"
-                    role = f"\ud83c\udfaf {cls} \u00b7 Slot {slot_idx + 1}"
+                    role = f"\U0001f3af {cls} \u00b7 Slot {slot_idx + 1}"
                 elif is_user_in_waitlist(g, user_id):
                     role = "\u23f3 Warteliste"
                 else:
@@ -399,7 +399,7 @@ class ROGroupFinder(commands.Cog):
 
             goal   = resolve_goal_name(g)
             msg_id = g.get("message_id")
-            icon   = "\ud83d\udfe2" if g.get("status") == "open" else "\ud83d\udfe1"
+            icon   = "\U0001f7e2" if g.get("status") == "open" else "\U0001f7e1"
             if msg_id:
                 jump  = f"https://discord.com/channels/{guild_id}/{g.get('channel_id')}/{msg_id}"
                 title = f"[**{goal}**]({jump})"
@@ -412,7 +412,7 @@ class ROGroupFinder(commands.Cog):
             return
 
         embed = discord.Embed(
-            title="\ud83d\udccd Deine Gruppen",
+            title="\U0001f4cd Deine Gruppen",
             description="\n\n".join(lines),
             color=COLOR_OPEN,
         )
@@ -693,7 +693,7 @@ class ROGroupFinder(commands.Cog):
 
         delete_group(guild_id, msg_id)
         await refresh_overview(self.bot, guild_id)
-        await self._reply(ctx, f"\ud83d\uddd1\ufe0f Gruppe **{goal}** (ID `{gruppen_id}`) wurde gel\u00f6scht.")
+        await self._reply(ctx, f"\U0001f5d1\ufe0f Gruppe **{goal}** (ID `{gruppen_id}`) wurde gel\u00f6scht.")
 
     @gruppe_setup.command(name="info", description="Zeigt die aktuelle Konfiguration")
     @commands.guild_only()
@@ -723,7 +723,7 @@ class ROGroupFinder(commands.Cog):
         embed.add_field(name="\U0001f5d1\ufe0f Cleanup",      value=f"Nach {s['cleanup_days']} Tagen Inaktivit\u00e4t", inline=True)
         embed.add_field(name="\u26a0\ufe0f Vorwarnung",        value=f"{s['warning_days']} Tage vor Ablauf",      inline=True)
         embed.add_field(name="\u23f3 Wartelisten-Timeout",     value=f"{s['waitlist_timeout_minutes']} Minuten",  inline=True)
-        embed.add_field(name="\ud83c\udf0d Zeitzone",                value=s.get("timezone", "Europe/Berlin"),          inline=True)
+        embed.add_field(name="\U0001f30d Zeitzone",                value=s.get("timezone", "Europe/Berlin"),          inline=True)
         await self._reply(ctx, embed=embed)
 
     @gruppe_setup.command(name="erinnerung", description="Stellt ein wann Erinnerungen gesendet werden")
