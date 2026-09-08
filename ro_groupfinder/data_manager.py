@@ -11,10 +11,14 @@ Alle Datei-Pfade sind relativ zum Ordner des Cogs (ro_groupfinder/data/).
 """
 
 import json
-import uuid
+import logging
 import os
+import shutil
+import uuid
 from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Optional, Dict, List, Any
+
+log = logging.getLogger("red.ro_groupfinder")
 
 # zoneinfo ist ab Python 3.9 in der Stdlib; darunter über backports.zoneinfo.
 try:
@@ -60,23 +64,83 @@ _CLASSES_FILE  = os.path.join(_DATA_DIR, "classes.json")
 # INTERNE HILFSFUNKTIONEN
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _quarantine(path: str) -> None:
+    """
+    Verschiebt eine unlesbare/korrupte Datei zur Seite (…-corrupt-<ts>), statt sie
+    zu verlieren. So kann ein späteres Speichern sie nicht mit gültigen Daten
+    vermischen, und die Datei bleibt zur Analyse erhalten.
+    """
+    try:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        os.replace(path, f"{path}.corrupt-{ts}")
+        log.error("Korrupte Datei zur Quarantäne verschoben: %s.corrupt-%s", path, ts)
+    except OSError:
+        pass
+
+
 def _load_json(path: str, default: Any) -> Any:
-    """Lädt eine JSON-Datei. Gibt `default` zurück wenn die Datei fehlt."""
+    """
+    Lädt eine JSON-Datei robust.
+
+    - Fehlt die Datei komplett → `default` (echte Neuinstallation).
+    - Ist die Datei vorhanden aber unlesbar/korrupt → es wird NICHT stillschweigend
+      `default` zurückgegeben (das würde beim nächsten Speichern alle Daten
+      vernichten). Stattdessen wird zuerst das `.bak`-Backup wiederhergestellt.
+      Klappt auch das nicht, wird die korrupte Datei in Quarantäne verschoben.
+    """
     os.makedirs(_DATA_DIR, exist_ok=True)
     if not os.path.exists(path):
         return default
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return default
+    except (json.JSONDecodeError, OSError) as e:
+        log.error("Konnte %s nicht laden (%s) – versuche Backup.", path, e)
+
+    bak = path + ".bak"
+    if os.path.exists(bak):
+        try:
+            with open(bak, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Backup ist gültig → korrupte Hauptdatei sichern, Backup wird Wahrheit.
+            _quarantine(path)
+            _save_json(path, data)
+            log.warning("Backup %s erfolgreich wiederhergestellt.", bak)
+            return data
+        except (json.JSONDecodeError, OSError) as e2:
+            log.error("Auch Backup %s ist unlesbar (%s).", bak, e2)
+
+    # Weder Datei noch Backup lesbar → korrupte Datei in Quarantäne, damit ein
+    # späteres Speichern sie nicht mit gültigen Daten überschreibt/vermischt.
+    _quarantine(path)
+    return default
 
 
 def _save_json(path: str, data: Any) -> None:
-    """Speichert Daten als JSON-Datei (pretty-printed)."""
+    """
+    Speichert Daten als JSON-Datei – atomar und mit Backup.
+
+    1. Die aktuelle gute Version wird vor dem Überschreiben nach `.bak` kopiert.
+    2. Geschrieben wird zuerst in eine `.tmp`-Datei (inkl. fsync), danach wird sie
+       per os.replace() atomar an ihren Platz geschoben. Dadurch kann ein Crash
+       mitten im Schreiben nie eine halb geschriebene/korrupte Datei hinterlassen.
+    """
     os.makedirs(_DATA_DIR, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+
+    # 1) Letzte gute Version sichern (nur wenn vorhanden).
+    if os.path.exists(path):
+        try:
+            shutil.copy2(path, path + ".bak")
+        except OSError as e:
+            log.warning("Backup von %s fehlgeschlagen (%s).", path, e)
+
+    # 2) Atomar schreiben.
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
