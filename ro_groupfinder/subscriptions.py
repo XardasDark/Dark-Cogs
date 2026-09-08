@@ -112,7 +112,7 @@ def _participant_ids(group: Dict) -> Set[int]:
 def _build_sub_embed(group: Dict, reason: str) -> discord.Embed:
     goal    = resolve_goal_name(group)
     creator = group.get("creator_id")
-    creator_txt = f"<@{creator}>" if creator else group.get("creator_name", "?")
+    creator_txt = f"<@{creator}>" if creator else (group.get("creator_name") or "🤖 Offene Gruppe")
 
     filled = sum(1 for s in group.get("slots", []) if s.get("filled_by_id"))
     total  = group.get("player_count", "?")

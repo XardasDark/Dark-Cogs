@@ -35,6 +35,9 @@ from .data_manager import format_datetime_display, is_notif_enabled, resolve_goa
 
 async def _get_user(bot: discord.Client, user_id: int) -> Optional[discord.User]:
     """Versucht einen Discord-User zu holen (Cache → API-Fallback)."""
+    if not user_id:
+        # Offene/generische Gruppen haben keinen Ersteller (creator_id = None).
+        return None
     user = bot.get_user(user_id)
     if user is None:
         try:

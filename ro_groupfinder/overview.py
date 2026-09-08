@@ -57,7 +57,7 @@ def _group_line(group: Dict) -> str:
     icon    = "🟢" if group.get("status") == "open" else "🟡"
 
     creator = group.get("creator_id")
-    creator_txt = f"<@{creator}>" if creator else group.get("creator_name", "?")
+    creator_txt = f"<@{creator}>" if creator else (group.get("creator_name") or "🤖 Offene Gruppe")
 
     guild_id   = group.get("guild_id")
     channel_id = group.get("channel_id")

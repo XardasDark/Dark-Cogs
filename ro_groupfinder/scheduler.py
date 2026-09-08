@@ -332,6 +332,7 @@ class GroupScheduler:
                 comment        = group.get("comment"),
                 level_min      = group.get("level_min"),
                 level_max      = group.get("level_max"),
+                is_generic     = group.get("is_generic", False),
             )
 
             # Discord-Post senden

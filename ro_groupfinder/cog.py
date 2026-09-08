@@ -64,6 +64,7 @@ from .data_manager import (
     create_group,
     set_group_message_id,
     set_group_leader,
+    make_group_generic,
     set_group_ended,
     reopen_group,
     update_group_fields,
@@ -360,7 +361,7 @@ class ROGroupFinder(commands.Cog):
             filled  = sum(1 for s in g.get("slots", []) if s.get("filled_by_id"))
             total   = g.get("player_count", "?")
             goal    = resolve_goal_name(g)
-            creator = g.get("creator_name", "?")
+            creator = g.get("creator_name") or "🤖 Offene Gruppe"
             icon    = "\U0001f7e2" if g.get("status") == "open" else "\U0001f7e1"
             lines.append(f"{icon} **{goal}** \u2013 {creator} ({filled}/{total})")
 
@@ -887,6 +888,7 @@ class ROGroupFinder(commands.Cog):
             "manage_edit":            self._handle_manage_edit,
             "manage_transfer":        self._handle_manage_transfer,
             "manage_transfer_select": self._handle_manage_transfer_select,
+            "manage_make_generic":    self._handle_manage_make_generic,
             "manage_delete":          self._handle_manage_delete,
             "manage_remove_member":   self._handle_manage_remove_member,
             "manage_back":            self._handle_manage_back,
@@ -1238,9 +1240,16 @@ class ROGroupFinder(commands.Cog):
         (Server-Owner, Discord-Rechte Administrator/Server verwalten, oder Reds
         Admin-/Owner-Modell).
         """
-        user = interaction.user
-        if user.id == group.get("creator_id"):
+        if interaction.user.id == group.get("creator_id"):
             return True
+        return await self._is_admin(interaction)
+
+    async def _is_admin(self, interaction: discord.Interaction) -> bool:
+        """
+        True wenn der Nutzer ein Server-Admin ist (Server-Owner, Discord-Rechte
+        Administrator/Server verwalten, oder Reds Admin-/Owner-Modell).
+        """
+        user = interaction.user
         if interaction.guild and interaction.guild.owner_id == user.id:
             return True
         perms = getattr(user, "guild_permissions", None)
@@ -1272,8 +1281,9 @@ class ROGroupFinder(commands.Cog):
             description=f"**{group.get('goal_custom') or group.get('goal', '?')}**",
             color=COLOR_OPEN,
         )
+        is_admin = await self._is_admin(interaction)
         await interaction.response.send_message(
-            embed=embed, view=build_manage_view(group), ephemeral=True
+            embed=embed, view=build_manage_view(group, is_admin=is_admin), ephemeral=True
         )
 
     async def _handle_group_reopen(
@@ -1559,6 +1569,56 @@ class ROGroupFinder(commands.Cog):
         try:
             await interaction.edit_original_response(
                 content=f"✅ Die Gruppenführung wurde an **{new_name}** übergeben.",
+                embed=None,
+                view=None,
+            )
+        except discord.HTTPException:
+            pass
+
+    async def _handle_manage_make_generic(
+        self, interaction: discord.Interaction, msg_id: int, parts: list
+    ) -> None:
+        """Wandelt eine Gruppe in eine offene Gruppe ohne Ersteller um (nur Admins)."""
+        group = get_group_by_message(interaction.guild_id, msg_id)
+        if not group:
+            await interaction.response.defer()
+            return
+
+        if not await self._is_admin(interaction):
+            await interaction.response.edit_message(
+                content="❌ Nur ein Admin kann eine Gruppe in eine offene Gruppe umwandeln.",
+                embed=None,
+                view=build_manage_view(group, is_admin=False),
+            )
+            return
+
+        if group.get("is_generic"):
+            await interaction.response.edit_message(
+                content="ℹ️ Diese Gruppe ist bereits eine offene Gruppe.",
+                embed=None,
+                view=build_manage_view(group, is_admin=True),
+            )
+            return
+
+        # Interaktion sofort bestätigen, bevor Post/Übersicht laufen (10062-Schutz).
+        await interaction.response.edit_message(
+            content="⏳ Gruppe wird in eine offene Gruppe umgewandelt …", embed=None, view=None
+        )
+
+        make_group_generic(group)
+        touch_group_activity(group)
+        save_group(interaction.guild_id, group)
+
+        await self._refresh_group_message(group)
+        await refresh_overview(self.bot, interaction.guild_id)
+
+        try:
+            await interaction.edit_original_response(
+                content=(
+                    "✅ Die Gruppe ist jetzt eine **offene Gruppe** ohne Ersteller. "
+                    "Der bisherige Ersteller bleibt als normales Mitglied, die Verwaltung "
+                    "übernehmen ab jetzt nur noch Admins."
+                ),
                 embed=None,
                 view=None,
             )

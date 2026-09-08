@@ -86,7 +86,7 @@ async def create_forum_post(bot, group: Dict) -> Optional[int]:
 
     short   = _short_id(group)
     goal    = _goal_text(group)
-    creator = group.get("creator_name", "Unbekannt")
+    creator = group.get("creator_name") or "Offene Gruppe"
     date    = stored_datetime_to_local_str(group.get("datetime"), group["guild_id"])
 
     # Titel enthält die Gruppen-ID → Gruppe ↔ Forum-Post eindeutig zuordenbar.
@@ -327,7 +327,7 @@ def _build_archive_summary(group: Dict) -> discord.Embed:
     """Kurze Zusammenfassung einer Gruppe für den Archiv-Channel."""
     goal    = _goal_text(group)
     creator = group.get("creator_id")
-    creator_txt = f"<@{creator}>" if creator else group.get("creator_name", "?")
+    creator_txt = f"<@{creator}>" if creator else (group.get("creator_name") or "🤖 Offene Gruppe")
 
     members = []
     for slot in group.get("slots", []):

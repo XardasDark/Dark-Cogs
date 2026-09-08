@@ -536,20 +536,30 @@ def create_group(
     comment:        Optional[str],
     level_min:      Optional[int],
     level_max:      Optional[int],
+    is_generic:     bool = False,
 ) -> Dict:
     """
     Erstellt ein neues Gruppen-Dict (noch ohne message_id).
     message_id wird erst nach dem Discord-Post gesetzt (→ set_group_message_id).
+
+    Bei ``is_generic=True`` entsteht eine "offene" Gruppe ohne Ersteller/Führung –
+    die Ersteller-Felder werden ignoriert und auf None gesetzt.
     """
     now = datetime.now(timezone.utc)
     settings = get_guild_settings(guild_id)
     expires_at = (now + timedelta(days=settings["cleanup_days"])).isoformat()
+
+    if is_generic:
+        creator_id = None
+        creator_name = None
+        creator_ingame = None
 
     return {
         "group_id":            str(uuid.uuid4()),
         "message_id":          None,     # wird nach Post gesetzt
         "channel_id":          channel_id,
         "guild_id":            guild_id,
+        "is_generic":          is_generic,
         "creator_id":          creator_id,
         "creator_name":        creator_name,
         "creator_ingame":      creator_ingame,
@@ -865,6 +875,21 @@ def set_group_leader(
     group["creator_name"] = new_leader_name
     if new_leader_ingame is not None:
         group["creator_ingame"] = new_leader_ingame
+    return group
+
+
+def make_group_generic(group: Dict) -> Dict:
+    """
+    Wandelt eine Gruppe in eine "offene" Gruppe ohne Ersteller/Führung um.
+
+    Der bisherige Ersteller behält seinen Slot als ganz normales Mitglied – es
+    werden lediglich die Besitz-/Führungsfelder entfernt. Danach kann die Gruppe
+    nur noch von Admins verwaltet werden, und niemand erhält Ersteller-DMs.
+    """
+    group["is_generic"]     = True
+    group["creator_id"]     = None
+    group["creator_name"]   = None
+    group["creator_ingame"] = None
     return group
 
 

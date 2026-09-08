@@ -52,10 +52,17 @@ def build_group_embed(group: Dict) -> discord.Embed:
     )
 
     # ── Kopfzeile ─────────────────────────────────────────────────────────────
-    creator_id   = group.get("creator_id")
-    creator_name = group.get("creator_name", "Unbekannt")
-    creator_val  = f"<@{creator_id}>" if creator_id else creator_name
-    embed.add_field(name="👑 Ersteller",   value=creator_val,                  inline=True)
+    if group.get("is_generic"):
+        embed.add_field(
+            name="🤖 Offene Gruppe",
+            value="Kein fester Ersteller",
+            inline=True,
+        )
+    else:
+        creator_id   = group.get("creator_id")
+        creator_name = group.get("creator_name") or "Unbekannt"
+        creator_val  = f"<@{creator_id}>" if creator_id else creator_name
+        embed.add_field(name="👑 Ersteller",   value=creator_val,                  inline=True)
     embed.add_field(name="👥 Spieler",      value=str(group.get("player_count", "?")), inline=True)
     embed.add_field(name="📊 Status",       value=_status_label(status),       inline=True)
 
@@ -287,17 +294,36 @@ def _build_join_class_options_for_slots(open_slots: List[Dict]) -> List[discord.
 # VERWALTUNGS-VIEW  (für den Gruppenersteller)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_manage_view(group: Dict) -> ui.View:
-    """Verwaltungsmenü – nur für den Gruppenersteller."""
-    view   = ui.View(timeout=120)
-    msg_id = str(group.get("message_id", ""))
+def build_manage_view(group: Dict, is_admin: bool = False) -> ui.View:
+    """
+    Verwaltungsmenü – für Gruppenführer und Admins.
+
+    ``is_admin`` schaltet Admin-exklusive Aktionen frei (z.B. das Umwandeln in
+    eine offene Gruppe). Bei bereits generischen Gruppen entfällt die
+    Führungsübergabe.
+    """
+    view      = ui.View(timeout=120)
+    msg_id    = str(group.get("message_id", ""))
+    generic   = bool(group.get("is_generic"))
 
     buttons = [
         ("👥 Mitglieder verwalten", f"manage_members:{msg_id}",  discord.ButtonStyle.primary),
         ("✏️ Gruppe bearbeiten",    f"manage_edit:{msg_id}",     discord.ButtonStyle.primary),
-        ("👑 Führung übergeben",     f"manage_transfer:{msg_id}", discord.ButtonStyle.secondary),
-        ("🗑️ Gruppe löschen",       f"manage_delete:{msg_id}",   discord.ButtonStyle.danger),
     ]
+    if not generic:
+        # Führung übergeben ergibt nur bei Gruppen mit Ersteller Sinn.
+        buttons.append(
+            ("👑 Führung übergeben", f"manage_transfer:{msg_id}", discord.ButtonStyle.secondary)
+        )
+    if is_admin and not generic:
+        # Nur Admins dürfen eine Gruppe in eine offene Gruppe umwandeln.
+        buttons.append(
+            ("🤖 In offene Gruppe umwandeln", f"manage_make_generic:{msg_id}", discord.ButtonStyle.secondary)
+        )
+    buttons.append(
+        ("🗑️ Gruppe löschen", f"manage_delete:{msg_id}", discord.ButtonStyle.danger)
+    )
+
     for label, custom_id, style in buttons:
         view.add_item(ui.Button(label=label, style=style, custom_id=custom_id))
 
