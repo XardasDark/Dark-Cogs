@@ -167,3 +167,15 @@ cython_debug/
 # red-cogs
 red-cogs/
 backup
+
+# RO Group Finder – Laufzeitdaten (NIE einchecken: würde beim Deploy die Live-Daten
+# auf dem Server überschreiben). goals.json/classes.json bleiben bewusst getrackt.
+ro_groupfinder/data/groups.json
+ro_groupfinder/data/settings.json
+ro_groupfinder/data/subscriptions.json
+ro_groupfinder/data/user_prefs.json
+ro_groupfinder/data/expired_snapshots.json
+# Backup-/Temp-/Quarantäne-Artefakte der Speicher-Härtung
+ro_groupfinder/data/*.bak
+ro_groupfinder/data/*.tmp
+ro_groupfinder/data/*.corrupt-*

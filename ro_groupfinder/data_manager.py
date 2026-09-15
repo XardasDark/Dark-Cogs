@@ -127,10 +127,14 @@ def _save_json(path: str, data: Any) -> None:
     """
     os.makedirs(_DATA_DIR, exist_ok=True)
 
-    # 1) Letzte gute Version sichern (nur wenn vorhanden).
+    # 1) Letzte gute Version sichern (nur wenn vorhanden UND nicht (fast) leer).
+    #    Ein leeres "{}"/"[]" (2 Bytes) darf ein gutes Backup NICHT überschreiben –
+    #    sonst vernichtet ein versehentlich geleertes/überschriebenes groups.json
+    #    (z.B. durch ein Deployment) auch noch die letzte Rettungskopie.
     if os.path.exists(path):
         try:
-            shutil.copy2(path, path + ".bak")
+            if os.path.getsize(path) > 2:
+                shutil.copy2(path, path + ".bak")
         except OSError as e:
             log.warning("Backup von %s fehlgeschlagen (%s).", path, e)
 
