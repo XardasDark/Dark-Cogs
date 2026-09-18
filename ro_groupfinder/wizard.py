@@ -211,6 +211,26 @@ class WizardState:
             return True
         return False
 
+    def add_open_roster_slots(self) -> int:
+        """
+        Füllt ALLE noch offenen Plätze mit einem "offenen Kader": Free-Slots, bei
+        denen der Beitretende später eine beliebige Rolle/Klasse frei wählt (ohne
+        Quote). Gibt die Anzahl hinzugefügter Slots zurück.
+        """
+        remaining = self.slots_remaining
+        if remaining <= 0:
+            return 0
+        self.clear_draft()
+        self.slot_configs.append(SlotConfig(
+            slot_type=SLOT_TYPE_FREE,
+            key=None,
+            display_name="Freie Rolle",
+            emoji="🎭",
+            free_text="Jede Rolle",   # markiert den Slot als frei (has_free beim Beitritt)
+            quantity=remaining,
+        ))
+        return remaining
+
     # ── Slot-Expansion ───────────────────────────────────────────────────────
 
     def expand_slots(self) -> List[Dict]:
@@ -848,6 +868,9 @@ class SlotsView(_BaseWizardView):
         self.add_item(_AddSlotBtn(session, disabled=not s.draft_ready))
         if s.slot_configs:
             self.add_item(_RemoveLastSlotBtn(session))
+        # Shortcut: alle restlichen Plätze auf einmal als "offener Kader" (jede
+        # Rolle frei) anlegen – ohne jeden Slot einzeln zu konfigurieren.
+        self.add_item(_OpenRosterBtn(session, disabled=(remaining == 0)))
 
         # ── Row 4: Navigation ─────────────────────────────────────────────────
         self.add_nav(can_back=True, can_next=(remaining == 0))
@@ -954,6 +977,22 @@ class _RemoveLastSlotBtn(ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         self.session.state.remove_last_slot()
+        await self.session.refresh(interaction)
+
+
+class _OpenRosterBtn(ui.Button):
+    """Legt alle restlichen Plätze als offenen Kader an (jede Rolle frei)."""
+    def __init__(self, session: WizardSession, disabled: bool):
+        super().__init__(
+            label="🎲 Offener Kader (alle Plätze frei)",
+            style=discord.ButtonStyle.primary,
+            disabled=disabled,
+            row=3,
+        )
+        self.session = session
+
+    async def callback(self, interaction: discord.Interaction):
+        self.session.state.add_open_roster_slots()
         await self.session.refresh(interaction)
 
 
