@@ -49,15 +49,39 @@ from .constants import (
 # ─────────────────────────────────────────────────────────────────────────────
 # PFADE
 # ─────────────────────────────────────────────────────────────────────────────
-_BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
-_DATA_DIR      = os.path.join(_BASE_DIR, "data")
+# Trennung von Code und Daten:
+#   • Gebündelte, schreibgeschützte Konfig (goals.json, classes.json) liegt im
+#     Cog-Ordner und wird mit dem Code ausgeliefert.
+#   • Veränderliche Laufzeitdaten (groups, settings, ...) liegen in Reds
+#     Datenverzeichnis (cog_data_path) – AUSSERHALB des Cog-Codes. Dadurch kann
+#     kein Update/Deploy sie überschreiben oder löschen.
+_MODULE_DIR  = os.path.dirname(os.path.abspath(__file__))
+_BUNDLED_DIR = os.path.join(_MODULE_DIR, "data")   # ausgelieferte Konfig (read-only)
+
+
+def _resolve_runtime_dir() -> str:
+    """
+    Verzeichnis für veränderliche Laufzeitdaten in Reds Datenordner.
+    Fällt (z.B. in Tests ohne laufenden Red-Bot) auf das alte Cog-Datenverzeichnis
+    zurück, damit das Modul auch außerhalb des Bots importierbar bleibt.
+    """
+    try:
+        from redbot.core.data_manager import cog_data_path
+        path = str(cog_data_path(raw_name="ROGroupFinder"))
+    except Exception:
+        path = _BUNDLED_DIR
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+_DATA_DIR      = _resolve_runtime_dir()                        # Laufzeitdaten (Red)
 _GROUPS_FILE   = os.path.join(_DATA_DIR, "groups.json")
 _SETTINGS_FILE = os.path.join(_DATA_DIR, "settings.json")
 _USER_PREFS_FILE = os.path.join(_DATA_DIR, "user_prefs.json")
 _SUBSCRIPTIONS_FILE = os.path.join(_DATA_DIR, "subscriptions.json")
 _EXPIRED_FILE  = os.path.join(_DATA_DIR, "expired_snapshots.json")
-_GOALS_FILE    = os.path.join(_DATA_DIR, "goals.json")
-_CLASSES_FILE  = os.path.join(_DATA_DIR, "classes.json")
+_GOALS_FILE    = os.path.join(_BUNDLED_DIR, "goals.json")      # gebündelt (read-only)
+_CLASSES_FILE  = os.path.join(_BUNDLED_DIR, "classes.json")    # gebündelt (read-only)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -145,6 +169,38 @@ def _save_json(path: str, data: Any) -> None:
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+
+
+def migrate_legacy_data() -> None:
+    """
+    Einmalige Migration der Laufzeitdaten vom alten Cog-Datenordner (_BUNDLED_DIR)
+    in Reds Datenverzeichnis (_DATA_DIR).
+
+    Non-destruktiv:
+      • kopiert eine Datei nur, wenn sie am Ziel NOCH NICHT existiert,
+      • und die Quelle nicht (fast) leer ist (leeres {}/[] wird übersprungen).
+    Läuft der Cog bereits im neuen Layout (oder im Fallback ohne Red), passiert
+    nichts. Wird beim cog_load aufgerufen.
+    """
+    if os.path.abspath(_DATA_DIR) == os.path.abspath(_BUNDLED_DIR):
+        return  # Fallback-Modus (kein Red-Datenpfad) – nichts zu migrieren
+
+    runtime_files = (
+        "groups.json", "settings.json", "subscriptions.json",
+        "user_prefs.json", "expired_snapshots.json",
+    )
+    for name in runtime_files:
+        src = os.path.join(_BUNDLED_DIR, name)
+        dst = os.path.join(_DATA_DIR, name)
+        try:
+            if os.path.exists(dst):
+                continue                     # Ziel existiert → niemals überschreiben
+            if not os.path.exists(src) or os.path.getsize(src) <= 2:
+                continue                     # nichts (bzw. nur leeres {}) zu migrieren
+            shutil.copy2(src, dst)
+            log.warning("Laufzeitdatei migriert: %s → %s", src, dst)
+        except OSError as e:
+            log.error("Migration von %s fehlgeschlagen: %s", name, e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

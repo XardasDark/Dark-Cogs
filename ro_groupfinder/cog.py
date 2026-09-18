@@ -65,6 +65,7 @@ from .data_manager import (
     set_group_message_id,
     set_group_leader,
     make_group_generic,
+    migrate_legacy_data,
     set_group_ended,
     reopen_group,
     update_group_fields,
@@ -151,6 +152,8 @@ class ROGroupFinder(commands.Cog):
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     async def cog_load(self) -> None:
+        # Einmalige Migration alter Laufzeitdaten (Cog-Ordner → Reds Datenordner).
+        migrate_legacy_data()
         self.scheduler.start()
 
     async def cog_unload(self) -> None:
