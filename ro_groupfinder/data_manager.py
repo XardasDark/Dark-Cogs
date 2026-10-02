@@ -279,6 +279,7 @@ def get_guild_settings(guild_id: int) -> Dict:
     defaults = {
         "group_channel_id":           None,
         "forum_channel_id":           None,
+        "ping_role_id":               None,
         "group_finish_after_start_hours": DEFAULT_GROUP_FINISH_AFTER_START_HOURS,
         "thread_close_hours":         DEFAULT_THREAD_CLOSE_HOURS,
         "thread_delete_hours":        DEFAULT_THREAD_DELETE_HOURS,
@@ -325,6 +326,16 @@ def set_forum_channel(guild_id: int, channel_id: int) -> None:
 def get_forum_channel(guild_id: int) -> Optional[int]:
     """Gibt die Forum-Channel-ID für Diskussionsposts zurück, oder None."""
     return get_guild_settings(guild_id).get("forum_channel_id")
+
+
+def set_ping_role(guild_id: int, role_id: Optional[int]) -> None:
+    """Legt die Rolle fest, die bei neuen (von Spielern erstellten) Gruppen gepingt wird."""
+    set_guild_setting(guild_id, "ping_role_id", role_id)
+
+
+def get_ping_role(guild_id: int) -> Optional[int]:
+    """Gibt die Ping-Rollen-ID zurück, oder None wenn keine gesetzt ist."""
+    return get_guild_settings(guild_id).get("ping_role_id")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

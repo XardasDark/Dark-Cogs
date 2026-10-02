@@ -47,6 +47,8 @@ from .data_manager import (
     get_group_channel,
     set_group_channel,
     set_forum_channel,
+    set_ping_role,
+    get_ping_role,
     set_guild_setting,
     get_guild_settings,
     get_guild_groups,
@@ -282,8 +284,15 @@ class ROGroupFinder(commands.Cog):
 
         # Ohne Buttons senden: die echte message_id ist noch unbekannt. Buttons mit
         # message_id=0 würden bis zum Edit ins Leere zeigen ("Gruppe nicht gefunden").
+        # Ping-Rolle nur hier (ein Spieler erstellt die Gruppe) – nicht beim
+        # Bot-Repost wiederkehrender Gruppen (siehe scheduler._task_recurrence).
+        ping_content, ping_mentions = self._group_ping(interaction.guild, state.guild_id)
         group["message_id"] = 0
-        message = await channel.send(embed=build_group_embed(group))
+        message = await channel.send(
+            content=ping_content,
+            embed=build_group_embed(group),
+            allowed_mentions=ping_mentions,
+        )
         set_group_message_id(group, message.id)
         save_group(state.guild_id, group)
 
@@ -542,6 +551,22 @@ class ROGroupFinder(commands.Cog):
             f"dort automatisch ein Diskussionsbeitrag erstellt.",
         )
 
+    @gruppe_setup.command(name="pingrolle", description="Rolle die gepingt wird, wenn ein Spieler eine Gruppe erstellt (leer = aus)")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_pingrolle(self, ctx: commands.Context, rolle: Optional[discord.Role] = None) -> None:
+        if rolle is None:
+            set_ping_role(ctx.guild.id, None)
+            await self._reply(ctx, "\u2705 Ping-Rolle **deaktiviert**. Neue Gruppen werden ohne Ping gepostet.")
+            return
+        set_ping_role(ctx.guild.id, rolle.id)
+        await self._reply(
+            ctx,
+            f"\u2705 Ping-Rolle auf {rolle.mention} gesetzt. Wenn ein **Spieler** eine Gruppe erstellt, "
+            f"wird diese Rolle im Post angepingt. Bei vom Bot wiederhergestellten (regelm\u00e4\u00dfigen) "
+            f"Gruppen wird **nicht** gepingt.",
+        )
+
     @gruppe_setup.command(name="startende", description="Stunden nach Gruppenstart bis die Gruppe automatisch beendet wird (0 = aus)")
     @commands.guild_only()
     @commands.admin()
@@ -711,6 +736,13 @@ class ROGroupFinder(commands.Cog):
         embed.add_field(name="\U0001f4cc Gruppen-Channel",    value=ch.mention if ch else "Nicht gesetzt", inline=False)
         embed.add_field(name="\U0001f4ac Forum-Channel",      value=forum.mention if forum else "Nicht gesetzt", inline=False)
 
+        ping_role = ctx.guild.get_role(s.get("ping_role_id") or 0)
+        embed.add_field(
+            name="\U0001f514 Ping-Rolle",
+            value=ping_role.mention if ping_role else "Nicht gesetzt",
+            inline=False,
+        )
+
         archive = ctx.guild.get_channel(s.get("archive_channel_id") or 0)
         if archive:
             closed_val = f"Archiv: {archive.mention}"
@@ -845,6 +877,19 @@ class ROGroupFinder(commands.Cog):
                 await ctx.interaction.response.send_message(**kwargs)
         else:
             await ctx.send(**kwargs)
+
+    def _group_ping(self, guild: Optional[discord.Guild], guild_id: int):
+        """
+        Liefert (content, allowed_mentions) für eine von einem Spieler erstellte
+        Gruppe. Ist keine Ping-Rolle gesetzt (oder nicht mehr vorhanden), wird kein
+        Ping gesendet. Bewusst nur für Spieler-Erstellung genutzt – nicht für den
+        Bot-Repost wiederkehrender Gruppen.
+        """
+        role_id = get_ping_role(guild_id)
+        role    = guild.get_role(role_id) if (guild and role_id) else None
+        if not role:
+            return None, None
+        return role.mention, discord.AllowedMentions(roles=[role])
 
         # ─────────────────────────────────────────────────────────────────────────
     # INTERACTION HANDLER
