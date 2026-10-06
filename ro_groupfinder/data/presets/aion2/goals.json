@@ -1,0 +1,52 @@
+[
+  {
+    "key":   "expedition",
+    "name":  "Erkundung / Eroberung",
+    "emoji": "🛡️"
+  },
+  {
+    "key":   "feldbosse",
+    "name":  "Feldbosse",
+    "emoji": "💀"
+  },
+  {
+    "key":   "grind",
+    "name":  "Grind / Farmen",
+    "emoji": "🐺"
+  },
+  {
+    "key":   "schlachtfeld",
+    "name":  "Arena der Strategie",
+    "emoji": "♟️"
+  },
+  {
+    "key":   "arena",
+    "name":  "Arena",
+    "emoji": "🏟️"
+  },
+  {
+    "key":   "transzendenz",
+    "name":  "Transzendenz",
+    "emoji": "🌟"
+  },
+  {
+    "key":   "abyss",
+    "name":  "Abyss",
+    "emoji": "🕳️"
+  },
+  {
+    "key":   "rift",
+    "name":  "Rift",
+    "emoji": "🌀"
+  },
+  {
+    "key":   "quest",
+    "name":  "Quest-Gruppe",
+    "emoji": "📜"
+  },
+  {
+    "key":   "roleplay",
+    "name":  "Roleplay",
+    "emoji": "🎭"
+  }
+]

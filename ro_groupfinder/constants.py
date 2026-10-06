@@ -123,6 +123,15 @@ DEFAULT_CLOSED_POST_ACTION       = "keep"
 # Nutzereingaben (z.B. "20:30") gelten als lokale Zeit dieser Zone; gespeichert wird UTC.
 DEFAULT_TIMEZONE                 = "Europe/Berlin"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SPIEL-PRESETS
+# Klassen & Ziele sind spielabhängig und werden pro Guild als Kopie eines Presets
+# gespeichert (copy-on-apply, siehe data_manager.apply_preset). Guilds ohne
+# angewandtes Spiel fallen auf das Default-Preset zurück.
+# ─────────────────────────────────────────────────────────────────────────────
+DEFAULT_GAME_KEY                 = "ragnarok_zero"   # Preset-Ordner unter data/presets/
+DEFAULT_CHAR_PLACEHOLDER         = "Dein In-Game-Name"
+
 # Wie lange ein Snapshot einer abgelaufenen Gruppe für "Erneut suchen" aufbewahrt wird.
 EXPIRED_SNAPSHOT_RETENTION_DAYS  = 30
 

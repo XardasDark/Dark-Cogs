@@ -41,6 +41,8 @@ from .constants import (
     DEFAULT_READONLY_ENFORCED,
     DEFAULT_CLOSED_POST_ACTION,
     DEFAULT_TIMEZONE,
+    DEFAULT_GAME_KEY,
+    DEFAULT_CHAR_PLACEHOLDER,
     EXPIRED_SNAPSHOT_RETENTION_DAYS,
     GROUP_STATUS,
     DEFAULT_NOTIFICATION_PREFS,
@@ -80,8 +82,10 @@ _SETTINGS_FILE = os.path.join(_DATA_DIR, "settings.json")
 _USER_PREFS_FILE = os.path.join(_DATA_DIR, "user_prefs.json")
 _SUBSCRIPTIONS_FILE = os.path.join(_DATA_DIR, "subscriptions.json")
 _EXPIRED_FILE  = os.path.join(_DATA_DIR, "expired_snapshots.json")
-_GOALS_FILE    = os.path.join(_BUNDLED_DIR, "goals.json")      # gebündelt (read-only)
-_CLASSES_FILE  = os.path.join(_BUNDLED_DIR, "classes.json")    # gebündelt (read-only)
+_GOALS_FILE    = os.path.join(_BUNDLED_DIR, "goals.json")      # gebündelt (read-only, Alt-Fallback)
+_CLASSES_FILE  = os.path.join(_BUNDLED_DIR, "classes.json")    # gebündelt (read-only, Alt-Fallback)
+_PRESETS_DIR   = os.path.join(_BUNDLED_DIR, "presets")         # gebündelte Spiel-Presets (read-only)
+_GAMES_FILE    = os.path.join(_DATA_DIR, "games.json")         # pro Guild angewandtes Spiel (copy-on-apply)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -171,6 +175,19 @@ def _save_json(path: str, data: Any) -> None:
     os.replace(tmp, path)
 
 
+def _read_bundled_json(path: str, default: Any) -> Any:
+    """
+    Liest eine ausgelieferte (read-only) JSON-Datei – OHNE Backup-/Quarantäne-Logik
+    von `_load_json`, da Preset-Dateien im Cog-Ordner liegen und nie geschrieben
+    werden. Fehlt/korrupt → `default`.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return default
+
+
 def migrate_legacy_data() -> None:
     """
     Einmalige Migration der Laufzeitdaten vom alten Cog-Datenordner (_BUNDLED_DIR)
@@ -203,29 +220,171 @@ def migrate_legacy_data() -> None:
             log.error("Migration von %s fehlgeschlagen: %s", name, e)
 
 
+def migrate_games() -> None:
+    """
+    Einmalige Zuweisung des Default-Presets an Bestandsguilds.
+
+    Jede Guild, die den Cog bereits nutzt (taucht in settings.json ODER groups.json
+    auf) und noch keinen games.json-Eintrag hat, bekommt das Default-Preset
+    (ragnarok_zero) zugewiesen. Dadurch feuert der First-Run-Guard bei bestehenden
+    Servern nicht; neue Guilds ohne Vordaten müssen `/gruppe-setup spiel` durchlaufen.
+
+    Wird beim cog_load nach migrate_legacy_data() aufgerufen.
+    """
+    games = load_games()
+    known_ids = set(load_settings().keys()) | set(load_groups().keys())
+    preset = load_preset(DEFAULT_GAME_KEY)
+    if preset is None:
+        return  # Default-Preset fehlt → nichts zuzuweisen
+
+    changed = False
+    for gid in known_ids:
+        if gid in games:
+            continue
+        games[gid] = dict(preset)
+        changed = True
+        log.warning("Bestandsguild %s automatisch auf Preset '%s' gesetzt.", gid, DEFAULT_GAME_KEY)
+    if changed:
+        save_games(games)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# GOALS & CLASSES  (Read-only, aus JSON geladen)
+# SPIEL-PRESETS & PRO-GUILD-SPIEL  (copy-on-apply)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_goals() -> List[Dict]:
+def list_presets() -> List[Dict]:
     """
-    Lädt die vordefinierten Gruppenziele aus goals.json.
-    Änderungen in der Datei werden nach /reload aktiv.
+    Scannt data/presets/*/meta.json und liefert die verfügbaren Spiel-Presets:
+      [{ "key", "game_name", "char_placeholder" }, ...]
     """
-    return _load_json(_GOALS_FILE, [])
+    result: List[Dict] = []
+    if not os.path.isdir(_PRESETS_DIR):
+        return result
+    for key in sorted(os.listdir(_PRESETS_DIR)):
+        meta_path = os.path.join(_PRESETS_DIR, key, "meta.json")
+        if not os.path.isfile(meta_path):
+            continue
+        meta = _read_bundled_json(meta_path, {})
+        result.append({
+            "key":              key,
+            "game_name":        meta.get("game_name", key),
+            "char_placeholder": meta.get("char_placeholder", DEFAULT_CHAR_PLACEHOLDER),
+        })
+    return result
 
 
-def load_classes() -> List[Dict]:
+def load_preset(preset_key: str) -> Optional[Dict]:
     """
-    Lädt die 1. Job-Klassen aus classes.json.
-    Änderungen in der Datei werden nach /reload aktiv.
+    Lädt ein gebündeltes Preset vollständig (meta + classes + goals), oder None,
+    falls der Preset-Ordner/die meta.json nicht existiert.
     """
-    return _load_json(_CLASSES_FILE, [])
+    pdir = os.path.join(_PRESETS_DIR, preset_key)
+    meta_path = os.path.join(pdir, "meta.json")
+    if not os.path.isfile(meta_path):
+        return None
+    meta = _read_bundled_json(meta_path, {})
+    return {
+        "game_key":         preset_key,
+        "game_name":        meta.get("game_name", preset_key),
+        "char_placeholder": meta.get("char_placeholder", DEFAULT_CHAR_PLACEHOLDER),
+        "classes":          _read_bundled_json(os.path.join(pdir, "classes.json"), []),
+        "goals":            _read_bundled_json(os.path.join(pdir, "goals.json"), []),
+    }
 
 
-def get_class_by_key(key: str) -> Optional[Dict]:
-    """Gibt eine Klasse anhand ihres Keys zurück, oder None."""
-    for cls in load_classes():
+def load_games() -> Dict:
+    """Lädt die pro Guild angewandten Spiele (keyed by guild_id als String)."""
+    return _load_json(_GAMES_FILE, {})
+
+
+def save_games(games: Dict) -> None:
+    """Speichert die pro Guild angewandten Spiele."""
+    _save_json(_GAMES_FILE, games)
+
+
+def get_game(guild_id: int) -> Optional[Dict]:
+    """
+    Gibt das für diese Guild angewandte Spiel zurück (copy-on-apply), oder None,
+    wenn noch kein Spiel per Setup gewählt wurde.
+    """
+    return load_games().get(str(guild_id))
+
+
+def apply_preset(guild_id: int, preset_key: str) -> Optional[Dict]:
+    """
+    Wendet ein Preset auf eine Guild an (copy-on-apply): eine Kopie der Klassen/Ziele
+    und der meta-Daten wird in games.json[guild_id] geschrieben. Überschreibt eine
+    evtl. vorhandene (ggf. angepasste) Guild-Konfiguration.
+
+    Gibt den neuen Eintrag zurück, oder None, falls das Preset unbekannt ist.
+    """
+    preset = load_preset(preset_key)
+    if preset is None:
+        return None
+    games = load_games()
+    games[str(guild_id)] = dict(preset)
+    save_games(games)
+    return games[str(guild_id)]
+
+
+def _guild_game(guild_id: Optional[int]) -> Dict:
+    """
+    Liefert die effektiven Spiel-Daten einer Guild (classes/goals/meta).
+
+    Fallback-Kette, falls die Guild noch kein Spiel angewandt hat:
+      1. Default-Preset (ragnarok_zero)
+      2. Alt-Bestand: gebündelte classes.json/goals.json direkt im data/-Ordner
+    So funktionieren Bestandsdaten auch ohne durchlaufene Migration/Setup weiter.
+    """
+    if guild_id is not None:
+        game = load_games().get(str(guild_id))
+        if game:
+            return game
+    preset = load_preset(DEFAULT_GAME_KEY)
+    if preset is not None:
+        return preset
+    return {
+        "game_key":         DEFAULT_GAME_KEY,
+        "game_name":        DEFAULT_GAME_KEY,
+        "char_placeholder": DEFAULT_CHAR_PLACEHOLDER,
+        "classes":          _read_bundled_json(_CLASSES_FILE, []),
+        "goals":            _read_bundled_json(_GOALS_FILE, []),
+    }
+
+
+def get_game_name(guild_id: Optional[int]) -> str:
+    """Anzeigename des Spiels einer Guild (mit Fallback)."""
+    return _guild_game(guild_id).get("game_name", DEFAULT_GAME_KEY)
+
+
+def get_char_placeholder(guild_id: Optional[int]) -> str:
+    """Platzhaltertext für die In-Game-Namen-Eingabe einer Guild (mit Fallback)."""
+    return _guild_game(guild_id).get("char_placeholder", DEFAULT_CHAR_PLACEHOLDER)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GOALS & CLASSES  (pro Guild, aus dem angewandten Spiel)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def load_goals(guild_id: Optional[int] = None) -> List[Dict]:
+    """
+    Lädt die Gruppenziele für eine Guild (aus dem angewandten Spiel-Preset).
+    Ohne guild_id (oder ohne angewandtes Spiel) greift der Default-Fallback.
+    """
+    return list(_guild_game(guild_id).get("goals", []))
+
+
+def load_classes(guild_id: Optional[int] = None) -> List[Dict]:
+    """
+    Lädt die Klassen für eine Guild (aus dem angewandten Spiel-Preset).
+    Ohne guild_id (oder ohne angewandtes Spiel) greift der Default-Fallback.
+    """
+    return list(_guild_game(guild_id).get("classes", []))
+
+
+def get_class_by_key(guild_id: Optional[int], key: str) -> Optional[Dict]:
+    """Gibt eine Klasse der Guild anhand ihres Keys zurück, oder None."""
+    for cls in load_classes(guild_id):
         if cls["key"] == key:
             return cls
     return None
@@ -249,7 +408,7 @@ def resolve_goal_name(group: Dict) -> str:
         return custom
     key = group.get("goal") or ""
     if key and key != "__custom__":
-        for g in load_goals():
+        for g in load_goals(group.get("guild_id")):
             if g.get("key") == key:
                 return g.get("name") or key
     return key or "–"

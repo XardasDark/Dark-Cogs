@@ -1,0 +1,51 @@
+[
+  {
+    "key":          "schwertkämpfer",
+    "name":         "Schwertkämpfer",
+    "emoji":        "🗡️",
+    "default_role": "dd",
+    "description":  "Nahkampf-Klasse. Vorstufe von Ritter und Kreuzritter."
+  },
+  {
+    "key":          "magier",
+    "name":         "Magier",
+    "emoji":        "🔮",
+    "default_role": "dd",
+    "description":  "Fernkampf-Magie. Vorstufe von Wizard und Sage."
+  },
+  {
+    "key":          "bogenschütze",
+    "name":         "Bogenschütze",
+    "emoji":        "🏹",
+    "default_role": "dd",
+    "description":  "Fernkampf-Physisch. Vorstufe von Hunter und Bard/Dancer."
+  },
+  {
+    "key":          "dieb",
+    "name":         "Dieb",
+    "emoji":        "🔪",
+    "default_role": "dd",
+    "description":  "Schneller Nahkampf, hoher Ausweichen-Wert. Vorstufe von Assassin und Rogue."
+  },
+  {
+    "key":          "händler",
+    "name":         "Händler",
+    "emoji":        "💰",
+    "default_role": "support",
+    "description":  "Support & Wirtschaft. Vorstufe von Blacksmith und Alchemist."
+  },
+  {
+    "key":          "akolyth",
+    "name":         "Akolyth",
+    "emoji":        "✝️",
+    "default_role": "heiler",
+    "description":  "Heiler und Support. Vorstufe von Priest und Monk."
+  },
+  {
+    "key":          "novize",
+    "name":         "Novize",
+    "emoji":        "👤",
+    "default_role": "beliebig",
+    "description":  "Startklasse. Noch kein Job gewählt."
+  }
+]

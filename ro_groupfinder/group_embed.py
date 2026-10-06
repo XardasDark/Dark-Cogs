@@ -221,7 +221,7 @@ def build_join_slot_view(group: Dict, user_id: int) -> Optional[ui.View]:
         view.add_item(slot_sel)
 
     # Klasse/Rolle Auswahl – auf offene Slots beschränkt
-    class_options = _build_join_class_options_for_slots(open_slots)
+    class_options = _build_join_class_options_for_slots(open_slots, group.get("guild_id"))
     class_sel = ui.Select(
         placeholder="Deine Klasse / Rolle...",
         options=class_options,
@@ -249,7 +249,7 @@ def build_join_slot_view(group: Dict, user_id: int) -> Optional[ui.View]:
     return view
 
 
-def _build_join_class_options_for_slots(open_slots: List[Dict]) -> List[discord.SelectOption]:
+def _build_join_class_options_for_slots(open_slots: List[Dict], guild_id: Optional[int] = None) -> List[discord.SelectOption]:
     """
     Erstellt die Klassen/Rollen-Optionen basierend auf den offenen Slots.
     - Nur Klassen die konkret gesucht werden (SLOT_TYPE_CLASS)
@@ -264,7 +264,7 @@ def _build_join_class_options_for_slots(open_slots: List[Dict]) -> List[discord.
     seen    = set()
 
     # Spezifische Klassen
-    for cls in load_classes():
+    for cls in load_classes(guild_id):
         if has_free or cls["key"] in class_keys:
             val = f"class:{cls['key']}"
             if val not in seen:

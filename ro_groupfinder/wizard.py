@@ -25,7 +25,7 @@ from typing import Optional, List, Dict, Callable
 from datetime import datetime, timezone
 import re
 
-from .data_manager import load_goals, load_classes, build_slot, stored_datetime_to_local_str
+from .data_manager import load_goals, load_classes, build_slot, stored_datetime_to_local_str, get_char_placeholder
 from .constants import (
     ROLE_TYPES, RECURRENCE_OPTIONS, WIZARD_STEPS,
     SLOT_TYPE_ROLE, SLOT_TYPE_CLASS, SLOT_TYPE_FREE,
@@ -295,7 +295,7 @@ def build_state_from_group(
     # ── Ziel ──────────────────────────────────────────────────────────────────
     goal        = group.get("goal") or ""
     goal_custom = group.get("goal_custom")
-    matched     = next((g for g in load_goals() if g["key"] == goal), None)
+    matched     = next((g for g in load_goals(guild_id) if g["key"] == goal), None)
     if matched and goal != "__custom__":
         state.goal_key    = matched["key"]
         state.goal_label  = matched["name"]
@@ -714,7 +714,7 @@ class _CancelConfirmNoBtn(ui.Button):
 class GoalView(_BaseWizardView):
     def __init__(self, session: WizardSession):
         super().__init__(session)
-        goals = load_goals()
+        goals = load_goals(session.state.guild_id)
         options = []
         for g in goals[:24]:
             options.append(discord.SelectOption(
@@ -745,7 +745,7 @@ class _GoalSelect(ui.Select):
             s.goal_key = "__custom__"
             await interaction.response.send_modal(GoalCustomModal(self.session))
         else:
-            goals = load_goals()
+            goals = load_goals(s.guild_id)
             goal  = next((g for g in goals if g["key"] == value), None)
             if goal:
                 s.goal_key    = goal["key"]
@@ -921,7 +921,7 @@ class _SlotRoleSelect(ui.Select):
 
 class _SlotClassSelect(ui.Select):
     def __init__(self, session: WizardSession):
-        classes = load_classes()
+        classes = load_classes(session.state.guild_id)
         options = [
             discord.SelectOption(
                 label=f"{c.get('emoji', '⚔️')} {c['name']}",
@@ -936,7 +936,7 @@ class _SlotClassSelect(ui.Select):
     async def callback(self, interaction: discord.Interaction):
         s   = self.session.state
         key = self.values[0]
-        cls = next((c for c in load_classes() if c["key"] == key), None)
+        cls = next((c for c in load_classes(s.guild_id) if c["key"] == key), None)
         if cls:
             s.draft_key      = cls["key"]
             s.draft_display  = cls["name"]
@@ -1119,7 +1119,6 @@ class _RemoveMemberSelect(ui.Select):
 class AddMemberModal(ui.Modal, title="Spieler hinzufügen"):
     ingame_name = ui.TextInput(
         label="In-Game Name",
-        placeholder="Dein Charakter-Name in Ragnarok",
         max_length=50,
     )
 
@@ -1127,6 +1126,8 @@ class AddMemberModal(ui.Modal, title="Spieler hinzufügen"):
         super().__init__()
         self.session     = session
         self.slot_index  = slot_index
+        # Platzhalter spielabhängig (aus dem angewandten Preset der Guild)
+        self.ingame_name.placeholder = get_char_placeholder(session.state.guild_id)
         # Titel dynamisch setzen
         slot_label = session.state.get_slot_label(slot_index)
         self.title = f"Spieler für {slot_label}"

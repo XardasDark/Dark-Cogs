@@ -160,7 +160,7 @@ async def notify_subscribers(bot, group: Dict) -> None:
 
     already   = set(group.get("notified_subscribers", []))
     exclude   = _participant_ids(group)
-    class_map = {c["key"]: c for c in load_classes()}
+    class_map = {c["key"]: c for c in load_classes(guild_id)}
     changed   = False
 
     for ukey, sub in subs.items():

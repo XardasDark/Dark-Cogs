@@ -37,7 +37,7 @@ import logging
 import discord
 from discord import app_commands, ui
 from redbot.core import commands
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from datetime import datetime, timezone
 
 log = logging.getLogger("red.ro_groupfinder")
@@ -68,6 +68,7 @@ from .data_manager import (
     set_group_leader,
     make_group_generic,
     migrate_legacy_data,
+    migrate_games,
     set_group_ended,
     reopen_group,
     update_group_fields,
@@ -82,6 +83,11 @@ from .data_manager import (
     load_classes,
     get_class_by_key,
     resolve_goal_name,
+    list_presets,
+    apply_preset,
+    get_game,
+    get_game_name,
+    get_char_placeholder,
     get_user_notif_prefs,
     set_user_notif_prefs,
     get_user_subscription,
@@ -145,7 +151,7 @@ _wizard_sessions: Dict[int, WizardSession] = {}
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ROGroupFinder(commands.Cog):
-    """RO Group Finder – Gruppensuche für Ragnarok Zero: Global"""
+    """Group Finder – spielübergreifendes Gruppen-System (Spiel pro Server wählbar)"""
 
     def __init__(self, bot: commands.Bot):
         self.bot       = bot
@@ -156,6 +162,8 @@ class ROGroupFinder(commands.Cog):
     async def cog_load(self) -> None:
         # Einmalige Migration alter Laufzeitdaten (Cog-Ordner → Reds Datenordner).
         migrate_legacy_data()
+        # Bestandsguilds einmalig das Default-Spiel-Preset zuweisen.
+        migrate_games()
         self.scheduler.start()
 
     async def cog_unload(self) -> None:
@@ -210,6 +218,16 @@ class ROGroupFinder(commands.Cog):
         interaction = ctx.interaction
         guild_id    = interaction.guild_id
         channel_id  = interaction.channel_id
+
+        # First-Run-Guard: ohne gewähltes Spiel gibt es keine Klassen/Ziele.
+        if get_game(guild_id) is None:
+            await interaction.response.send_message(
+                "⚠️ Für diesen Server wurde noch kein Spiel eingerichtet.\n"
+                "Ein Admin muss zuerst `/gruppe-setup spiel` ausführen und ein Spiel auswählen.",
+                ephemeral=True,
+            )
+            return
+
         allowed_ch  = get_group_channel(guild_id)
 
         if allowed_ch and channel_id != allowed_ch:
@@ -504,7 +522,7 @@ class ROGroupFinder(commands.Cog):
         interaction = ctx.interaction
         sub = get_user_subscription(ctx.guild.id, interaction.user.id)
         await interaction.response.send_message(
-            embed=_abo_embed(sub),
+            embed=_abo_embed(sub, ctx.guild.id),
             view=_AboView(interaction.user.id, ctx.guild.id, sub),
             ephemeral=True,
         )
@@ -517,6 +535,44 @@ class ROGroupFinder(commands.Cog):
     async def gruppe_setup(self, ctx: commands.Context) -> None:
         if ctx.invoked_subcommand is None:
             await ctx.send_help(ctx.command)
+
+    @gruppe_setup.command(name="spiel", description="Spiel dieses Servers w\u00e4hlen (legt Klassen & Ziele fest)")
+    @commands.guild_only()
+    @commands.admin()
+    async def gruppe_config_spiel(self, ctx: commands.Context) -> None:
+        if not ctx.interaction:
+            await ctx.send("\u274c Dieser Befehl funktioniert nur als Slash-Command: `/gruppe-setup spiel`")
+            return
+        interaction = ctx.interaction
+
+        presets = list_presets()
+        if not presets:
+            await interaction.response.send_message(
+                "\u274c Es sind keine Spiel-Presets installiert (`data/presets/` ist leer).",
+                ephemeral=True,
+            )
+            return
+
+        current  = get_game(ctx.guild.id)
+        cur_name = current.get("game_name") if current else None
+        if cur_name:
+            desc = (
+                f"Aktuelles Spiel: **{cur_name}**\n\n"
+                "W\u00e4hle unten ein Spiel. **Achtung:** Beim Wechsel werden die Klassen und "
+                "Ziele dieses Servers durch das Preset **ersetzt** \u2013 eigene Anpassungen gehen verloren."
+            )
+        else:
+            desc = (
+                "F\u00fcr diesen Server ist noch **kein Spiel** eingerichtet.\n\n"
+                "W\u00e4hle unten ein Spiel. Die passenden Klassen und Ziele werden dann als Kopie "
+                "f\u00fcr diesen Server \u00fcbernommen."
+            )
+        embed = discord.Embed(title="\U0001f3ae Spiel einrichten", description=desc, color=COLOR_OPEN)
+        await interaction.response.send_message(
+            embed=embed,
+            view=_GameSetupView(ctx.guild.id, presets, has_current=bool(current)),
+            ephemeral=True,
+        )
 
     @gruppe_setup.command(name="channel", description="Legt den Channel f\u00fcr Gruppenanfragen fest")
     @commands.guild_only()
@@ -1046,7 +1102,7 @@ class ROGroupFinder(commands.Cog):
             _join_sessions[session_key]["class_display"] = role.get("name", vkey)
             _join_sessions[session_key]["class_emoji"]   = role.get("emoji", "❓")
         else:
-            classes = load_classes()
+            classes = load_classes(interaction.guild_id)
             cls = next((c for c in classes if c["key"] == vkey), None)
             if cls:
                 _join_sessions[session_key]["class_display"] = cls["name"]
@@ -1119,7 +1175,7 @@ class ROGroupFinder(commands.Cog):
         # Die Klassen-Auswahl aus dem Dropdown wird hier bewusst überschrieben,
         target_slot = next((s for s in group["slots"] if s["slot_index"] == slot_index), None)
         if target_slot and target_slot.get("slot_type") == SLOT_TYPE_CLASS and target_slot.get("class_key"):
-            slot_cls = get_class_by_key(target_slot["class_key"])
+            slot_cls = get_class_by_key(group.get("guild_id"), target_slot["class_key"])
             if slot_cls:
                 class_display = slot_cls["name"]
                 class_emoji   = slot_cls.get("emoji", target_slot.get("emoji", "⚔️"))
@@ -2171,18 +2227,18 @@ class _NotifPrefsView(ui.View):
 # ABO / LFG-ALARM (pro Spieler)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _abo_embed(sub: Dict) -> discord.Embed:
+def _abo_embed(sub: Dict, guild_id: Optional[int] = None) -> discord.Embed:
     """Übersichts-Embed des aktuellen Abos."""
     lines = []
     if sub.get("all"):
         lines.append("🔔 **Alle neuen Gruppen**")
     if sub.get("goals"):
-        gm = {g["key"]: g for g in load_goals()}
+        gm = {g["key"]: g for g in load_goals(guild_id)}
         lines.append("🎯 **Ziele:** " + ", ".join(gm.get(k, {}).get("name", k) for k in sub["goals"]))
     if sub.get("roles"):
         lines.append("🎭 **Rollen:** " + ", ".join(ROLE_TYPES.get(k, {}).get("name", k) for k in sub["roles"]))
     if sub.get("classes"):
-        cm = {c["key"]: c for c in load_classes()}
+        cm = {c["key"]: c for c in load_classes(guild_id)}
         lines.append("⚔️ **Klassen:** " + ", ".join(cm.get(k, {}).get("name", k) for k in sub["classes"]))
 
     desc = (
@@ -2202,7 +2258,7 @@ class _AboView(ui.View):
         self.guild_id = guild_id
         self.sub      = sub
 
-        goals = load_goals()
+        goals = load_goals(guild_id)
         if goals:
             g_opts = [
                 discord.SelectOption(
@@ -2222,7 +2278,7 @@ class _AboView(ui.View):
         ]
         self.add_item(self._make_select("Rollen abonnieren…", r_opts, 1, self._on_roles))
 
-        classes = load_classes()
+        classes = load_classes(self.guild_id)
         if classes:
             c_opts = [
                 discord.SelectOption(
@@ -2258,7 +2314,7 @@ class _AboView(ui.View):
     async def _save_and_refresh(self, interaction: discord.Interaction) -> None:
         set_user_subscription(self.guild_id, self.user_id, self.sub)
         await interaction.response.edit_message(
-            embed=_abo_embed(self.sub),
+            embed=_abo_embed(self.sub, self.guild_id),
             view=_AboView(self.user_id, self.guild_id, self.sub),
         )
 
@@ -2354,13 +2410,88 @@ class _DeleteConfirmView(ui.View):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SPIEL-SETUP VIEW  (/gruppe-setup spiel – copy-on-apply)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _GameSetupView(ui.View):
+    """Ephemere Spiel-Auswahl für Admins. Wendet ein Preset copy-on-apply an.
+
+    Ist bereits ein Spiel gesetzt, erfordert ein Wechsel eine zusätzliche
+    Bestätigung (Überschreib-Schutz), da eigene Anpassungen verloren gehen.
+    """
+
+    def __init__(self, guild_id: int, presets: List[Dict], has_current: bool):
+        super().__init__(timeout=180)
+        self.guild_id    = guild_id
+        self.has_current = has_current
+        self._names      = {p["key"]: p["game_name"] for p in presets}
+        self._pending: Optional[str] = None
+
+        options = [
+            discord.SelectOption(
+                label=p["game_name"][:100],
+                value=p["key"],
+                description=f"Preset: {p['key']}"[:100],
+            )
+            for p in presets[:25]
+        ]
+        self.select = ui.Select(placeholder="Spiel wählen…", options=options, row=0)
+        self.select.callback = self._on_select
+        self.add_item(self.select)
+
+        self.confirm_btn = ui.Button(
+            label="Wechsel bestätigen", style=discord.ButtonStyle.danger, row=1, disabled=True
+        )
+        self.confirm_btn.callback = self._on_confirm
+        if has_current:
+            self.add_item(self.confirm_btn)
+
+    async def _apply(self, interaction: discord.Interaction, key: str) -> None:
+        result = apply_preset(self.guild_id, key)
+        if result is None:
+            await interaction.response.edit_message(
+                content=f"❌ Preset `{key}` konnte nicht geladen werden.", embed=None, view=None
+            )
+            self.stop()
+            return
+        embed = discord.Embed(
+            title="✅ Spiel eingerichtet",
+            description=(
+                f"Dieser Server nutzt jetzt **{result.get('game_name', key)}**.\n"
+                f"Übernommen: **{len(result.get('classes', []))}** Klassen, "
+                f"**{len(result.get('goals', []))}** Ziele.\n\n"
+                "Spieler können nun mit `/gruppe erstellen` Gruppen anlegen."
+            ),
+            color=COLOR_OPEN,
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+        self.stop()
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        key = self.select.values[0]
+        if self.has_current:
+            # Überschreib-Schutz: erst bestätigen
+            self._pending = key
+            self.confirm_btn.disabled = False
+            self.confirm_btn.label = f"Wechsel zu „{self._names.get(key, key)}“ bestätigen"[:80]
+            await interaction.response.edit_message(view=self)
+        else:
+            await self._apply(interaction, key)
+
+    async def _on_confirm(self, interaction: discord.Interaction) -> None:
+        if not self._pending:
+            await interaction.response.defer()
+            return
+        await self._apply(interaction, self._pending)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # JOIN CONFIRM MODAL (In-Game-Name eingeben)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class JoinConfirmModal(ui.Modal, title="Beitreten bestätigen"):
     ingame_name = ui.TextInput(
         label="Dein In-Game-Name",
-        placeholder="Dein Charakter-Name in Ragnarok",
         max_length=50,
     )
 
@@ -2368,6 +2499,12 @@ class JoinConfirmModal(ui.Modal, title="Beitreten bestätigen"):
         super().__init__()
         self.session_key = session_key
         self.cog         = cog
+        # Platzhalter spielabhängig (session_key = "{guild_id}:{user_id}")
+        try:
+            guild_id = int(session_key.split(":", 1)[0])
+        except (ValueError, IndexError):
+            guild_id = None
+        self.ingame_name.placeholder = get_char_placeholder(guild_id)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -2383,7 +2520,6 @@ class JoinConfirmModal(ui.Modal, title="Beitreten bestätigen"):
 class WaitlistJoinModal(ui.Modal, title="Warteliste beitreten"):
     ingame_name = ui.TextInput(
         label="Dein In-Game-Name",
-        placeholder="Dein Charakter-Name in Ragnarok",
         max_length=50,
     )
     class_input = ui.TextInput(
@@ -2397,6 +2533,8 @@ class WaitlistJoinModal(ui.Modal, title="Warteliste beitreten"):
         self.group     = group
         self.user_id   = user_id
         self.scheduler = scheduler
+        # Platzhalter spielabhängig (aus dem angewandten Preset der Guild)
+        self.ingame_name.placeholder = get_char_placeholder(group.get("guild_id"))
 
     async def on_submit(self, interaction: discord.Interaction):
         position = add_to_waitlist(

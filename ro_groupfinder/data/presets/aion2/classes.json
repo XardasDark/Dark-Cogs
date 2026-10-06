@@ -1,0 +1,58 @@
+[
+  {
+    "key":          "templer",
+    "name":         "Templer",
+    "emoji":        "🛡️",
+    "default_role": "tank",
+    "description":  "Schwer gepanzerter Nahkämpfer. Hält Aggro und schützt die Gruppe."
+  },
+  {
+    "key":          "gladiator",
+    "name":         "Gladiator",
+    "emoji":        "⚔️",
+    "default_role": "dd",
+    "description":  "Nahkampf-DD mit hoher Dauer-DPS."
+  },
+  {
+    "key":          "assassine",
+    "name":         "Assassine",
+    "emoji":        "🗡️",
+    "default_role": "dd",
+    "description":  "Schneller Burst-Nahkämpfer."
+  },
+  {
+    "key":          "jäger",
+    "name":         "Jäger",
+    "emoji":        "🏹",
+    "default_role": "dd",
+    "description":  "Fernkampf-DD mit Bogen."
+  },
+  {
+    "key":          "magier",
+    "name":         "Magier",
+    "emoji":        "🔮",
+    "default_role": "dd",
+    "description":  "Fernkampf-Magie mit hohem Schaden."
+  },
+  {
+    "key":          "beschwörer",
+    "name":         "Beschwörer",
+    "emoji":        "🐉",
+    "default_role": "dd",
+    "description":  "Fernkampf-DD mit beschworenen Geistern/Pets."
+  },
+  {
+    "key":          "kleriker",
+    "name":         "Kleriker",
+    "emoji":        "💚",
+    "default_role": "heiler",
+    "description":  "Primärer Heiler der Gruppe."
+  },
+  {
+    "key":          "kantor",
+    "name":         "Kantor",
+    "emoji":        "✨",
+    "default_role": "support",
+    "description":  "Buff-Support mit Nahkampf-Anteil."
+  }
+]

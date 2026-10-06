@@ -1,6 +1,6 @@
 """
-RO Group Finder – Red-DiscordBot Cog
-Ragnarok Zero: Global | Gruppen-System
+Group Finder – Red-DiscordBot Cog
+Spielübergreifendes Gruppen-System (Spiel-Preset pro Server wählbar)
 """
 
 from redbot.core.bot import Red
