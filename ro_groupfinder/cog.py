@@ -2604,17 +2604,42 @@ class EditCommentModal(ui.Modal, title="Kommentar ändern"):
 
 
 class EditLevelModal(ui.Modal, title="Level-Anforderung ändern"):
-    min_lvl = ui.TextInput(label="Mindest-Level", placeholder="50", max_length=3)
-    max_lvl = ui.TextInput(label="Max-Level (leer = nur Mindest-Level)", max_length=3, required=False)
+    min_lvl = ui.TextInput(
+        label="Mindest-Level (leer = Anforderung entfernen)",
+        placeholder="z.B. 50 – leer lassen entfernt das Level",
+        max_length=3,
+        required=False,
+    )
+    max_lvl = ui.TextInput(
+        label="Max-Level (leer = nur Mindest-Level)",
+        max_length=3,
+        required=False,
+    )
 
     def __init__(self, group: Dict, cog: ROGroupFinder):
         super().__init__()
         self.group = group
         self.cog   = cog
+        # Aktuelle Werte vorbefüllen
+        if group.get("level_min") is not None:
+            self.min_lvl.default = str(group["level_min"])
+        if group.get("level_max") is not None:
+            self.max_lvl.default = str(group["level_max"])
 
     async def on_submit(self, interaction: discord.Interaction):
+        min_raw = self.min_lvl.value.strip()
+
+        # Leeres Mindest-Level → Anforderung komplett entfernen
+        if not min_raw:
+            await self.cog.apply_group_edit(
+                interaction, self.group,
+                {"level_mode": "none", "level_min": None, "level_max": None},
+            )
+            await interaction.response.send_message("✅ Level-Anforderung entfernt.", ephemeral=True)
+            return
+
         try:
-            level_min = int(self.min_lvl.value.strip())
+            level_min = int(min_raw)
         except ValueError:
             await interaction.response.send_message("❌ Ungültiger Level-Wert.", ephemeral=True)
             return
