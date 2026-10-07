@@ -2619,11 +2619,12 @@ class EditLevelModal(ui.Modal, title="Level-Anforderung ändern"):
             await interaction.response.send_message("❌ Ungültiger Level-Wert.", ephemeral=True)
             return
 
-        changes = {"level_min": level_min}
+        changes = {"level_min": level_min, "level_mode": "min", "level_max": None}
         max_val = self.max_lvl.value.strip()
         if max_val:
             try:
                 changes["level_max"] = int(max_val)
+                changes["level_mode"] = "range"
             except ValueError:
                 pass
 

@@ -1141,11 +1141,11 @@ def update_group_fields(group: Dict, **kwargs) -> Dict:
     """
     Aktualisiert beliebige Felder einer Gruppe.
     Erlaubte Felder: goal, goal_custom, comment, datetime,
-                     recurrence, level_min, level_max, requirements
+                     recurrence, level_mode, level_min, level_max, requirements
     """
     allowed = {
         "goal", "goal_custom", "comment",
-        "datetime", "recurrence", "level_min", "level_max", "requirements",
+        "datetime", "recurrence", "level_mode", "level_min", "level_max", "requirements",
     }
     for key, value in kwargs.items():
         if key in allowed:
