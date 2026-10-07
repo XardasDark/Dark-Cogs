@@ -332,6 +332,7 @@ class GroupScheduler:
                 comment        = group.get("comment"),
                 level_min      = group.get("level_min"),
                 level_max      = group.get("level_max"),
+                requirements   = group.get("requirements"),
                 is_generic     = group.get("is_generic", False),
             )
 

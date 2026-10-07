@@ -22,7 +22,7 @@ from .constants import (
 from .data_manager import (
     load_classes, get_open_slots, get_filled_slots,
     is_user_in_group, is_user_in_waitlist,
-    format_datetime_display, resolve_goal_name,
+    format_datetime_display, resolve_goal_name, get_requirement_defs,
 )
 
 
@@ -69,6 +69,18 @@ def build_group_embed(group: Dict) -> discord.Embed:
     # ── Level-Anforderung ─────────────────────────────────────────────────────
     level_str = _level_display(group)
     embed.add_field(name="🔢 Level",        value=level_str,                   inline=True)
+
+    # ── Zusatz-Anforderungen (spielspezifisch, z. B. Gear Score / Kampfkraft) ──
+    reqs = group.get("requirements") or {}
+    for d in get_requirement_defs(group.get("guild_id")):
+        val = reqs.get(d["key"])
+        if val is not None:
+            emoji = d.get("emoji", "")
+            embed.add_field(
+                name=f"{emoji} {d['name']}".strip(),
+                value=f"ab {val:,}".replace(",", "."),
+                inline=True,
+            )
 
     # ── Datum & Zeit ──────────────────────────────────────────────────────────
     dt_display = format_datetime_display(group.get("datetime"), group.get("guild_id"))
@@ -417,6 +429,11 @@ def build_edit_view(group: Dict) -> ui.View:
         discord.SelectOption(label="📊 Level-Anforderung ändern", value="level"),
         discord.SelectOption(label="🎯 Ziel ändern",             value="goal"),
     ]
+    # Zusatz-Anforderungen nur anbieten, wenn das Spiel welche definiert
+    if get_requirement_defs(group.get("guild_id")):
+        edit_options.append(
+            discord.SelectOption(label="⚙️ Anforderungen (z. B. Gear Score)", value="requirements")
+        )
     edit_sel = ui.Select(
         placeholder="Was möchtest du bearbeiten?",
         options=edit_options,

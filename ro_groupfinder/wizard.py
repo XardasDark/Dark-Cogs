@@ -25,7 +25,7 @@ from typing import Optional, List, Dict, Callable
 from datetime import datetime, timezone
 import re
 
-from .data_manager import load_goals, load_classes, build_slot, stored_datetime_to_local_str, get_char_placeholder
+from .data_manager import load_goals, load_classes, build_slot, stored_datetime_to_local_str, get_char_placeholder, get_requirement_defs
 from .constants import (
     ROLE_TYPES, RECURRENCE_OPTIONS, WIZARD_STEPS,
     SLOT_TYPE_ROLE, SLOT_TYPE_CLASS, SLOT_TYPE_FREE,
@@ -104,10 +104,13 @@ class WizardState:
     # Schritt 7 – Kommentar
     comment: Optional[str] = None
 
-    # Schritt 8 – Level
+    # Schritt 8 – Anforderungen
     level_mode: str = "none"       # "none" | "min" | "range"
     level_min:  Optional[int] = None
     level_max:  Optional[int] = None
+    # Spielspezifische Zusatz-Anforderungen als Mindestwerte (z. B.
+    # {"gearscore": 4500, "kampfkraft": 77000}). Nur gesetzte Keys.
+    requirements: Dict[str, int] = field(default_factory=dict)
 
     step_index: int = 0
 
@@ -162,6 +165,17 @@ class WizardState:
             max_part = str(self.level_max) if self.level_max is not None else "?"
             return f"Level {self.level_min}–{max_part}"
         return "–"
+
+    def requirements_display(self) -> str:
+        """Gesetzte Zusatz-Anforderungen als mehrzeiligen Text, oder '' wenn keine."""
+        defs = get_requirement_defs(self.guild_id)
+        lines = []
+        for d in defs:
+            val = self.requirements.get(d["key"])
+            if val is not None:
+                emoji = d.get("emoji", "")
+                lines.append(f"{emoji} {d['name']}: ab {val:,}".replace(",", "."))
+        return "\n".join(lines)
 
     # ── Navigation ───────────────────────────────────────────────────────────
 
@@ -386,6 +400,9 @@ def build_state_from_group(
     state.level_min  = group.get("level_min")
     state.level_max  = group.get("level_max")
 
+    # ── Zusatz-Anforderungen (GS/Kampfkraft, spielspezifisch) ──────────────────
+    state.requirements = dict(group.get("requirements") or {})
+
     # ── Direkt in der Vorschau starten ────────────────────────────────────────
     state.step_index = WIZARD_STEPS.index("preview")
 
@@ -569,10 +586,15 @@ def _build_comment_step(session: WizardSession):
 
 def _build_level_step(session: WizardSession):
     s = session.state
-    desc = "**Level-Anforderung für die Gruppe? (Optional)**\n"
-    desc += "Dient nur als Information – Spieler müssen ihr Level nicht angeben.\n\n"
-    desc += f"✅ Aktuell: **{s.level_display()}**"
-    return _base_embed(s, "Level-Anforderung", desc), LevelView(session)
+    has_reqs = bool(get_requirement_defs(s.guild_id))
+    title = "Anforderungen" if has_reqs else "Level-Anforderung"
+    desc = f"**{title} für die Gruppe? (Optional)**\n"
+    desc += "Dient nur als Information – Spieler müssen nichts angeben.\n\n"
+    desc += f"🔢 Level: **{s.level_display()}**"
+    if has_reqs:
+        req_txt = s.requirements_display()
+        desc += "\n" + (req_txt if req_txt else "⚙️ Keine Zusatz-Anforderungen gesetzt")
+    return _base_embed(s, title, desc), LevelView(session)
 
 
 def _build_preview_step(session: WizardSession):
@@ -587,6 +609,9 @@ def _build_preview_step(session: WizardSession):
     embed.add_field(name="🎯 Ziel",          value=s.goal_display,           inline=True)
     embed.add_field(name="👥 Spieler",        value=str(s.player_count),      inline=True)
     embed.add_field(name="📊 Level",          value=s.level_display(),        inline=True)
+    req_txt = s.requirements_display()
+    if req_txt:
+        embed.add_field(name="⚙️ Anforderungen", value=req_txt, inline=True)
     embed.add_field(
         name="📅 Datum & Zeit",
         value=s.dt_str or "Offen / Zeitlos",
@@ -1319,6 +1344,10 @@ class LevelView(_BaseWizardView):
             lbl = "🔢 Level eingeben"
             self.add_item(_OpenModalBtn(lbl, LevelModal(session), row=1))
 
+        # Spielspezifische Zusatz-Anforderungen (z. B. Gear Score, Kampfkraft)
+        if get_requirement_defs(session.state.guild_id):
+            self.add_item(_OpenModalBtn("⚙️ Weitere Werte (z. B. Gear Score)", RequirementsModal(session), row=2))
+
         self.add_nav(can_back=True, can_next=True)
 
 
@@ -1369,6 +1398,43 @@ class LevelModal(ui.Modal, title="Level-Anforderung"):
         else:
             s.level_max  = None
             s.level_mode = "min"
+        await self.session.refresh_after_modal(interaction)
+
+
+class RequirementsModal(ui.Modal, title="Weitere Anforderungen"):
+    """Dynamisches Modal für spielspezifische Mindestwerte (z. B. GS, Kampfkraft).
+
+    Pro Requirement-Def ein optionales Zahlenfeld. Leer → Wert entfernen,
+    gültige Zahl → setzen, ungültige Eingabe → unverändert lassen.
+    """
+
+    def __init__(self, session: WizardSession):
+        super().__init__()
+        self.session = session
+        self._inputs = []  # Liste von (key, TextInput)
+        for d in get_requirement_defs(session.state.guild_id)[:5]:
+            current = session.state.requirements.get(d["key"])
+            ti = ui.TextInput(
+                label=d["name"][:45],
+                placeholder=d.get("placeholder", "")[:100],
+                default=str(current) if current is not None else None,
+                max_length=12,
+                required=False,
+            )
+            self.add_item(ti)
+            self._inputs.append((d["key"], ti))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        reqs = self.session.state.requirements
+        for key, ti in self._inputs:
+            raw = ti.value.strip().replace(".", "").replace(",", "")
+            if not raw:
+                reqs.pop(key, None)
+                continue
+            try:
+                reqs[key] = int(raw)
+            except ValueError:
+                pass  # ungültig → bestehenden Wert unverändert lassen
         await self.session.refresh_after_modal(interaction)
 
 

@@ -1,4 +1,8 @@
 {
   "game_name":        "Aion 2",
-  "char_placeholder": "Dein Charakter-Name in Aion 2"
+  "char_placeholder": "Dein Charakter-Name in Aion 2",
+  "requirements": [
+    { "key": "gearscore",  "name": "Gear Score", "emoji": "🛡️", "placeholder": "z.B. 1400" },
+    { "key": "kampfkraft", "name": "Kampfkraft", "emoji": "💥", "placeholder": "z.B. 77000" }
+  ]
 }

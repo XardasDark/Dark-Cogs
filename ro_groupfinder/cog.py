@@ -88,6 +88,7 @@ from .data_manager import (
     get_game,
     get_game_name,
     get_char_placeholder,
+    get_requirement_defs,
     get_user_notif_prefs,
     set_user_notif_prefs,
     get_user_subscription,
@@ -279,6 +280,7 @@ class ROGroupFinder(commands.Cog):
             comment        = state.comment,
             level_min      = state.level_min,
             level_max      = state.level_max,
+            requirements   = state.requirements,
         )
         group["level_mode"] = state.level_mode
 
@@ -1591,11 +1593,12 @@ class ROGroupFinder(commands.Cog):
 
         field = interaction.data["values"][0]
         modal_map = {
-            "datetime":   EditDateTimeModal,
-            "recurrence": None,  # Select-basiert, wird separat behandelt
-            "comment":    EditCommentModal,
-            "level":      EditLevelModal,
-            "goal":       EditGoalModal,
+            "datetime":     EditDateTimeModal,
+            "recurrence":   None,  # Select-basiert, wird separat behandelt
+            "comment":      EditCommentModal,
+            "level":        EditLevelModal,
+            "goal":         EditGoalModal,
+            "requirements": EditRequirementsModal,
         }
 
         modal_cls = modal_map.get(field)
@@ -1996,6 +1999,7 @@ class ROGroupFinder(commands.Cog):
             comment        = snapshot.get("comment"),
             level_min      = snapshot.get("level_min"),
             level_max      = snapshot.get("level_max"),
+            requirements   = snapshot.get("requirements"),
         )
         new_group["level_mode"] = snapshot.get("level_mode", "none")
 
@@ -2625,6 +2629,47 @@ class EditLevelModal(ui.Modal, title="Level-Anforderung ändern"):
 
         await self.cog.apply_group_edit(interaction, self.group, changes)
         await interaction.response.send_message("✅ Level-Anforderung aktualisiert.", ephemeral=True)
+
+
+class EditRequirementsModal(ui.Modal, title="Anforderungen ändern"):
+    """Dynamisches Edit-Modal für spielspezifische Mindestwerte (z. B. GS, Kampfkraft).
+
+    Ein optionales Zahlenfeld pro Requirement-Def der Guild. Leer → Wert entfernen,
+    gültige Zahl → setzen, ungültige Eingabe → bisherigen Wert beibehalten.
+    """
+
+    def __init__(self, group: Dict, cog: ROGroupFinder):
+        super().__init__()
+        self.group = group
+        self.cog   = cog
+        self._inputs = []  # Liste von (key, TextInput)
+        current = group.get("requirements") or {}
+        for d in get_requirement_defs(group.get("guild_id"))[:5]:
+            val = current.get(d["key"])
+            ti = ui.TextInput(
+                label=d["name"][:45],
+                placeholder=d.get("placeholder", "")[:100],
+                default=str(val) if val is not None else None,
+                max_length=12,
+                required=False,
+            )
+            self.add_item(ti)
+            self._inputs.append((d["key"], ti))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        reqs = dict(self.group.get("requirements") or {})
+        for key, ti in self._inputs:
+            raw = ti.value.strip().replace(".", "").replace(",", "")
+            if not raw:
+                reqs.pop(key, None)
+                continue
+            try:
+                reqs[key] = int(raw)
+            except ValueError:
+                pass
+
+        await self.cog.apply_group_edit(interaction, self.group, {"requirements": reqs})
+        await interaction.response.send_message("✅ Anforderungen aktualisiert.", ephemeral=True)
 
 
 class EditGoalModal(ui.Modal, title="Ziel ändern"):

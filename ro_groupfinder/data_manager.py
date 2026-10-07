@@ -287,6 +287,7 @@ def load_preset(preset_key: str) -> Optional[Dict]:
         "game_key":         preset_key,
         "game_name":        meta.get("game_name", preset_key),
         "char_placeholder": meta.get("char_placeholder", DEFAULT_CHAR_PLACEHOLDER),
+        "requirements":     meta.get("requirements", []),
         "classes":          _read_bundled_json(os.path.join(pdir, "classes.json"), []),
         "goals":            _read_bundled_json(os.path.join(pdir, "goals.json"), []),
     }
@@ -360,6 +361,15 @@ def get_game_name(guild_id: Optional[int]) -> str:
 def get_char_placeholder(guild_id: Optional[int]) -> str:
     """Platzhaltertext für die In-Game-Namen-Eingabe einer Guild (mit Fallback)."""
     return _guild_game(guild_id).get("char_placeholder", DEFAULT_CHAR_PLACEHOLDER)
+
+
+def get_requirement_defs(guild_id: Optional[int]) -> List[Dict]:
+    """
+    Spielspezifische Zusatz-Anforderungen der Guild (z. B. Gear Score, Kampfkraft).
+    Jeder Eintrag: { "key", "name", "emoji", "placeholder" }. Leer, wenn das Spiel
+    keine definiert (z. B. Ragnarok) → die Felder erscheinen dann nirgends.
+    """
+    return list(_guild_game(guild_id).get("requirements", []))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -766,6 +776,7 @@ def create_group(
     comment:        Optional[str],
     level_min:      Optional[int],
     level_max:      Optional[int],
+    requirements:   Optional[Dict] = None,
     is_generic:     bool = False,
 ) -> Dict:
     """
@@ -803,6 +814,9 @@ def create_group(
         "comment":             comment,
         "level_min":           level_min,
         "level_max":           level_max,
+        # Spielspezifische Zusatz-Anforderungen als Mindestwerte, z. B.
+        # {"gearscore": 4500, "kampfkraft": 77000}. Nur gesetzte Keys.
+        "requirements":        dict(requirements) if requirements else {},
         "status":              "open",
         "created_at":          now.isoformat(),
         # Ablauf basiert auf Inaktivität: expires_at = last_activity_at + cleanup_days.
@@ -1127,11 +1141,11 @@ def update_group_fields(group: Dict, **kwargs) -> Dict:
     """
     Aktualisiert beliebige Felder einer Gruppe.
     Erlaubte Felder: goal, goal_custom, comment, datetime,
-                     recurrence, level_min, level_max
+                     recurrence, level_min, level_max, requirements
     """
     allowed = {
         "goal", "goal_custom", "comment",
-        "datetime", "recurrence", "level_min", "level_max",
+        "datetime", "recurrence", "level_min", "level_max", "requirements",
     }
     for key, value in kwargs.items():
         if key in allowed:
