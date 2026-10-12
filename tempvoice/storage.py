@@ -85,13 +85,13 @@ class TempVoiceStore:
     # ── Defaults ───────────────────────────────────────────────────────────────
 
     async def get_defaults(self, guild: discord.Guild) -> Dict[str, Any]:
-        stored = await self.config.guild(guild).defaults()
+        stored = await self.config.guild(guild).channel_defaults()
         base = default_settings()
         base.update(stored or {})
         return base
 
     async def update_defaults(self, guild: discord.Guild, **changes: Any) -> None:
-        async with self.config.guild(guild).defaults() as defaults:
+        async with self.config.guild(guild).channel_defaults() as defaults:
             defaults.update(changes)
 
     # ── Temporäre Channel ───────────────────────────────────────────────────────

@@ -48,7 +48,7 @@ class TempVoice(commands.Cog):
             category_id=None,
             interface_channel_id=None,
             interface_message_id=None,
-            defaults=default_settings(),
+            channel_defaults=default_settings(),
             temp_channels={},
         )
         self.config.register_member(profile=None)
@@ -152,9 +152,32 @@ class TempVoice(commands.Cog):
 
         try:
             await member.move_to(channel, reason="TempVoice: in eigenen Channel verschoben")
+        except discord.Forbidden:
+            # Mir fehlt das Recht „Mitglieder verschieben" → Channel behalten & Besitzer informieren
+            await self._notify_cannot_move(member, channel)
         except discord.HTTPException:
             # User hat den Voice sofort wieder verlassen → leeren Channel entfernen
             self._schedule_empty_check(channel)
+
+    async def _notify_cannot_move(self, member: discord.Member,
+                                  channel: discord.VoiceChannel) -> None:
+        """Weist den Besitzer darauf hin, dass dem Bot „Mitglieder verschieben" fehlt."""
+        hinweis = (
+            f"⚠️ Ich konnte dich nicht automatisch in deinen neuen Channel verschieben, "
+            f"weil mir die Berechtigung **Mitglieder verschieben** fehlt.\n"
+            f"Bitte tritt {channel.mention} **manuell** bei. Ein Admin kann dem Bot dieses "
+            f"Recht geben, dann klappt es künftig automatisch."
+        )
+        # Bevorzugt in den Text-Chat des neuen Voice-Channels, sonst per DM
+        try:
+            await channel.send(f"{member.mention} {hinweis}")
+            return
+        except discord.HTTPException:
+            pass
+        try:
+            await member.send(hinweis)
+        except discord.HTTPException:
+            pass
 
     def _schedule_empty_check(self, channel: discord.VoiceChannel) -> None:
         if channel.id in self._delete_tasks:
