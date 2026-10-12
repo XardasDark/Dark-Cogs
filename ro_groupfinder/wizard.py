@@ -25,7 +25,8 @@ from typing import Optional, List, Dict, Callable
 from datetime import datetime, timezone
 import re
 
-from .data_manager import load_goals, load_classes, build_slot, stored_datetime_to_local_str, get_char_placeholder, get_requirement_defs
+from .data_manager import load_goals, load_classes, build_slot, stored_datetime_to_local_str, get_char_placeholder, get_requirement_defs, get_max_players
+from .group_embed import add_chunked_field
 from .constants import (
     ROLE_TYPES, RECURRENCE_OPTIONS, WIZARD_STEPS,
     SLOT_TYPE_ROLE, SLOT_TYPE_CLASS, SLOT_TYPE_FREE,
@@ -633,11 +634,7 @@ def _build_preview_step(session: WizardSession):
         else:
             slot_lines.append(f"{slot['emoji']} {slot['display_name']}: *Offen*")
 
-    embed.add_field(
-        name=f"🗂️ Slots ({len(slots)})",
-        value="\n".join(slot_lines) or "–",
-        inline=False,
-    )
+    add_chunked_field(embed, f"🗂️ Slots ({len(slots)})", slot_lines)
     if s.comment:
         embed.add_field(name="💬 Kommentar", value=s.comment, inline=False)
 
@@ -803,13 +800,14 @@ class GoalCustomModal(ui.Modal, title="Eigenes Ziel eingeben"):
 class PlayerCountView(_BaseWizardView):
     def __init__(self, session: WizardSession):
         super().__init__(session)
+        max_players = get_max_players(session.state.guild_id)
         options = [
             discord.SelectOption(
                 label=f"{i} Spieler",
                 value=str(i),
                 default=(session.state.player_count == i),
             )
-            for i in range(2, 13)
+            for i in range(2, max_players + 1)
         ]
         self.add_item(_PlayerCountSelect(session, options))
         self.add_nav(can_back=True, can_next=session.state.player_count > 0)

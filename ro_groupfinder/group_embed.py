@@ -90,10 +90,10 @@ def build_group_embed(group: Dict) -> discord.Embed:
 
     # ── Slots ─────────────────────────────────────────────────────────────────
     slot_lines = _build_slot_lines(group)
-    embed.add_field(
-        name=f"🗂️ Slots ({_count_filled(group)}/{group.get('player_count', 0)})",
-        value="\n".join(slot_lines) or "–",
-        inline=False,
+    add_chunked_field(
+        embed,
+        f"🗂️ Slots ({_count_filled(group)}/{group.get('player_count', 0)})",
+        slot_lines,
     )
 
     # ── Warteschlange ─────────────────────────────────────────────────────────
@@ -104,11 +104,7 @@ def build_group_embed(group: Dict) -> discord.Embed:
             + (f" ({w['class_display']})" if w.get("class_display") else "")
             for i, w in enumerate(waitlist)
         ]
-        embed.add_field(
-            name=f"⏳ Warteliste ({len(waitlist)})",
-            value="\n".join(wl_lines),
-            inline=False,
-        )
+        add_chunked_field(embed, f"⏳ Warteliste ({len(waitlist)})", wl_lines)
 
     # ── Kommentar ─────────────────────────────────────────────────────────────
     comment = group.get("comment")
@@ -455,6 +451,38 @@ def build_edit_view(group: Dict) -> ui.View:
 # ─────────────────────────────────────────────────────────────────────────────
 # INTERNE HILFSFUNKTIONEN
 # ─────────────────────────────────────────────────────────────────────────────
+
+def add_chunked_field(embed: discord.Embed, base_name: str, lines: List[str], inline: bool = False) -> None:
+    """
+    Fügt eine Liste von Zeilen als ein oder mehrere Embed-Felder hinzu, sodass kein
+    Feldwert das Discord-Limit von 1024 Zeichen überschreitet. Nötig für große
+    Gruppen (z. B. 20er-Korps), bei denen die Slot-/Wartelisten-Zeilen sonst das
+    Limit sprengen und Discord das Embed komplett ablehnt.
+
+    Das erste Feld trägt `base_name`, Folge-Felder einen unsichtbaren Namen
+    (Zero-Width-Space), damit sie optisch als Fortsetzung erscheinen.
+    """
+    if not lines:
+        embed.add_field(name=base_name, value="–", inline=inline)
+        return
+
+    chunks: List[str] = []
+    cur: List[str] = []
+    cur_len = 0
+    for line in lines:
+        add_len = len(line) + (1 if cur else 0)  # +1 für das \n
+        if cur and cur_len + add_len > 1024:
+            chunks.append("\n".join(cur))
+            cur, cur_len = [line], len(line)
+        else:
+            cur.append(line)
+            cur_len += add_len
+    if cur:
+        chunks.append("\n".join(cur))
+
+    for idx, chunk in enumerate(chunks):
+        embed.add_field(name=base_name if idx == 0 else "​", value=chunk, inline=inline)
+
 
 def _build_slot_lines(group: Dict) -> List[str]:
     """Erstellt die Slot-Zeilen für das Embed."""

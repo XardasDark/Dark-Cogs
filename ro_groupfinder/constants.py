@@ -132,6 +132,13 @@ DEFAULT_TIMEZONE                 = "Europe/Berlin"
 DEFAULT_GAME_KEY                 = "ragnarok_zero"   # Preset-Ordner unter data/presets/
 DEFAULT_CHAR_PLACEHOLDER         = "Dein In-Game-Name"
 
+# Maximale Gruppengröße pro Spiel (im Preset via meta.json "max_players"
+# überschreibbar). Hart gedeckelt auf 25, da Discord-Auswahlmenüs (Slot-/
+# Mitglieder-Selects) nicht mehr als 25 Optionen erlauben.
+DEFAULT_MAX_PLAYERS              = 12
+MAX_PLAYERS_HARD_CAP             = 25
+MIN_PLAYERS                      = 2
+
 # Wie lange ein Snapshot einer abgelaufenen Gruppe für "Erneut suchen" aufbewahrt wird.
 EXPIRED_SNAPSHOT_RETENTION_DAYS  = 30
 

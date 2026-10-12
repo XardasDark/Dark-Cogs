@@ -43,6 +43,9 @@ from .constants import (
     DEFAULT_TIMEZONE,
     DEFAULT_GAME_KEY,
     DEFAULT_CHAR_PLACEHOLDER,
+    DEFAULT_MAX_PLAYERS,
+    MAX_PLAYERS_HARD_CAP,
+    MIN_PLAYERS,
     EXPIRED_SNAPSHOT_RETENTION_DAYS,
     GROUP_STATUS,
     DEFAULT_NOTIFICATION_PREFS,
@@ -287,6 +290,7 @@ def load_preset(preset_key: str) -> Optional[Dict]:
         "game_key":         preset_key,
         "game_name":        meta.get("game_name", preset_key),
         "char_placeholder": meta.get("char_placeholder", DEFAULT_CHAR_PLACEHOLDER),
+        "max_players":      meta.get("max_players", DEFAULT_MAX_PLAYERS),
         "requirements":     meta.get("requirements", []),
         "classes":          _read_bundled_json(os.path.join(pdir, "classes.json"), []),
         "goals":            _read_bundled_json(os.path.join(pdir, "goals.json"), []),
@@ -361,6 +365,20 @@ def get_game_name(guild_id: Optional[int]) -> str:
 def get_char_placeholder(guild_id: Optional[int]) -> str:
     """Platzhaltertext für die In-Game-Namen-Eingabe einer Guild (mit Fallback)."""
     return _guild_game(guild_id).get("char_placeholder", DEFAULT_CHAR_PLACEHOLDER)
+
+
+def get_max_players(guild_id: Optional[int]) -> int:
+    """
+    Maximale Gruppengröße der Guild (aus dem Spiel-Preset, Default 12).
+    Immer auf [MIN_PLAYERS, MAX_PLAYERS_HARD_CAP] begrenzt – der harte Deckel (25)
+    schützt die Discord-Auswahlmenüs (Slot-/Mitglieder-Selects), die nicht mehr als
+    25 Optionen zulassen.
+    """
+    try:
+        val = int(_guild_game(guild_id).get("max_players", DEFAULT_MAX_PLAYERS))
+    except (TypeError, ValueError):
+        val = DEFAULT_MAX_PLAYERS
+    return max(MIN_PLAYERS, min(val, MAX_PLAYERS_HARD_CAP))
 
 
 def get_requirement_defs(guild_id: Optional[int]) -> List[Dict]:
