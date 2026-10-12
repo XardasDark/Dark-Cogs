@@ -1,0 +1,23 @@
+{
+    "name": "TempVoice",
+    "short": "Temporäre Voice-Channel, die User selbst erstellen & steuern.",
+    "description": "Richte einen \"Channel erstellen\"-Voice-Channel ein: Betritt ihn ein Mitglied, erstellt der Bot automatisch einen eigenen temporären Voice-Channel und macht das Mitglied zum Besitzer. Über ein festes Steuer-Panel (deutsche Buttons) kann der Besitzer Name, Mitglieder-Limit, Sperren, Verbergen, Erlauben, Rauswerfen, Übernehmen, Übertragen, Bitrate und Region anpassen. Leere Channel werden automatisch gelöscht. Die Einstellungen jedes Mitglieds werden in einem persönlichen Profil gemerkt und beim nächsten Channel wieder angewendet.",
+    "end_user_data_statement": "Dieser Cog speichert pro Mitglied ein Einstellungs-Profil (gewünschter Channel-Name, Limit, Bitrate, Region, Sperr-/Verbergen-Status sowie Listen erlaubter und gesperrter Nutzer-IDs) in der Bot-Datenbank, damit temporäre Channel beim nächsten Erstellen wiederhergestellt werden können. Das Profil kann jederzeit über `/tempvoice profil zuruecksetzen` gelöscht werden.",
+    "install_msg": "Danke für die Installation von TempVoice! 🔊 Starte mit `/tempvoice setup`, um Generator-Channel und Steuer-Panel automatisch anzulegen. Hilfe gibt es über `[p]help TempVoice`.",
+    "author": [
+        "XardasDark"
+    ],
+    "required_cogs": {},
+    "requirements": [],
+    "tags": [
+        "voice",
+        "temporary",
+        "tempvoice",
+        "utility",
+        "channel"
+    ],
+    "min_bot_version": "3.5.0",
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}
