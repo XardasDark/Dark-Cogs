@@ -53,8 +53,19 @@ BTN_DISMISS  = ("Wegschicken", "❌")
 # Wie lange (Sekunden) eine offene Anklopf-/Warteraum-Anfrage gültig bleibt
 KNOCK_REQUEST_TIMEOUT = 300
 
-# Name des optionalen Warteraum-Voice-Channels
-WAITING_ROOM_NAME = "⏳ Warteraum"
+# Name des optionalen Warteraum-Voice-Channels.
+# Leitet sich vom Namen des Haupt-Channels ab ({name}) und wird mitgezogen,
+# wenn der Haupt-Channel umbenannt wird.
+WAITING_ROOM_NAME          = "⏳ Warteraum"            # Fallback, falls kein Name vorhanden
+WAITING_ROOM_NAME_TEMPLATE = "⏳ Warteraum – {name}"
+
+
+def waiting_room_name(main_name: str) -> str:
+    """Baut den Warteraum-Namen aus dem Namen des Haupt-Channels (auf 100 Zeichen gekürzt)."""
+    main_name = (main_name or "").strip()
+    if not main_name:
+        return WAITING_ROOM_NAME
+    return WAITING_ROOM_NAME_TEMPLATE.format(name=main_name)[:MAX_CHANNEL_NAME]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VOICE-REGIONEN  (rtc_region-String → Anzeigename)

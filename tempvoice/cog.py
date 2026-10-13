@@ -455,7 +455,7 @@ class TempVoice(commands.Cog):
 
         try:
             waiting = await guild.create_voice_channel(
-                C.WAITING_ROOM_NAME, category=channel.category,
+                C.waiting_room_name(channel.name), category=channel.category,
                 reason="TempVoice: Warteraum erstellt")
         except discord.HTTPException:
             await interaction.response.send_message(

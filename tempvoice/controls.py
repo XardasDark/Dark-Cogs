@@ -81,6 +81,16 @@ async def rename(store, channel: discord.VoiceChannel, owner: discord.Member,
         raise ValueError("Der Name darf nicht leer sein.")
     await channel.edit(name=new_name, reason="TempVoice: Umbenennung durch Besitzer")
     await store.update_profile(owner, name=new_name)
+    # Warteraum-Namen mitziehen, falls vorhanden
+    wr_id = await store.get_waiting_room_id(channel.guild, channel.id)
+    if wr_id:
+        waiting = channel.guild.get_channel(wr_id)
+        if waiting is not None:
+            try:
+                await waiting.edit(name=C.waiting_room_name(new_name),
+                                   reason="TempVoice: Warteraum-Name angepasst")
+            except discord.HTTPException:
+                pass
     return f"✅ Channel heißt jetzt **{new_name}**."
 
 
