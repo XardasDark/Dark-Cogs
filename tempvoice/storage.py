@@ -2,15 +2,18 @@
 storage.py – Persistenz-Schicht über Reds Config
 
 Guild-Daten:
-  generator_ids        = [voice_channel_id, ...]   # "Join to Create"-Channel
-  category_id          = int | None                # Kategorie für neue Channel
+  generators           = {gen_id(str): {category_id, name, limit, bitrate,
+                                        region, locked, hidden}}
   interface_channel_id = int | None                # Textkanal mit dem Panel
   interface_message_id = int | None                # Panel-Nachricht
-  defaults             = {name, limit, bitrate, region, locked, hidden}
-  temp_channels        = {channel_id(str): {owner_id, created_at}}
+  temp_channels        = {channel_id(str): {owner_id, created_at,
+                                            generator_id, guests[], waiting_room_id}}
 
 Member-Daten (pro Server & Mitglied):
-  profile = {name, limit, bitrate, region, locked, hidden, permit[], reject[]} | None
+  profiles = {gen_id(str): {name?, limit?, bitrate?, region?, locked?, hidden?,
+                            permit?[], reject?[]}}
+             – Partial-Overrides je Generator; was nicht gesetzt ist, kommt aus
+               den Generator-Defaults.
 """
 
 from typing import Any, Dict, List, Optional
@@ -21,7 +24,7 @@ from . import constants as C
 
 
 def default_settings() -> Dict[str, Any]:
-    """Standard-Einstellungen für neue Channel (Guild-Defaults)."""
+    """Standard-Verhaltenswerte für neue Channel."""
     return {
         "name":    C.DEFAULT_NAME_TEMPLATE,
         "limit":   C.DEFAULT_LIMIT,
@@ -32,12 +35,11 @@ def default_settings() -> Dict[str, Any]:
     }
 
 
-def empty_profile() -> Dict[str, Any]:
-    """Frisches Mitglieds-Profil auf Basis der Standardwerte."""
-    prof = default_settings()
-    prof["permit"] = []
-    prof["reject"] = []
-    return prof
+def generator_defaults() -> Dict[str, Any]:
+    """Vollständige Standard-Konfiguration eines Generators (inkl. Kategorie)."""
+    cfg = default_settings()
+    cfg["category_id"] = None
+    return cfg
 
 
 class TempVoiceStore:
@@ -46,31 +48,46 @@ class TempVoiceStore:
     def __init__(self, config):
         self.config = config
 
-    # ── Generator-Channel ─────────────────────────────────────────────────────
+    # ── Generatoren (jeder mit eigenen Einstellungen) ───────────────────────────
+
+    async def all_generators(self, guild: discord.Guild) -> Dict[str, Dict[str, Any]]:
+        return await self.config.guild(guild).generators()
 
     async def get_generator_ids(self, guild: discord.Guild) -> List[int]:
-        return list(await self.config.guild(guild).generator_ids())
-
-    async def add_generator_id(self, guild: discord.Guild, channel_id: int) -> None:
-        async with self.config.guild(guild).generator_ids() as ids:
-            if channel_id not in ids:
-                ids.append(channel_id)
-
-    async def remove_generator_id(self, guild: discord.Guild, channel_id: int) -> None:
-        async with self.config.guild(guild).generator_ids() as ids:
-            if channel_id in ids:
-                ids.remove(channel_id)
+        return [int(gid) for gid in (await self.config.guild(guild).generators()).keys()]
 
     async def is_generator(self, guild: discord.Guild, channel_id: int) -> bool:
-        return channel_id in await self.config.guild(guild).generator_ids()
+        return str(channel_id) in await self.config.guild(guild).generators()
 
-    # ── Kategorie & Interface ──────────────────────────────────────────────────
+    async def get_generator(self, guild: discord.Guild, channel_id: int) -> Optional[Dict[str, Any]]:
+        """Einstellungen eines Generators (vollständig mit Defaults aufgefüllt)."""
+        gens = await self.config.guild(guild).generators()
+        raw = gens.get(str(channel_id))
+        if raw is None:
+            return None
+        cfg = generator_defaults()
+        cfg.update(raw)
+        return cfg
 
-    async def get_category_id(self, guild: discord.Guild) -> Optional[int]:
-        return await self.config.guild(guild).category_id()
+    async def add_generator(self, guild: discord.Guild, channel_id: int,
+                            **settings: Any) -> None:
+        cfg = generator_defaults()
+        cfg.update({k: v for k, v in settings.items() if v is not None})
+        async with self.config.guild(guild).generators() as gens:
+            gens[str(channel_id)] = cfg
 
-    async def set_category_id(self, guild: discord.Guild, category_id: Optional[int]) -> None:
-        await self.config.guild(guild).category_id.set(category_id)
+    async def update_generator(self, guild: discord.Guild, channel_id: int,
+                               **changes: Any) -> None:
+        async with self.config.guild(guild).generators() as gens:
+            cfg = gens.get(str(channel_id))
+            if cfg is not None:
+                cfg.update({k: v for k, v in changes.items() if v is not None})
+
+    async def remove_generator(self, guild: discord.Guild, channel_id: int) -> None:
+        async with self.config.guild(guild).generators() as gens:
+            gens.pop(str(channel_id), None)
+
+    # ── Interface ───────────────────────────────────────────────────────────────
 
     async def get_interface(self, guild: discord.Guild) -> tuple:
         g = self.config.guild(guild)
@@ -81,18 +98,6 @@ class TempVoiceStore:
         g = self.config.guild(guild)
         await g.interface_channel_id.set(channel_id)
         await g.interface_message_id.set(message_id)
-
-    # ── Defaults ───────────────────────────────────────────────────────────────
-
-    async def get_defaults(self, guild: discord.Guild) -> Dict[str, Any]:
-        stored = await self.config.guild(guild).channel_defaults()
-        base = default_settings()
-        base.update(stored or {})
-        return base
-
-    async def update_defaults(self, guild: discord.Guild, **changes: Any) -> None:
-        async with self.config.guild(guild).channel_defaults() as defaults:
-            defaults.update(changes)
 
     # ── Temporäre Channel ───────────────────────────────────────────────────────
 
@@ -108,9 +113,24 @@ class TempVoiceStore:
         return str(channel_id) in temps
 
     async def add_temp_channel(self, guild: discord.Guild, channel_id: int,
-                               owner_id: int, created_at: str) -> None:
+                               owner_id: int, created_at: str,
+                               generator_id: Optional[int] = None) -> None:
         async with self.config.guild(guild).temp_channels() as temps:
-            temps[str(channel_id)] = {"owner_id": owner_id, "created_at": created_at}
+            temps[str(channel_id)] = {
+                "owner_id": owner_id,
+                "created_at": created_at,
+                "generator_id": generator_id,
+            }
+
+    async def get_generator_id_for_channel(self, guild: discord.Guild,
+                                           channel_id: int) -> Optional[int]:
+        rec = await self.get_temp_channel(guild, channel_id)
+        return rec.get("generator_id") if rec else None
+
+    async def count_channels_for_generator(self, guild: discord.Guild,
+                                           generator_id: int) -> int:
+        temps = await self.config.guild(guild).temp_channels()
+        return sum(1 for rec in temps.values() if rec.get("generator_id") == generator_id)
 
     async def remove_temp_channel(self, guild: discord.Guild, channel_id: int) -> None:
         async with self.config.guild(guild).temp_channels() as temps:
@@ -171,36 +191,43 @@ class TempVoiceStore:
                 return int(cid), rec.get("owner_id")
         return None, None
 
-    # ── Mitglieds-Profil ─────────────────────────────────────────────────────────
+    # ── Mitglieds-Profil (Partial-Override je Generator) ──────────────────────────
 
-    async def get_profile(self, member: discord.Member) -> Optional[Dict[str, Any]]:
-        return await self.config.member(member).profile()
+    @staticmethod
+    def _gkey(generator_id: Optional[int]) -> str:
+        return str(generator_id) if generator_id is not None else "0"
 
-    async def save_profile(self, member: discord.Member, profile: Dict[str, Any]) -> None:
-        await self.config.member(member).profile.set(profile)
+    async def all_profiles(self, member: discord.Member) -> Dict[str, Dict[str, Any]]:
+        return await self.config.member(member).profiles()
 
-    async def update_profile(self, member: discord.Member, **changes: Any) -> Dict[str, Any]:
-        """Schreibt einzelne Felder ins Profil und gibt das aktualisierte Profil zurück."""
-        profile = await self.config.member(member).profile()
-        if profile is None:
-            profile = empty_profile()
-        profile.update(changes)
-        await self.config.member(member).profile.set(profile)
-        return profile
+    async def get_profile(self, member: discord.Member,
+                          generator_id: Optional[int]) -> Dict[str, Any]:
+        """Partial-Override des Mitglieds für diesen Generator (ggf. leeres Dict)."""
+        profiles = await self.config.member(member).profiles()
+        return dict(profiles.get(self._gkey(generator_id), {}))
 
-    async def clear_profile(self, member: discord.Member) -> None:
-        await self.config.member(member).profile.clear()
+    async def update_profile(self, member: discord.Member, generator_id: Optional[int],
+                             **changes: Any) -> Dict[str, Any]:
+        """Schreibt einzelne Felder in das Generator-Profil und gibt es (partial) zurück."""
+        key = self._gkey(generator_id)
+        async with self.config.member(member).profiles() as profiles:
+            profile = profiles.get(key, {})
+            profile.update(changes)
+            profiles[key] = profile
+            return dict(profile)
 
-    async def effective_settings(self, member: discord.Member,
-                                 guild: discord.Guild) -> Dict[str, Any]:
-        """Profil des Mitglieds oder – falls keins existiert – die Guild-Defaults.
+    async def clear_profiles(self, member: discord.Member) -> None:
+        await self.config.member(member).profiles.clear()
+
+    async def effective_settings(self, member: discord.Member, guild: discord.Guild,
+                                 generator_id: Optional[int]) -> Dict[str, Any]:
+        """Generator-Defaults, überlagert mit dem Partial-Override des Mitglieds.
         Immer inklusive permit/reject-Listen."""
-        profile = await self.get_profile(member)
-        if profile:
-            base = empty_profile()
-            base.update(profile)
-            return base
-        base = await self.get_defaults(guild)
+        gen_cfg = await self.get_generator(guild, generator_id) if generator_id else None
+        base = default_settings()
+        if gen_cfg:
+            base.update({k: gen_cfg[k] for k in base if k in gen_cfg})
         base["permit"] = []
         base["reject"] = []
+        base.update(await self.get_profile(member, generator_id))
         return base

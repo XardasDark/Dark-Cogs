@@ -80,7 +80,8 @@ async def rename(store, channel: discord.VoiceChannel, owner: discord.Member,
     if not new_name:
         raise ValueError("Der Name darf nicht leer sein.")
     await channel.edit(name=new_name, reason="TempVoice: Umbenennung durch Besitzer")
-    await store.update_profile(owner, name=new_name)
+    gen_id = await store.get_generator_id_for_channel(channel.guild, channel.id)
+    await store.update_profile(owner, gen_id, name=new_name)
     # Warteraum-Namen mitziehen, falls vorhanden
     wr_id = await store.get_waiting_room_id(channel.guild, channel.id)
     if wr_id:
@@ -99,7 +100,8 @@ async def set_limit(store, channel: discord.VoiceChannel, owner: discord.Member,
     if limit < 0 or limit > C.MAX_USER_LIMIT:
         raise ValueError(f"Das Limit muss zwischen 0 und {C.MAX_USER_LIMIT} liegen (0 = unbegrenzt).")
     await channel.edit(user_limit=limit, reason="TempVoice: Limit durch Besitzer")
-    await store.update_profile(owner, limit=limit)
+    gen_id = await store.get_generator_id_for_channel(channel.guild, channel.id)
+    await store.update_profile(owner, gen_id, limit=limit)
     return ("✅ Mitglieder-Limit **aufgehoben** (unbegrenzt)." if limit == 0
             else f"✅ Mitglieder-Limit auf **{limit}** gesetzt.")
 
@@ -110,7 +112,8 @@ async def toggle_lock(store, channel: discord.VoiceChannel, owner: discord.Membe
     ow.connect = False if locked_now else None
     await channel.set_permissions(channel.guild.default_role, overwrite=ow,
                                   reason="TempVoice: Sperren/Entsperren durch Besitzer")
-    await store.update_profile(owner, locked=locked_now)
+    gen_id = await store.get_generator_id_for_channel(channel.guild, channel.id)
+    await store.update_profile(owner, gen_id, locked=locked_now)
     return ("🔒 Channel **gesperrt** – andere können nicht mehr beitreten." if locked_now
             else "🔓 Channel **entsperrt** – andere können wieder beitreten.")
 
@@ -121,7 +124,8 @@ async def toggle_hide(store, channel: discord.VoiceChannel, owner: discord.Membe
     ow.view_channel = False if hidden_now else None
     await channel.set_permissions(channel.guild.default_role, overwrite=ow,
                                   reason="TempVoice: Verbergen/Zeigen durch Besitzer")
-    await store.update_profile(owner, hidden=hidden_now)
+    gen_id = await store.get_generator_id_for_channel(channel.guild, channel.id)
+    await store.update_profile(owner, gen_id, hidden=hidden_now)
     return ("👁️ Channel **verborgen** – andere sehen ihn nicht mehr." if hidden_now
             else "👁️ Channel wieder **sichtbar** für alle.")
 
@@ -131,14 +135,15 @@ async def permit(store, channel: discord.VoiceChannel, owner: discord.Member,
     """Gibt einem User/einer Rolle Zugang und entfernt ihn von der Sperrliste."""
     await channel.set_permissions(target, view_channel=True, connect=True,
                                   reason="TempVoice: Zugang erlaubt durch Besitzer")
-    profile = await store.update_profile(owner)
-    permit_ids: List[int] = profile.get("permit", [])
-    reject_ids: List[int] = profile.get("reject", [])
+    gen_id = await store.get_generator_id_for_channel(channel.guild, channel.id)
+    profile = await store.get_profile(owner, gen_id)
+    permit_ids: List[int] = list(profile.get("permit", []))
+    reject_ids: List[int] = list(profile.get("reject", []))
     if target.id not in permit_ids:
         permit_ids.append(target.id)
     if target.id in reject_ids:
         reject_ids.remove(target.id)
-    await store.update_profile(owner, permit=permit_ids, reject=reject_ids)
+    await store.update_profile(owner, gen_id, permit=permit_ids, reject=reject_ids)
     return f"✅ {target.mention} darf diesen Channel jetzt betreten."
 
 
@@ -155,14 +160,15 @@ async def kick(store, channel: discord.VoiceChannel, owner: discord.Member,
             await target.move_to(None, reason="TempVoice: Rauswurf durch Besitzer")
         except discord.HTTPException:
             pass
-    profile = await store.update_profile(owner)
-    permit_ids: List[int] = profile.get("permit", [])
-    reject_ids: List[int] = profile.get("reject", [])
+    gen_id = await store.get_generator_id_for_channel(channel.guild, channel.id)
+    profile = await store.get_profile(owner, gen_id)
+    permit_ids: List[int] = list(profile.get("permit", []))
+    reject_ids: List[int] = list(profile.get("reject", []))
     if target.id not in reject_ids:
         reject_ids.append(target.id)
     if target.id in permit_ids:
         permit_ids.remove(target.id)
-    await store.update_profile(owner, permit=permit_ids, reject=reject_ids)
+    await store.update_profile(owner, gen_id, permit=permit_ids, reject=reject_ids)
     return f"🚫 {target.mention} wurde rausgeworfen und ausgesperrt."
 
 
@@ -171,14 +177,16 @@ async def set_bitrate(store, channel: discord.VoiceChannel, owner: discord.Membe
     limit = int(channel.guild.bitrate_limit)
     bitrate = max(C.MIN_BITRATE, min(bitrate, limit))
     await channel.edit(bitrate=bitrate, reason="TempVoice: Bitrate durch Besitzer")
-    await store.update_profile(owner, bitrate=bitrate)
+    gen_id = await store.get_generator_id_for_channel(channel.guild, channel.id)
+    await store.update_profile(owner, gen_id, bitrate=bitrate)
     return f"🎚️ Bitrate auf **{bitrate // 1000} kbps** gesetzt."
 
 
 async def set_region(store, channel: discord.VoiceChannel, owner: discord.Member,
                      region: Optional[str]) -> str:
     await channel.edit(rtc_region=region, reason="TempVoice: Region durch Besitzer")
-    await store.update_profile(owner, region=region)
+    gen_id = await store.get_generator_id_for_channel(channel.guild, channel.id)
+    await store.update_profile(owner, gen_id, region=region)
     name = C.REGION_NAMES.get(region, region or "Automatisch")
     return f"🌍 Region auf **{name}** gesetzt."
 

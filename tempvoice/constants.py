@@ -112,6 +112,31 @@ MAX_CHANNEL_NAME = 100
 MAX_USER_LIMIT   = 99
 NAME_PLACEHOLDER = "{user}"
 
+
+def resolve_channel_name(template: str, member, count: int = 1,
+                         game: Optional[str] = None) -> str:
+    """Löst Namens-Variablen auf: {user}=Anzeigename, {count}=laufende Nummer,
+    {game}=aktuelles Spiel (falls erkennbar). Überschüssige Leerzeichen werden
+    zusammengefasst, das Ergebnis auf 100 Zeichen gekürzt."""
+    name = template or DEFAULT_NAME_TEMPLATE
+    name = name.replace("{user}", getattr(member, "display_name", "") or "")
+    name = name.replace("{count}", str(count))
+    name = name.replace("{game}", game or "")
+    name = " ".join(name.split())  # doppelte/leere Platzhalter-Lücken säubern
+    name = name.strip()[:MAX_CHANNEL_NAME]
+    return name or (getattr(member, "display_name", "") or "Voice-Channel")[:MAX_CHANNEL_NAME]
+
+
+def current_game(member) -> Optional[str]:
+    """Liefert den Namen des aktuell gespielten Spiels (Rich Presence) oder None."""
+    for activity in getattr(member, "activities", []) or []:
+        if getattr(activity, "type", None) is not None and str(activity.type).endswith("playing"):
+            return activity.name
+        # Fallback: discord.Game hat keinen expliziten Typ-Vergleich nötig
+        if activity.__class__.__name__ == "Game":
+            return activity.name
+    return None
+
 # Namen der automatisch erstellten Objekte bei /tempvoice setup
 SETUP_CATEGORY_NAME  = "Temporäre Channel"
 SETUP_GENERATOR_NAME = "➕ Channel erstellen"

@@ -32,7 +32,7 @@ from redbot.core.bot import Red
 
 from . import constants as C
 from . import controls, views
-from .storage import TempVoiceStore, default_settings
+from .storage import TempVoiceStore
 
 log = logging.getLogger("red.dark-cogs.tempvoice")
 
@@ -44,14 +44,12 @@ class TempVoice(commands.Cog):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=0x7E_4_0_17_01, force_registration=True)
         self.config.register_guild(
-            generator_ids=[],
-            category_id=None,
+            generators={},               # {gen_id: {category_id, name, limit, bitrate, region, locked, hidden}}
             interface_channel_id=None,
             interface_message_id=None,
-            channel_defaults=default_settings(),
             temp_channels={},
         )
-        self.config.register_member(profile=None)
+        self.config.register_member(profiles={})   # {gen_id: partial-override}
         self.store = TempVoiceStore(self.config)
         self._delete_tasks: Dict[int, asyncio.Task] = {}
         self._pending_knocks: set = set()  # (channel_id, knocker_id)
@@ -151,19 +149,20 @@ class TempVoice(commands.Cog):
     async def _create_temp_channel(self, member: discord.Member,
                                    generator: discord.VoiceChannel) -> None:
         guild = member.guild
-        settings = await self.store.effective_settings(member, guild)
+        gen_id = generator.id
+        settings = await self.store.effective_settings(member, guild, gen_id)
+        gen_cfg = await self.store.get_generator(guild, gen_id) or {}
 
-        # Kategorie bestimmen
-        cat_id = await self.store.get_category_id(guild)
+        # Kategorie bestimmen: Generator-Kategorie, sonst Kategorie des Generator-Channels
+        cat_id = gen_cfg.get("category_id")
         category = guild.get_channel(cat_id) if cat_id else None
         if not isinstance(category, discord.CategoryChannel):
             category = generator.category
 
-        # Name aus Vorlage
-        name = (settings.get("name") or C.DEFAULT_NAME_TEMPLATE)
-        name = name.replace(C.NAME_PLACEHOLDER, member.display_name).strip()[:C.MAX_CHANNEL_NAME]
-        if not name:
-            name = member.display_name[:C.MAX_CHANNEL_NAME] or "Voice-Channel"
+        # Name auflösen ({user}/{count}/{game})
+        count = await self.store.count_channels_for_generator(guild, gen_id) + 1
+        name = C.resolve_channel_name(settings.get("name"), member, count,
+                                      C.current_game(member))
 
         bitrate = int(min(settings.get("bitrate") or C.DEFAULT_BITRATE, guild.bitrate_limit))
         bitrate = max(C.MIN_BITRATE, bitrate)
@@ -189,7 +188,8 @@ class TempVoice(commands.Cog):
                 return
 
         await self.store.add_temp_channel(
-            guild, channel.id, member.id, datetime.now(timezone.utc).isoformat())
+            guild, channel.id, member.id, datetime.now(timezone.utc).isoformat(),
+            generator_id=gen_id)
 
         # Anklopf-Button in den Text-Chat des neuen Channels posten
         try:
@@ -565,8 +565,7 @@ class TempVoice(commands.Cog):
     @app_commands.default_permissions(manage_guild=True)
     async def tv_setup(self, ctx: commands.Context) -> None:
         guild = ctx.guild
-        me = guild.me
-        if not me.guild_permissions.manage_channels:
+        if not guild.me.guild_permissions.manage_channels:
             await ctx.send("❌ Mir fehlt die Berechtigung **Kanäle verwalten**.")
             return
 
@@ -577,8 +576,8 @@ class TempVoice(commands.Cog):
         interface = await guild.create_text_channel(
             C.SETUP_INTERFACE_NAME, category=category, reason="TempVoice: Setup")
 
-        await self.store.set_category_id(guild, category.id)
-        await self.store.add_generator_id(guild, generator.id)
+        await self.store.add_generator(guild, generator.id, category_id=category.id,
+                                       name=C.DEFAULT_NAME_TEMPLATE)
 
         msg = await interface.send(
             embed=views.build_interface_embed(guild), view=views.TempVoicePanel(self))
@@ -592,31 +591,114 @@ class TempVoice(commands.Cog):
             f"✅ **TempVoice ist eingerichtet!**\n"
             f"- Generator: {generator.mention} (hier beitreten → eigener Channel)\n"
             f"- Steuerung: {interface.mention}\n"
-            f"Mitglieder können jetzt loslegen. 🔊")
+            f"Weitere Generatoren (z. B. pro Spiel) legst du mit `/tempvoice generator-add` an. 🔊")
 
-    @tempvoice.command(name="generator",
-                       description="Fügt einen Generator-Channel hinzu oder entfernt ihn")
+    @tempvoice.command(name="generator-add",
+                       description="Macht einen Voice-Channel zum Generator mit eigenen Einstellungen")
     @commands.has_permissions(manage_guild=True)
-    @app_commands.describe(channel="Der Voice-Channel, der als „Channel erstellen\" dient")
-    async def tv_generator(self, ctx: commands.Context, channel: discord.VoiceChannel) -> None:
+    @app_commands.describe(
+        channel="Der Voice-Channel, der als „Channel erstellen\" dient",
+        kategorie="Kategorie für die erstellten Channel (leer = Kategorie des Generators)",
+        name="Namensvorlage: {user} {count} {game} (z. B. „{user} – Aion\")",
+        limit="Standard-Mitgliederlimit (0 = unbegrenzt)",
+        bitrate="Standard-Bitrate in kbps",
+        gesperrt="Neue Channel standardmäßig gesperrt?",
+        verborgen="Neue Channel standardmäßig verborgen?",
+    )
+    async def tv_generator_add(self, ctx: commands.Context, channel: discord.VoiceChannel,
+                               kategorie: Optional[discord.CategoryChannel] = None,
+                               name: Optional[str] = None, limit: Optional[int] = None,
+                               bitrate: Optional[int] = None, gesperrt: Optional[bool] = None,
+                               verborgen: Optional[bool] = None) -> None:
         if await self.store.is_generator(ctx.guild, channel.id):
-            await self.store.remove_generator_id(ctx.guild, channel.id)
-            await ctx.send(f"✅ {channel.mention} ist **kein** Generator-Channel mehr.")
-        else:
-            await self.store.add_generator_id(ctx.guild, channel.id)
-            await ctx.send(f"✅ {channel.mention} ist jetzt ein **Generator-Channel**.")
+            await ctx.send(f"ℹ️ {channel.mention} ist bereits ein Generator. "
+                           f"Nutze `/tempvoice generator-edit` zum Ändern.")
+            return
+        settings = self._gen_settings(ctx.guild, kategorie, name, limit, bitrate,
+                                      gesperrt, verborgen)
+        await self.store.add_generator(ctx.guild, channel.id, **settings)
+        await ctx.send(f"✅ {channel.mention} ist jetzt ein **Generator**.")
 
-    @tempvoice.command(name="kategorie",
-                       description="Legt die Kategorie fest, in der neue Channel erstellt werden")
+    @tempvoice.command(name="generator-edit",
+                       description="Ändert die Einstellungen eines Generators")
     @commands.has_permissions(manage_guild=True)
-    @app_commands.describe(kategorie="Zielkategorie (leer = Kategorie des Generators)")
-    async def tv_kategorie(self, ctx: commands.Context,
-                           kategorie: Optional[discord.CategoryChannel] = None) -> None:
-        await self.store.set_category_id(ctx.guild, kategorie.id if kategorie else None)
-        if kategorie:
-            await ctx.send(f"✅ Neue Channel werden in **{kategorie.name}** erstellt.")
-        else:
-            await ctx.send("✅ Neue Channel werden in der Kategorie des Generators erstellt.")
+    @app_commands.describe(
+        channel="Der Generator-Channel",
+        kategorie="Kategorie für die erstellten Channel",
+        name="Namensvorlage: {user} {count} {game}",
+        limit="Standard-Mitgliederlimit (0 = unbegrenzt)",
+        bitrate="Standard-Bitrate in kbps",
+        gesperrt="Neue Channel standardmäßig gesperrt?",
+        verborgen="Neue Channel standardmäßig verborgen?",
+    )
+    async def tv_generator_edit(self, ctx: commands.Context, channel: discord.VoiceChannel,
+                                kategorie: Optional[discord.CategoryChannel] = None,
+                                name: Optional[str] = None, limit: Optional[int] = None,
+                                bitrate: Optional[int] = None, gesperrt: Optional[bool] = None,
+                                verborgen: Optional[bool] = None) -> None:
+        if not await self.store.is_generator(ctx.guild, channel.id):
+            await ctx.send(f"❌ {channel.mention} ist kein Generator. "
+                           f"Lege ihn zuerst mit `/tempvoice generator-add` an.")
+            return
+        changes = self._gen_settings(ctx.guild, kategorie, name, limit, bitrate,
+                                     gesperrt, verborgen)
+        if not changes:
+            await ctx.send("ℹ️ Keine Werte angegeben.")
+            return
+        await self.store.update_generator(ctx.guild, channel.id, **changes)
+        await ctx.send(f"✅ Einstellungen von {channel.mention} aktualisiert.")
+
+    @tempvoice.command(name="generator-remove", description="Entfernt einen Generator")
+    @commands.has_permissions(manage_guild=True)
+    @app_commands.describe(channel="Der Generator-Channel")
+    async def tv_generator_remove(self, ctx: commands.Context,
+                                  channel: discord.VoiceChannel) -> None:
+        if not await self.store.is_generator(ctx.guild, channel.id):
+            await ctx.send(f"ℹ️ {channel.mention} ist kein Generator.")
+            return
+        await self.store.remove_generator(ctx.guild, channel.id)
+        await ctx.send(f"✅ {channel.mention} ist **kein** Generator mehr "
+                       f"(der Voice-Channel selbst bleibt bestehen).")
+
+    @tempvoice.command(name="generator-list", description="Listet alle Generatoren mit Einstellungen")
+    @commands.has_permissions(manage_guild=True)
+    async def tv_generator_list(self, ctx: commands.Context) -> None:
+        gens = await self.store.all_generators(ctx.guild)
+        if not gens:
+            await ctx.send("ℹ️ Es gibt noch keine Generatoren. Lege welche mit "
+                           "`/tempvoice setup` oder `/tempvoice generator-add` an.")
+            return
+        embed = discord.Embed(title="➕ TempVoice-Generatoren", color=C.COLOR_INFO)
+        for gid, cfg in gens.items():
+            chan = ctx.guild.get_channel(int(gid))
+            cat = ctx.guild.get_channel(cfg.get("category_id")) if cfg.get("category_id") else None
+            limit_txt = "unbegrenzt" if not cfg.get("limit") else str(cfg["limit"])
+            embed.add_field(
+                name=(chan.name if chan else f"Gelöscht ({gid})"),
+                value=(f"Kategorie: {cat.name if cat else '_(des Generators)_'}\n"
+                       f"Name: `{cfg.get('name')}`\n"
+                       f"Limit: {limit_txt} · Bitrate: {(cfg.get('bitrate') or 0)//1000} kbps\n"
+                       f"Gesperrt: {'ja' if cfg.get('locked') else 'nein'} · "
+                       f"Verborgen: {'ja' if cfg.get('hidden') else 'nein'}"),
+                inline=False)
+        await ctx.send(embed=embed)
+
+    def _gen_settings(self, guild, kategorie, name, limit, bitrate, gesperrt, verborgen) -> dict:
+        """Baut ein Settings-Dict aus den (optionalen) Command-Optionen (None = unverändert)."""
+        changes: Dict[str, object] = {}
+        if kategorie is not None:
+            changes["category_id"] = kategorie.id
+        if name is not None:
+            changes["name"] = name.strip()[:C.MAX_CHANNEL_NAME]
+        if limit is not None:
+            changes["limit"] = max(0, min(limit, C.MAX_USER_LIMIT))
+        if bitrate is not None:
+            changes["bitrate"] = max(C.MIN_BITRATE, min(bitrate * 1000, int(guild.bitrate_limit)))
+        if gesperrt is not None:
+            changes["locked"] = gesperrt
+        if verborgen is not None:
+            changes["hidden"] = verborgen
+        return changes
 
     @tempvoice.command(name="interface",
                        description="Postet das Steuer-Panel oder aktualisiert das bestehende")
@@ -653,112 +735,78 @@ class TempVoice(commands.Cog):
         await self.store.set_interface(guild, target.id, msg.id)
         await ctx.send(f"✅ Steuer-Panel wurde in {target.mention} gepostet.")
 
-    @tempvoice.command(name="defaults", description="Setzt Standardwerte für neu erstellte Channel")
-    @commands.has_permissions(manage_guild=True)
-    @app_commands.describe(
-        name="Namensvorlage, {user} wird ersetzt (z. B. „{user}s Channel\")",
-        limit="Standard-Mitgliederlimit (0 = unbegrenzt)",
-        bitrate="Standard-Bitrate in kbps",
-        gesperrt="Neue Channel standardmäßig gesperrt?",
-        verborgen="Neue Channel standardmäßig verborgen?",
-    )
-    async def tv_defaults(self, ctx: commands.Context, name: Optional[str] = None,
-                          limit: Optional[int] = None, bitrate: Optional[int] = None,
-                          gesperrt: Optional[bool] = None,
-                          verborgen: Optional[bool] = None) -> None:
-        changes: Dict[str, object] = {}
-        if name is not None:
-            changes["name"] = name.strip()[:C.MAX_CHANNEL_NAME]
-        if limit is not None:
-            changes["limit"] = max(0, min(limit, C.MAX_USER_LIMIT))
-        if bitrate is not None:
-            changes["bitrate"] = max(C.MIN_BITRATE, min(bitrate * 1000, int(ctx.guild.bitrate_limit)))
-        if gesperrt is not None:
-            changes["locked"] = gesperrt
-        if verborgen is not None:
-            changes["hidden"] = verborgen
-        if not changes:
-            await ctx.send("ℹ️ Keine Werte angegeben. Nutze die Optionen des Befehls.")
-            return
-        await self.store.update_defaults(ctx.guild, **changes)
-        await ctx.send("✅ Standardwerte aktualisiert.")
-
     @tempvoice.command(name="info", description="Zeigt die aktuelle TempVoice-Konfiguration")
     @commands.has_permissions(manage_guild=True)
     async def tv_info(self, ctx: commands.Context) -> None:
         guild = ctx.guild
         gen_ids = await self.store.get_generator_ids(guild)
-        cat_id = await self.store.get_category_id(guild)
         if_chan_id, _ = await self.store.get_interface(guild)
-        defaults = await self.store.get_defaults(guild)
         temps = await self.store.all_temp_channels(guild)
 
         generators = ", ".join(c.mention for c in
                                (guild.get_channel(i) for i in gen_ids) if c) or "_(keine)_"
-        category = guild.get_channel(cat_id) if cat_id else None
         interface = guild.get_channel(if_chan_id) if if_chan_id else None
 
         embed = discord.Embed(title="⚙️ TempVoice-Konfiguration", color=C.COLOR_INFO)
-        embed.add_field(name="Generator-Channel", value=generators, inline=False)
-        embed.add_field(name="Kategorie",
-                        value=category.mention if category else "_(Kategorie des Generators)_",
-                        inline=False)
+        embed.add_field(name=f"Generatoren ({len(gen_ids)})", value=generators, inline=False)
         embed.add_field(name="Steuer-Panel",
                         value=interface.mention if interface else "_(nicht gesetzt)_", inline=False)
         embed.add_field(name="Aktive temporäre Channel", value=str(len(temps)), inline=False)
-        limit_txt = "unbegrenzt" if not defaults["limit"] else str(defaults["limit"])
-        embed.add_field(
-            name="Standardwerte",
-            value=(f"Name: `{defaults['name']}`\n"
-                   f"Limit: {limit_txt} · Bitrate: {defaults['bitrate'] // 1000} kbps\n"
-                   f"Gesperrt: {'ja' if defaults['locked'] else 'nein'} · "
-                   f"Verborgen: {'ja' if defaults['hidden'] else 'nein'}"),
-            inline=False)
+        embed.set_footer(text="Einstellungen je Generator: /tempvoice generator-list")
         await ctx.send(embed=embed)
 
     # ─────────────────────────────────────────────────────────────────────────
     # BEFEHLE – MITGLIEDER
     # ─────────────────────────────────────────────────────────────────────────
 
-    @tempvoice.command(name="profil", description="Zeigt dein gespeichertes TempVoice-Profil")
+    @tempvoice.command(name="profil",
+                       description="Zeigt deine gespeicherten Einstellungen je Generator")
     async def tv_profil(self, ctx: commands.Context) -> None:
-        profile = await self.store.get_profile(ctx.author)
-        if not profile:
-            await ctx.send("ℹ️ Du hast noch kein Profil. Es entsteht automatisch, "
-                           "sobald du einen Channel erstellst und anpasst.")
+        profiles = await self.store.all_profiles(ctx.author)
+        if not profiles:
+            await ctx.send("ℹ️ Du hast noch keine gespeicherten Einstellungen. Sie entstehen "
+                           "automatisch, sobald du einen Channel erstellst und anpasst.",
+                           ephemeral=True)
             return
-        limit_txt = "unbegrenzt" if not profile.get("limit") else str(profile["limit"])
-        region = C.REGION_NAMES.get(profile.get("region"), profile.get("region") or "Automatisch")
-        permit = ", ".join(f"<@{i}>" if ctx.guild.get_member(i) else f"<@&{i}>"
-                           for i in profile.get("permit", [])) or "–"
-        reject = ", ".join(f"<@{i}>" for i in profile.get("reject", [])) or "–"
-        embed = discord.Embed(title="🔊 Dein TempVoice-Profil", color=C.COLOR_INFO)
-        embed.add_field(name="Name", value=f"`{profile.get('name')}`", inline=False)
-        embed.add_field(name="Limit", value=limit_txt, inline=True)
-        embed.add_field(name="Bitrate", value=f"{(profile.get('bitrate') or 0) // 1000} kbps", inline=True)
-        embed.add_field(name="Region", value=region, inline=True)
-        embed.add_field(name="Gesperrt", value="ja" if profile.get("locked") else "nein", inline=True)
-        embed.add_field(name="Verborgen", value="ja" if profile.get("hidden") else "nein", inline=True)
-        embed.add_field(name="✅ Erlaubt", value=permit, inline=False)
-        embed.add_field(name="🚫 Gesperrt", value=reject, inline=False)
+        embed = discord.Embed(title="🔊 Deine TempVoice-Einstellungen", color=C.COLOR_INFO)
+        for gid, prof in profiles.items():
+            chan = ctx.guild.get_channel(int(gid)) if gid != "0" else None
+            title = chan.name if chan else (f"Generator {gid}" if gid != "0" else "Allgemein")
+            parts = []
+            if "name" in prof:
+                parts.append(f"Name: `{prof['name']}`")
+            if "limit" in prof:
+                parts.append(f"Limit: {'unbegrenzt' if not prof['limit'] else prof['limit']}")
+            if "bitrate" in prof:
+                parts.append(f"Bitrate: {prof['bitrate']//1000} kbps")
+            if "region" in prof:
+                parts.append(f"Region: {C.REGION_NAMES.get(prof['region'], prof['region'] or 'Automatisch')}")
+            if prof.get("locked"):
+                parts.append("🔒 gesperrt")
+            if prof.get("hidden"):
+                parts.append("👁️ verborgen")
+            if prof.get("reject"):
+                parts.append(f"🚫 {len(prof['reject'])} gesperrt")
+            embed.add_field(name=title, value="\n".join(parts) or "_(Standard)_", inline=False)
         await ctx.send(embed=embed, ephemeral=True)
 
-    @tempvoice.command(name="reset", description="Setzt dein TempVoice-Profil auf die Standardwerte zurück")
+    @tempvoice.command(name="reset",
+                       description="Setzt deine gespeicherten Einstellungen (alle Generatoren) zurück")
     async def tv_reset(self, ctx: commands.Context) -> None:
-        await self.store.clear_profile(ctx.author)
-        await ctx.send("✅ Dein Profil wurde zurückgesetzt. Neue Channel starten wieder mit den "
-                       "Server-Standardwerten.", ephemeral=True)
+        await self.store.clear_profiles(ctx.author)
+        await ctx.send("✅ Deine gespeicherten Einstellungen wurden zurückgesetzt. Neue Channel "
+                       "starten wieder mit den Generator-Standardwerten.", ephemeral=True)
 
     @tempvoice.command(name="gesperrte", description="Zeigt deine Sperrliste und entsperrt Mitglieder")
     async def tv_gesperrte(self, ctx: commands.Context) -> None:
-        profile = await self.store.get_profile(ctx.author)
-        reject = list(profile.get("reject", [])) if profile else []
+        profiles = await self.store.all_profiles(ctx.author)
+        reject = sorted({uid for prof in profiles.values() for uid in prof.get("reject", [])})
         if not reject:
             await ctx.send("ℹ️ Deine Sperrliste ist leer.", ephemeral=True)
             return
         view = _UnblockView(self, ctx.author, reject)
-        await ctx.send("🚫 **Deine Sperrliste** – wähle Mitglieder zum Entsperren:",
-                       view=view, ephemeral=True)
+        await ctx.send("🚫 **Deine Sperrliste** (über alle Generatoren) – wähle Mitglieder zum "
+                       "Entsperren:", view=view, ephemeral=True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # FEHLER-HANDLER
@@ -800,9 +848,14 @@ class _UnblockView(discord.ui.View):
 
     async def _callback(self, interaction: discord.Interaction):
         to_unblock = {int(v) for v in self.select.values}
-        profile = await self.cog.store.update_profile(self.owner)
-        reject = [i for i in profile.get("reject", []) if i not in to_unblock]
-        await self.cog.store.update_profile(self.owner, reject=reject)
+        # Aus den Sperrlisten ALLER Generator-Profile entfernen
+        profiles = await self.cog.store.all_profiles(self.owner)
+        for gid, prof in profiles.items():
+            reject = prof.get("reject", [])
+            new_reject = [i for i in reject if i not in to_unblock]
+            if new_reject != reject:
+                gen_id = None if gid == "0" else int(gid)
+                await self.cog.store.update_profile(self.owner, gen_id, reject=new_reject)
 
         # Falls der Besitzer gerade in seinem Channel ist, Sperre dort auch live aufheben
         vc = self.owner.voice.channel if self.owner.voice else None
