@@ -1,0 +1,23 @@
+{
+    "name": "OnboardRole",
+    "short": "Vergibt automatisch Rollen, wenn ein Mitglied das Onboarding abschließt.",
+    "description": "Erkennt über das native Discord-Signal (pending-Wechsel), wenn ein Mitglied die Regel-Zustimmung bzw. das Onboarding abgeschlossen hat, und vergibt dann automatisch eine oder mehrere Rollen. Optional: Log-Kanal und persönliche Willkommensnachricht (im Kanal oder per DM) mit Platzhaltern. Benötigt einen Community-Server mit Membership Screening/Onboarding sowie den privilegierten „Server Members\"-Intent.",
+    "end_user_data_statement": "Dieser Cog speichert keine personenbezogenen Daten von Endnutzern. Gespeichert werden nur serverbezogene Einstellungen (zu vergebende Rollen-IDs, Log-Kanal-ID und ein optionaler Willkommenstext).",
+    "install_msg": "Danke für die Installation von OnboardRole! 🎓 Starte mit `/onboard setup <rolle>`. Hinweis: Es braucht einen Community-Server mit Onboarding/Regel-Zustimmung und den aktivierten „Server Members\"-Intent. `/onboard info` zeigt, ob alles passt.",
+    "author": [
+        "XardasDark"
+    ],
+    "required_cogs": {},
+    "requirements": [],
+    "tags": [
+        "onboarding",
+        "autorole",
+        "roles",
+        "welcome",
+        "membership-screening"
+    ],
+    "min_bot_version": "3.5.0",
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}
