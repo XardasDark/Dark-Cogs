@@ -618,19 +618,39 @@ class TempVoice(commands.Cog):
         else:
             await ctx.send("✅ Neue Channel werden in der Kategorie des Generators erstellt.")
 
-    @tempvoice.command(name="interface", description="Postet das Steuer-Panel in einem Textkanal")
+    @tempvoice.command(name="interface",
+                       description="Postet das Steuer-Panel oder aktualisiert das bestehende")
     @commands.has_permissions(manage_guild=True)
-    @app_commands.describe(kanal="Zielkanal (leer = aktueller Kanal)")
+    @app_commands.describe(kanal="Zielkanal (leer = bestehendes Panel aktualisieren bzw. aktueller Kanal)")
     async def tv_interface(self, ctx: commands.Context,
                            kanal: Optional[discord.TextChannel] = None) -> None:
+        guild = ctx.guild
+        if_chan_id, if_msg_id = await self.store.get_interface(guild)
+
+        # Bestehendes Panel an Ort und Stelle aktualisieren, sofern kein anderer Zielkanal gewünscht ist
+        if if_chan_id and if_msg_id and (kanal is None or kanal.id == if_chan_id):
+            chan = guild.get_channel(if_chan_id)
+            if chan is not None:
+                try:
+                    msg = await chan.fetch_message(if_msg_id)
+                    await msg.edit(embed=views.build_interface_embed(guild),
+                                   view=views.TempVoicePanel(self))
+                    await ctx.send(f"✅ Steuer-Panel in {chan.mention} aktualisiert.")
+                    return
+                except discord.NotFound:
+                    pass  # Nachricht wurde gelöscht → neu posten
+                except discord.HTTPException:
+                    pass
+
+        # Neu posten
         target = kanal or ctx.channel
         msg = await target.send(
-            embed=views.build_interface_embed(ctx.guild), view=views.TempVoicePanel(self))
+            embed=views.build_interface_embed(guild), view=views.TempVoicePanel(self))
         try:
             await msg.pin(reason="TempVoice: Steuer-Panel")
         except discord.HTTPException:
             pass
-        await self.store.set_interface(ctx.guild, target.id, msg.id)
+        await self.store.set_interface(guild, target.id, msg.id)
         await ctx.send(f"✅ Steuer-Panel wurde in {target.mention} gepostet.")
 
     @tempvoice.command(name="defaults", description="Setzt Standardwerte für neu erstellte Channel")
