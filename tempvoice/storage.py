@@ -126,6 +126,51 @@ class TempVoiceStore:
         rec = await self.get_temp_channel(guild, channel_id)
         return rec.get("owner_id") if rec else None
 
+    # ── Gäste (per Anklopfen reingelassen, Zugang bis zum Verlassen) ────────────
+
+    async def get_guests(self, guild: discord.Guild, channel_id: int) -> List[int]:
+        rec = await self.get_temp_channel(guild, channel_id)
+        return list(rec.get("guests", [])) if rec else []
+
+    async def add_guest(self, guild: discord.Guild, channel_id: int, user_id: int) -> None:
+        async with self.config.guild(guild).temp_channels() as temps:
+            rec = temps.get(str(channel_id))
+            if rec is not None:
+                guests = rec.setdefault("guests", [])
+                if user_id not in guests:
+                    guests.append(user_id)
+
+    async def remove_guest(self, guild: discord.Guild, channel_id: int, user_id: int) -> None:
+        async with self.config.guild(guild).temp_channels() as temps:
+            rec = temps.get(str(channel_id))
+            if rec is not None and user_id in rec.get("guests", []):
+                rec["guests"].remove(user_id)
+
+    # ── Warteraum (optionaler angehängter Voice-Channel) ────────────────────────
+
+    async def get_waiting_room_id(self, guild: discord.Guild, channel_id: int) -> Optional[int]:
+        rec = await self.get_temp_channel(guild, channel_id)
+        return rec.get("waiting_room_id") if rec else None
+
+    async def set_waiting_room(self, guild: discord.Guild, channel_id: int,
+                               waiting_room_id: Optional[int]) -> None:
+        async with self.config.guild(guild).temp_channels() as temps:
+            rec = temps.get(str(channel_id))
+            if rec is not None:
+                if waiting_room_id is None:
+                    rec.pop("waiting_room_id", None)
+                else:
+                    rec["waiting_room_id"] = waiting_room_id
+
+    async def find_main_by_waiting(self, guild: discord.Guild,
+                                   waiting_room_id: int) -> tuple:
+        """Sucht den Haupt-Channel, zu dem ein Warteraum gehört. (main_id, owner_id) | (None, None)."""
+        temps = await self.config.guild(guild).temp_channels()
+        for cid, rec in temps.items():
+            if rec.get("waiting_room_id") == waiting_room_id:
+                return int(cid), rec.get("owner_id")
+        return None, None
+
     # ── Mitglieds-Profil ─────────────────────────────────────────────────────────
 
     async def get_profile(self, member: discord.Member) -> Optional[Dict[str, Any]]:

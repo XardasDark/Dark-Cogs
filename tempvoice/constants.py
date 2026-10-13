@@ -29,6 +29,8 @@ CID_CLAIM    = f"{CID_PREFIX}:claim"
 CID_TRANSFER = f"{CID_PREFIX}:transfer"
 CID_BITRATE  = f"{CID_PREFIX}:bitrate"
 CID_REGION   = f"{CID_PREFIX}:region"
+CID_KNOCK    = f"{CID_PREFIX}:knock"
+CID_WAITING  = f"{CID_PREFIX}:waiting"
 
 # Button-Beschriftungen (Label, Emoji) – rein deutsch
 BTN_RENAME   = ("Name",       "✏️")
@@ -41,6 +43,18 @@ BTN_CLAIM    = ("Übernehmen", "👑")
 BTN_TRANSFER = ("Übertragen", "🔁")
 BTN_BITRATE  = ("Bitrate",    "🎚️")
 BTN_REGION   = ("Region",     "🌍")
+BTN_KNOCK    = ("Anklopfen",  "✋")
+BTN_KNOCK_ACCEPT = ("Reinlassen", "✅")
+BTN_KNOCK_REJECT = ("Ablehnen",   "❌")
+BTN_WAITING  = ("Warteraum",  "⏳")
+BTN_ADMIT    = ("Reinholen",   "✅")
+BTN_DISMISS  = ("Wegschicken", "❌")
+
+# Wie lange (Sekunden) eine offene Anklopf-/Warteraum-Anfrage gültig bleibt
+KNOCK_REQUEST_TIMEOUT = 300
+
+# Name des optionalen Warteraum-Voice-Channels
+WAITING_ROOM_NAME = "⏳ Warteraum"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VOICE-REGIONEN  (rtc_region-String → Anzeigename)

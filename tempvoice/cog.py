@@ -54,10 +54,13 @@ class TempVoice(commands.Cog):
         self.config.register_member(profile=None)
         self.store = TempVoiceStore(self.config)
         self._delete_tasks: Dict[int, asyncio.Task] = {}
+        self._pending_knocks: set = set()  # (channel_id, knocker_id)
+        self._pending_waits: set = set()   # (main_channel_id, waiter_id)
 
     async def cog_load(self) -> None:
-        # Persistente Panel-View registrieren (übersteht Neustarts)
+        # Persistente Views registrieren (übersteht Neustarts)
         self.bot.add_view(views.TempVoicePanel(self))
+        self.bot.add_view(views.KnockView(self))
         # Verwaiste/leere Channel aufräumen
         self.bot.loop.create_task(self._cleanup_orphans())
 
@@ -77,8 +80,10 @@ class TempVoice(commands.Cog):
             for cid_str in list(temps):
                 channel = guild.get_channel(int(cid_str))
                 if channel is None:
+                    await self._cleanup_waiting_room(guild, int(cid_str))
                     await self.store.remove_temp_channel(guild, int(cid_str))
                 elif not channel.members:
+                    await self._cleanup_waiting_room(guild, int(cid_str))
                     try:
                         await channel.delete(reason="TempVoice: leerer Channel beim Start")
                     except discord.HTTPException:
@@ -101,11 +106,47 @@ class TempVoice(commands.Cog):
         if after.channel and await self.store.is_generator(guild, after.channel.id):
             await self._create_temp_channel(member, after.channel)
 
-        # 2) Hat der User einen temporären Channel verlassen → ggf. aufräumen
+        # 1b) Betritt der User einen Warteraum → Besitzer benachrichtigen
+        if after.channel is not None:
+            main_id, owner_id = await self.store.find_main_by_waiting(guild, after.channel.id)
+            if main_id is not None:
+                await self._handle_waiter(member, after.channel, main_id, owner_id)
+
+        # 2) Hat der User einen Channel verlassen → aufräumen
         left = before.channel
         if left is not None and (after.channel is None or after.channel.id != left.id):
             if await self.store.is_temp_channel(guild, left.id):
+                await self._revoke_guest(left, member)
                 self._schedule_empty_check(left)
+            else:
+                # Warteraum verlassen → offene Anfrage verwerfen
+                main_id2, _ = await self.store.find_main_by_waiting(guild, left.id)
+                if main_id2 is not None:
+                    self._pending_waits.discard((main_id2, member.id))
+
+    async def _revoke_guest(self, channel: discord.VoiceChannel,
+                            member: discord.Member) -> None:
+        """Entzieht einem per Anklopfen reingelassenen Gast den Zugang beim Verlassen."""
+        guests = await self.store.get_guests(channel.guild, channel.id)
+        if member.id in guests:
+            try:
+                await channel.set_permissions(member, overwrite=None,
+                                              reason="TempVoice: Gast hat den Channel verlassen")
+            except discord.HTTPException:
+                pass
+            await self.store.remove_guest(channel.guild, channel.id, member.id)
+
+    async def _cleanup_waiting_room(self, guild: discord.Guild, main_channel_id: int) -> None:
+        """Löscht den Warteraum eines Haupt-Channels (falls vorhanden) und löst die Verknüpfung."""
+        wr_id = await self.store.get_waiting_room_id(guild, main_channel_id)
+        if wr_id:
+            wr = guild.get_channel(wr_id)
+            if wr is not None:
+                try:
+                    await wr.delete(reason="TempVoice: Warteraum entfernt")
+                except discord.HTTPException:
+                    pass
+            await self.store.set_waiting_room(guild, main_channel_id, None)
 
     async def _create_temp_channel(self, member: discord.Member,
                                    generator: discord.VoiceChannel) -> None:
@@ -150,6 +191,17 @@ class TempVoice(commands.Cog):
         await self.store.add_temp_channel(
             guild, channel.id, member.id, datetime.now(timezone.utc).isoformat())
 
+        # Anklopf-Button in den Text-Chat des neuen Channels posten
+        try:
+            knock_msg = await channel.send(embed=views.build_knock_embed(),
+                                           view=views.KnockView(self))
+            try:
+                await knock_msg.pin(reason="TempVoice: Anklopf-Button")
+            except discord.HTTPException:
+                pass
+        except discord.HTTPException:
+            pass
+
         try:
             await member.move_to(channel, reason="TempVoice: in eigenen Channel verschoben")
         except discord.Forbidden:
@@ -191,9 +243,11 @@ class TempVoice(commands.Cog):
             guild = channel.guild
             current = guild.get_channel(channel.id)
             if current is None:
+                await self._cleanup_waiting_room(guild, channel.id)
                 await self.store.remove_temp_channel(guild, channel.id)
                 return
             if not current.members:
+                await self._cleanup_waiting_room(guild, channel.id)
                 try:
                     await current.delete(reason="TempVoice: Channel leer")
                 except discord.HTTPException:
@@ -208,7 +262,13 @@ class TempVoice(commands.Cog):
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
         if isinstance(channel, discord.VoiceChannel):
             if await self.store.is_temp_channel(channel.guild, channel.id):
+                await self._cleanup_waiting_room(channel.guild, channel.id)
                 await self.store.remove_temp_channel(channel.guild, channel.id)
+            else:
+                # War es ein Warteraum? Dann nur die Verknüpfung lösen.
+                main_id, _ = await self.store.find_main_by_waiting(channel.guild, channel.id)
+                if main_id is not None:
+                    await self.store.set_waiting_room(channel.guild, main_id, None)
 
     # ─────────────────────────────────────────────────────────────────────────
     # HILFEN FÜR DIE VIEWS  (Besitz auflösen, Aktion ausführen)
@@ -287,6 +347,208 @@ class TempVoice(commands.Cog):
             pass
         await interaction.response.send_message(
             "👑 Du bist jetzt der **Besitzer** dieses Channels.", ephemeral=True)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ANKLOPFEN
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def handle_knock(self, interaction: discord.Interaction) -> None:
+        """Ein Nicht-Besitzer bittet um Einlass in einen (gesperrten) Channel."""
+        channel = interaction.channel
+        guild = interaction.guild
+        if guild is None or not isinstance(channel, discord.VoiceChannel) \
+                or not await self.store.is_temp_channel(guild, channel.id):
+            await interaction.response.send_message(
+                "❌ Anklopfen ist hier nicht möglich.", ephemeral=True)
+            return
+
+        knocker = interaction.user
+        owner_id = await self.store.get_owner_id(guild, channel.id)
+        if knocker.id == owner_id:
+            await interaction.response.send_message(
+                "ℹ️ Das ist dein eigener Channel.", ephemeral=True)
+            return
+        if channel.permissions_for(knocker).connect:
+            await interaction.response.send_message(
+                "✅ Du darfst bereits beitreten – tritt dem Channel einfach bei.", ephemeral=True)
+            return
+
+        key = (channel.id, knocker.id)
+        if key in self._pending_knocks:
+            await interaction.response.send_message(
+                "⏳ Du hast bereits angeklopft. Bitte warte auf eine Antwort.", ephemeral=True)
+            return
+
+        owner = guild.get_member(owner_id) if owner_id else None
+        self._pending_knocks.add(key)
+        req = views.KnockRequestView(self, owner_id, knocker, channel.id)
+        owner_mention = owner.mention if owner else "Der Besitzer"
+        try:
+            msg = await channel.send(
+                f"{owner_mention} ✋ {knocker.mention} möchte deinem gesperrten Channel beitreten.",
+                view=req)
+            req.message = msg
+        except discord.HTTPException:
+            self._pending_knocks.discard(key)
+            await interaction.response.send_message(
+                "❌ Konnte die Anfrage nicht senden.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "✋ Du hast angeklopft. Warte, bis der Besitzer dich reinlässt.", ephemeral=True)
+
+    async def resolve_knock(self, interaction: discord.Interaction,
+                            view: "views.KnockRequestView", accept: bool) -> None:
+        """Besitzer lässt einen Anklopfenden rein oder lehnt ab."""
+        if interaction.user.id != view.owner_id:
+            await interaction.response.send_message(
+                "❌ Nur der Besitzer des Channels kann das entscheiden.", ephemeral=True)
+            return
+
+        guild = interaction.guild
+        knocker = view.knocker
+        self._pending_knocks.discard((view.channel_id, knocker.id))
+        view.stop()
+
+        channel = guild.get_channel(view.channel_id)
+        if channel is None:
+            await interaction.response.edit_message(
+                content="Der Channel existiert nicht mehr.", view=None)
+            return
+
+        if not accept:
+            await interaction.response.edit_message(
+                content=f"❌ Anfrage von {knocker.display_name} abgelehnt.", view=None)
+            return
+
+        try:
+            await channel.set_permissions(knocker, view_channel=True, connect=True,
+                                          reason="TempVoice: Anklopfen angenommen")
+        except discord.HTTPException:
+            await interaction.response.edit_message(
+                content="❌ Konnte den Zugang nicht gewähren (fehlende Rechte).", view=None)
+            return
+        await self.store.add_guest(guild, channel.id, knocker.id)
+
+        # Falls der Bot darf und der Gast gerade woanders verbunden ist → direkt reinziehen
+        if knocker.voice and knocker.voice.channel and knocker.voice.channel.id != channel.id:
+            try:
+                await knocker.move_to(channel, reason="TempVoice: Anklopfen angenommen")
+            except discord.HTTPException:
+                pass
+
+        await interaction.response.edit_message(
+            content=f"✅ {knocker.mention} wurde reingelassen und darf jetzt beitreten.", view=None)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # WARTERAUM
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def toggle_waiting_room(self, interaction: discord.Interaction,
+                                  channel: discord.VoiceChannel) -> None:
+        """Erstellt oder löscht den optionalen Warteraum des eigenen Channels."""
+        guild = interaction.guild
+        wr_id = await self.store.get_waiting_room_id(guild, channel.id)
+        if wr_id and guild.get_channel(wr_id) is not None:
+            await self._cleanup_waiting_room(guild, channel.id)
+            await interaction.response.send_message("🗑️ Warteraum gelöscht.", ephemeral=True)
+            return
+
+        try:
+            waiting = await guild.create_voice_channel(
+                C.WAITING_ROOM_NAME, category=channel.category,
+                reason="TempVoice: Warteraum erstellt")
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                "❌ Konnte den Warteraum nicht erstellen.", ephemeral=True)
+            return
+        # Direkt unter den Haupt-Channel sortieren (best effort)
+        try:
+            await waiting.edit(position=channel.position + 1)
+        except discord.HTTPException:
+            pass
+        await self.store.set_waiting_room(guild, channel.id, waiting.id)
+
+        hinweis = ""
+        if not guild.me.guild_permissions.move_members:
+            hinweis = ("\n⚠️ **Achtung:** Mir fehlt das Recht **Mitglieder verschieben** – "
+                       "ich kann Wartende aktuell nicht reinholen. Bitte gib dem Bot dieses Recht.")
+        await interaction.response.send_message(
+            f"⏳ Warteraum erstellt: {waiting.mention}\n"
+            f"Wer dort beitritt, wird dir hier im Channel-Chat gemeldet – du holst ihn per Button rein "
+            f"(der Bot übernimmt das Verschieben).{hinweis}", ephemeral=True)
+
+    async def _handle_waiter(self, member: discord.Member, waiting_room: discord.VoiceChannel,
+                             main_id: int, owner_id: Optional[int]) -> None:
+        """Ein Mitglied hat einen Warteraum betreten → Besitzer im Haupt-Chat benachrichtigen."""
+        if member.id == owner_id:
+            return
+        guild = member.guild
+        main_channel = guild.get_channel(main_id)
+        if main_channel is None:
+            return
+        key = (main_id, member.id)
+        if key in self._pending_waits:
+            return
+        self._pending_waits.add(key)
+        owner = guild.get_member(owner_id) if owner_id else None
+        owner_mention = owner.mention if owner else "Der Besitzer"
+        view = views.WaitingAdmitView(self, owner_id, member, main_id, waiting_room.id)
+        try:
+            msg = await main_channel.send(
+                f"{owner_mention} ⏳ {member.mention} wartet im Warteraum.", view=view)
+            view.message = msg
+        except discord.HTTPException:
+            self._pending_waits.discard(key)
+
+    async def resolve_wait(self, interaction: discord.Interaction,
+                           view: "views.WaitingAdmitView", admit: bool) -> None:
+        """Besitzer holt einen Wartenden rein (Bot verschiebt) oder schickt ihn weg."""
+        if interaction.user.id != view.owner_id:
+            await interaction.response.send_message(
+                "❌ Nur der Besitzer des Channels kann das entscheiden.", ephemeral=True)
+            return
+
+        guild = interaction.guild
+        waiter = view.waiter
+        self._pending_waits.discard((view.main_id, waiter.id))
+        view.stop()
+
+        main_channel = guild.get_channel(view.main_id)
+        if main_channel is None:
+            await interaction.response.edit_message(
+                content="Der Channel existiert nicht mehr.", view=None)
+            return
+
+        if not admit:
+            # Aus dem Warteraum entfernen (best effort)
+            waiting = guild.get_channel(view.waiting_room_id)
+            if waiter.voice and waiter.voice.channel and waiting is not None \
+                    and waiter.voice.channel.id == waiting.id:
+                try:
+                    await waiter.move_to(None, reason="TempVoice: Warteraum-Anfrage abgelehnt")
+                except discord.HTTPException:
+                    pass
+            await interaction.response.edit_message(
+                content=f"❌ {waiter.display_name} wurde weggeschickt.", view=None)
+            return
+
+        if not (waiter.voice and waiter.voice.channel):
+            await interaction.response.edit_message(
+                content=f"❌ {waiter.display_name} ist nicht mehr im Warteraum.", view=None)
+            return
+        try:
+            await waiter.move_to(main_channel, reason="TempVoice: vom Besitzer reingeholt")
+        except discord.Forbidden:
+            await interaction.response.edit_message(
+                content="❌ Mir fehlt das Recht **Mitglieder verschieben** – ich kann niemanden "
+                        "reinholen. Bitte gib dem Bot dieses Recht.", view=None)
+            return
+        except discord.HTTPException:
+            await interaction.response.edit_message(
+                content="❌ Konnte den Gast nicht reinholen.", view=None)
+            return
+        await interaction.response.edit_message(
+            content=f"✅ {waiter.mention} wurde reingeholt.", view=None)
 
     # ─────────────────────────────────────────────────────────────────────────
     # BEFEHLE – ADMIN

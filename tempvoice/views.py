@@ -45,7 +45,8 @@ def build_interface_embed(guild: discord.Guild) -> discord.Embed:
             f"{C.BTN_CLAIM[1]} **{C.BTN_CLAIM[0]}** – Besitz übernehmen (wenn Besitzer weg)\n"
             f"{C.BTN_TRANSFER[1]} **{C.BTN_TRANSFER[0]}** – Besitz an anderes Mitglied geben\n"
             f"{C.BTN_BITRATE[1]} **{C.BTN_BITRATE[0]}** – Audio-Qualität\n"
-            f"{C.BTN_REGION[1]} **{C.BTN_REGION[0]}** – Voice-Region"
+            f"{C.BTN_REGION[1]} **{C.BTN_REGION[0]}** – Voice-Region\n"
+            f"{C.BTN_WAITING[1]} **{C.BTN_WAITING[0]}** – Warteraum an/aus (Bot holt Wartende rein)"
         ),
         inline=False,
     )
@@ -156,6 +157,111 @@ class TempVoicePanel(discord.ui.View):
         await interaction.response.send_message(
             "Wähle die Voice-Region:",
             view=RegionSelectView(self.cog, channel), ephemeral=True)
+
+    @discord.ui.button(label=C.BTN_WAITING[0], emoji=C.BTN_WAITING[1],
+                       style=discord.ButtonStyle.secondary, custom_id=C.CID_WAITING, row=2)
+    async def btn_waiting(self, interaction: discord.Interaction, button: discord.ui.Button):
+        channel = await self.cog.resolve_owned(interaction)
+        if channel is None:
+            return
+        await self.cog.toggle_waiting_room(interaction, channel)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ANKLOPFEN  (für gesperrte Channel – liegt im Text-Chat des Voice-Channels)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_knock_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="🔒 Gesperrter Channel?",
+        description=(
+            "Wenn dieser Channel gesperrt ist, kannst du hier **anklopfen**. "
+            "Der Besitzer bekommt eine Anfrage und kann dich reinlassen – "
+            "danach kannst du einfach beitreten."
+        ),
+        color=C.COLOR_INFO,
+    )
+    return embed
+
+
+class KnockView(discord.ui.View):
+    """Persistenter „Anklopfen\"-Button im Text-Chat eines Temp-Channels."""
+
+    def __init__(self, cog: "TempVoice"):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label=C.BTN_KNOCK[0], emoji=C.BTN_KNOCK[1],
+                       style=discord.ButtonStyle.primary, custom_id=C.CID_KNOCK)
+    async def btn_knock(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.handle_knock(interaction)
+
+
+class KnockRequestView(discord.ui.View):
+    """Kurzlebige Anfrage mit Reinlassen/Ablehnen – nur der Besitzer entscheidet."""
+
+    def __init__(self, cog: "TempVoice", owner_id: int,
+                 knocker: discord.Member, channel_id: int):
+        super().__init__(timeout=C.KNOCK_REQUEST_TIMEOUT)
+        self.cog = cog
+        self.owner_id = owner_id
+        self.knocker = knocker
+        self.channel_id = channel_id
+        self.message: Optional[discord.Message] = None
+
+    @discord.ui.button(label=C.BTN_KNOCK_ACCEPT[0], emoji=C.BTN_KNOCK_ACCEPT[1],
+                       style=discord.ButtonStyle.success)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.resolve_knock(interaction, self, accept=True)
+
+    @discord.ui.button(label=C.BTN_KNOCK_REJECT[0], emoji=C.BTN_KNOCK_REJECT[1],
+                       style=discord.ButtonStyle.danger)
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.resolve_knock(interaction, self, accept=False)
+
+    async def on_timeout(self) -> None:
+        self.cog._pending_knocks.discard((self.channel_id, self.knocker.id))
+        if self.message is not None:
+            try:
+                await self.message.edit(content="⌛ Die Anklopf-Anfrage ist abgelaufen.", view=None)
+            except discord.HTTPException:
+                pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WARTERAUM  (optional – der Bot holt Wartende rein, der Besitzer braucht kein Ziehen-Recht)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class WaitingAdmitView(discord.ui.View):
+    """Kurzlebige Anfrage: Der Besitzer entscheidet, ob ein Wartender reingeholt wird."""
+
+    def __init__(self, cog: "TempVoice", owner_id: int, waiter: discord.Member,
+                 main_id: int, waiting_room_id: int):
+        super().__init__(timeout=C.KNOCK_REQUEST_TIMEOUT)
+        self.cog = cog
+        self.owner_id = owner_id
+        self.waiter = waiter
+        self.main_id = main_id
+        self.waiting_room_id = waiting_room_id
+        self.message: Optional[discord.Message] = None
+
+    @discord.ui.button(label=C.BTN_ADMIT[0], emoji=C.BTN_ADMIT[1],
+                       style=discord.ButtonStyle.success)
+    async def admit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.resolve_wait(interaction, self, admit=True)
+
+    @discord.ui.button(label=C.BTN_DISMISS[0], emoji=C.BTN_DISMISS[1],
+                       style=discord.ButtonStyle.danger)
+    async def dismiss(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.resolve_wait(interaction, self, admit=False)
+
+    async def on_timeout(self) -> None:
+        self.cog._pending_waits.discard((self.main_id, self.waiter.id))
+        if self.message is not None:
+            try:
+                await self.message.edit(content="⌛ Die Warteraum-Anfrage ist abgelaufen.", view=None)
+            except discord.HTTPException:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
