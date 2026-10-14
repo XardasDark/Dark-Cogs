@@ -173,7 +173,9 @@ class TempVoice(commands.Cog):
         bitrate = max(C.MIN_BITRATE, bitrate)
         limit = int(settings.get("limit") or 0)
         region = settings.get("region")
-        base_overwrites = dict(category.overwrites) if category else None
+        # Rechte vom Generator-Channel als Vorlage erben (dort stellt der Admin sie ein)
+        base_overwrites = dict(generator.overwrites) or (
+            dict(category.overwrites) if category else None)
         overwrites = controls.build_overwrites(guild, member, settings, base_overwrites)
 
         try:

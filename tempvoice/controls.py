@@ -26,10 +26,10 @@ def build_overwrites(guild: discord.Guild, owner: discord.Member,
                      ) -> Dict[Target, discord.PermissionOverwrite]:
     """Baut die Permission-Overwrites für einen neuen Channel.
 
-    `base` sind die Overwrites der Zielkategorie – sie werden als Grundlage
-    übernommen (damit der Channel die Kategorie-Rechte wie @everyone „Reden/Video"
-    oder „nur Rolle X sieht" wirklich erbt). Owner-, Sperr-/Verbergen- sowie
-    Erlauben/Sperren-Logik wird nur obendrauf gelegt.
+    `base` sind die Overwrites des Generator-Channels (Vorlage) – sie werden als
+    Grundlage übernommen (damit der Temp-Channel die dort gesetzten Rechte wie
+    @everyone „Reden/Video" oder „nur Rolle X sieht" wirklich erbt). Owner-,
+    Sperr-/Verbergen- sowie Erlauben/Sperren-Logik wird nur obendrauf gelegt.
     """
     overwrites: Dict[Target, discord.PermissionOverwrite] = {}
 
