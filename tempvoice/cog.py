@@ -173,7 +173,8 @@ class TempVoice(commands.Cog):
         bitrate = max(C.MIN_BITRATE, bitrate)
         limit = int(settings.get("limit") or 0)
         region = settings.get("region")
-        overwrites = controls.build_overwrites(guild, member, settings)
+        base_overwrites = dict(category.overwrites) if category else None
+        overwrites = controls.build_overwrites(guild, member, settings, base_overwrites)
 
         try:
             channel = await guild.create_voice_channel(

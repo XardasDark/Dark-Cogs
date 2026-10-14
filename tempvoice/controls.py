@@ -21,27 +21,47 @@ Target = Union[discord.Member, discord.Role]
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_overwrites(guild: discord.Guild, owner: discord.Member,
-                     settings: Dict[str, Any]) -> Dict[Target, discord.PermissionOverwrite]:
-    """Baut die Permission-Overwrites für einen neuen Channel aus einem Profil."""
+                     settings: Dict[str, Any],
+                     base: Optional[Dict[Target, discord.PermissionOverwrite]] = None
+                     ) -> Dict[Target, discord.PermissionOverwrite]:
+    """Baut die Permission-Overwrites für einen neuen Channel.
+
+    `base` sind die Overwrites der Zielkategorie – sie werden als Grundlage
+    übernommen (damit der Channel die Kategorie-Rechte wie @everyone „Reden/Video"
+    oder „nur Rolle X sieht" wirklich erbt). Owner-, Sperr-/Verbergen- sowie
+    Erlauben/Sperren-Logik wird nur obendrauf gelegt.
+    """
     overwrites: Dict[Target, discord.PermissionOverwrite] = {}
 
-    everyone = discord.PermissionOverwrite()
+    # 1) Kategorie-Overwrites als Basis übernehmen (echte Vererbung)
+    if base:
+        for target, ow in base.items():
+            overwrites[target] = discord.PermissionOverwrite.from_pair(*ow.pair())
+
+    # 2) @everyone: Sperren/Verbergen setzen, übrige Kategorie-Rechte erhalten
+    everyone = overwrites.get(guild.default_role) or discord.PermissionOverwrite()
     if settings.get("locked"):
         everyone.connect = False
     if settings.get("hidden"):
         everyone.view_channel = False
     overwrites[guild.default_role] = everyone
 
-    # Besitzer darf immer sehen & joinen
-    overwrites[owner] = discord.PermissionOverwrite(view_channel=True, connect=True)
+    # 3) Besitzer darf in seinem Channel immer sehen, joinen, reden & streamen
+    owner_ow = overwrites.get(owner) or discord.PermissionOverwrite()
+    owner_ow.update(view_channel=True, connect=True, speak=True, stream=True)
+    overwrites[owner] = owner_ow
 
-    # Dauerhaft erlaubte User/Rollen
+    # 4) Dauerhaft erlaubte User/Rollen
     for target in _resolve_targets(guild, settings.get("permit", [])):
-        overwrites[target] = discord.PermissionOverwrite(view_channel=True, connect=True)
+        ow = overwrites.get(target) or discord.PermissionOverwrite()
+        ow.update(view_channel=True, connect=True)
+        overwrites[target] = ow
 
-    # Dauerhaft gesperrte User
+    # 5) Dauerhaft gesperrte User
     for target in _resolve_targets(guild, settings.get("reject", [])):
-        overwrites[target] = discord.PermissionOverwrite(view_channel=False, connect=False)
+        ow = overwrites.get(target) or discord.PermissionOverwrite()
+        ow.update(view_channel=False, connect=False)
+        overwrites[target] = ow
 
     return overwrites
 
