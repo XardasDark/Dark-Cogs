@@ -100,12 +100,17 @@ class TempVoice(commands.Cog):
             return
         guild = member.guild
 
+        # Nur echte Channel-Wechsel auswerten – nicht Mute/Deafen/Video-Umschaltungen,
+        # die ebenfalls on_voice_state_update auslösen (sonst Mehrfach-Erstellung + Spam).
+        joined = after.channel is not None and (
+            before.channel is None or before.channel.id != after.channel.id)
+
         # 1) Betritt der User den Generator-Channel → neuen Channel erstellen
-        if after.channel and await self.store.is_generator(guild, after.channel.id):
+        if joined and await self.store.is_generator(guild, after.channel.id):
             await self._create_temp_channel(member, after.channel)
 
         # 1b) Betritt der User einen Warteraum → Besitzer benachrichtigen
-        if after.channel is not None:
+        if joined:
             main_id, owner_id = await self.store.find_main_by_waiting(guild, after.channel.id)
             if main_id is not None:
                 await self._handle_waiter(member, after.channel, main_id, owner_id)
