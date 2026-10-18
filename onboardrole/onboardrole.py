@@ -18,12 +18,17 @@ Befehle (Admin, „Rollen verwalten"):
   /onboard rolle-remove <rolle>     – Rolle entfernen
   /onboard toggle                   – aktivieren/deaktivieren
   /onboard log [kanal]              – Log-Kanal setzen (leer = aus)
-  /onboard willkommen [text] [kanal]– Willkommensnachricht (leer = aus; kanal leer = DM)
+  /onboard willkommen <an|aus> [kanal] – Willkommens-Embed (kanal leer = DM)
+  /onboard onboarding-dm [text]     – Onboarding-Nachricht per DM (leer = aus)
   /onboard info                     – Konfiguration + Systemcheck
   /onboard test <mitglied>          – Trockentest (prüft nur, vergibt nichts)
+
+Willkommens-Embed: zeigt automatisch den Avatar des neuen Mitglieds als Thumbnail
+und ein zufällig gewähltes Banner-Bild aus dem Banner-Channel.
 """
 
 import logging
+import random
 from typing import List, Optional
 
 import discord
@@ -37,6 +42,18 @@ COLOR_INFO = 0x5865F2
 COLOR_OK = 0x00C853
 COLOR_ERROR = 0xFF5252
 
+# Willkommens-Embed
+WELCOME_COLOR = 11570519
+WELCOME_DESCRIPTION = (
+    "Willkommen !\n\n"
+    "Schön, dass du dabei bist, {member}!\n\n"
+    "Mach's dir gemütlich, schau dich ein bisschen um und viel Spaß beim gemeinsamen Zocken."
+)
+
+# Banner: zufällig eines von zwei Bildern aus diesen Nachrichten im Banner-Channel.
+BANNER_CHANNEL_ID = 1559840878002966599
+BANNER_MESSAGE_IDS = [1559896503948939374, 1559897089738281021]
+
 
 class OnboardRole(commands.Cog):
     """🎓 OnboardRole – Rollen automatisch nach dem Onboarding vergeben."""
@@ -48,8 +65,9 @@ class OnboardRole(commands.Cog):
             enabled=False,
             role_ids=[],
             log_channel_id=None,
-            welcome_text=None,          # None = keine Willkommensnachricht
+            welcome_enabled=False,      # Willkommens-Embed an/aus
             welcome_channel_id=None,    # None = per DM, sonst Kanal-ID
+            onboarding_dm_text=None,    # None = keine Onboarding-DM
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -96,6 +114,7 @@ class OnboardRole(commands.Cog):
             return
 
         await self._send_welcome(member)
+        await self._send_onboarding_dm(member)
         role_mentions = ", ".join(r.mention for r in to_add)
         await self._log(member.guild,
                         f"✅ {member.mention} hat das Onboarding abgeschlossen → {role_mentions}")
@@ -121,22 +140,72 @@ class OnboardRole(commands.Cog):
                 .replace("{server}", member.guild.name)
                 .replace("{count}", str(member.guild.member_count or 0)))
 
+    async def _pick_banner_url(self, guild: discord.Guild) -> Optional[str]:
+        """Holt zufällig eines der Banner-Bilder aus dem Banner-Channel.
+
+        Die Attachment-URL wird pro Aufruf frisch geladen, damit die signierte
+        CDN-URL nicht abgelaufen ist.
+        """
+        channel = guild.get_channel(BANNER_CHANNEL_ID)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(BANNER_CHANNEL_ID)
+            except discord.HTTPException:
+                return None
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            return None
+
+        for msg_id in random.sample(BANNER_MESSAGE_IDS, k=len(BANNER_MESSAGE_IDS)):
+            try:
+                msg = await channel.fetch_message(msg_id)
+            except discord.HTTPException:
+                continue
+            for att in msg.attachments:
+                if att.content_type is None or att.content_type.startswith("image"):
+                    return att.url
+            for emb in msg.embeds:
+                if emb.image and emb.image.url:
+                    return emb.image.url
+        return None
+
     async def _send_welcome(self, member: discord.Member) -> None:
         conf = self.config.guild(member.guild)
-        text = await conf.welcome_text()
-        if not text:
+        if not await conf.welcome_enabled():
             return
-        content = self._format(text, member)
+
+        embed = discord.Embed(
+            description=WELCOME_DESCRIPTION.format(member=member.mention),
+            color=discord.Color(WELCOME_COLOR),
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        banner_url = await self._pick_banner_url(member.guild)
+        if banner_url:
+            embed.set_image(url=banner_url)
+
         chan_id = await conf.welcome_channel_id()
         try:
             if chan_id:
                 channel = member.guild.get_channel(chan_id)
                 if channel is not None:
-                    await channel.send(content)
+                    # Ping gehört in den content – Mentions im Embed benachrichtigen nicht.
+                    await channel.send(
+                        content=member.mention,
+                        embed=embed,
+                        allowed_mentions=discord.AllowedMentions(users=True),
+                    )
             else:
-                await member.send(content)
+                await member.send(embed=embed)
         except discord.HTTPException:
             pass  # DMs zu / fehlende Rechte – nicht kritisch
+
+    async def _send_onboarding_dm(self, member: discord.Member) -> None:
+        text = await self.config.guild(member.guild).onboarding_dm_text()
+        if not text:
+            return
+        try:
+            await member.send(self._format(text, member))
+        except discord.HTTPException:
+            pass  # DMs zu – nicht kritisch
 
     async def _log(self, guild: discord.Guild, message: str) -> None:
         chan_id = await self.config.guild(guild).log_channel_id()
@@ -207,24 +276,42 @@ class OnboardRole(commands.Cog):
         await ctx.send(f"✅ Log-Kanal: {kanal.mention}" if kanal else "✅ Logging deaktiviert.")
 
     @onboard.command(name="willkommen",
-                     description="Willkommensnachricht setzen (leer = aus; Kanal leer = per DM)")
+                     description="Willkommens-Embed an/aus und wo (Kanal leer = per DM)")
     @app_commands.describe(
-        text="Nachricht. Platzhalter: {user} {username} {server} {count}. Leer = deaktivieren.",
+        aktiv="Willkommens-Embed anzeigen (True) oder abschalten (False)",
         kanal="Kanal für die Nachricht (leer = per DM an das Mitglied)",
     )
     @commands.has_permissions(manage_guild=True)
-    async def ob_welcome(self, ctx: commands.Context, text: Optional[str] = None,
+    async def ob_welcome(self, ctx: commands.Context, aktiv: bool,
                          kanal: Optional[discord.TextChannel] = None) -> None:
         conf = self.config.guild(ctx.guild)
-        if not text:
-            await conf.welcome_text.set(None)
-            await ctx.send("✅ Willkommensnachricht deaktiviert.")
+        await conf.welcome_enabled.set(aktiv)
+        if not aktiv:
+            await ctx.send("⏸️ Willkommens-Embed deaktiviert.")
             return
-        await conf.welcome_text.set(text)
         await conf.welcome_channel_id.set(kanal.id if kanal else None)
         ziel = kanal.mention if kanal else "per **DM**"
+        await ctx.send(
+            f"✅ Willkommens-Embed aktiviert ({ziel}). "
+            f"Avatar als Thumbnail + zufälliges Banner werden automatisch gesetzt.",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @onboard.command(name="onboarding-dm",
+                     description="Onboarding-Nachricht per DM an neue Mitglieder (leer = aus)")
+    @app_commands.describe(
+        text="DM-Text. Platzhalter: {user} {username} {server} {count}. Leer = deaktivieren.",
+    )
+    @commands.has_permissions(manage_guild=True)
+    async def ob_onboarding_dm(self, ctx: commands.Context, text: Optional[str] = None) -> None:
+        conf = self.config.guild(ctx.guild)
+        if not text:
+            await conf.onboarding_dm_text.set(None)
+            await ctx.send("⏸️ Onboarding-DM deaktiviert.")
+            return
+        await conf.onboarding_dm_text.set(text)
         vorschau = self._format(text, ctx.author)
-        await ctx.send(f"✅ Willkommensnachricht gesetzt ({ziel}).\nVorschau:\n> {vorschau}",
+        await ctx.send(f"✅ Onboarding-DM gesetzt.\nVorschau:\n> {vorschau}",
                        allowed_mentions=discord.AllowedMentions.none())
 
     @onboard.command(name="info", description="Zeigt die Konfiguration und einen Systemcheck")
@@ -235,8 +322,9 @@ class OnboardRole(commands.Cog):
         enabled = await conf.enabled()
         role_ids = await conf.role_ids()
         log_id = await conf.log_channel_id()
-        welcome_text = await conf.welcome_text()
+        welcome_enabled = await conf.welcome_enabled()
         welcome_chan = await conf.welcome_channel_id()
+        onboarding_dm = await conf.onboarding_dm_text()
 
         roles = ", ".join(r.mention for r in
                           (guild.get_role(i) for i in role_ids) if r) or "_(keine)_"
@@ -247,12 +335,17 @@ class OnboardRole(commands.Cog):
         embed.add_field(name="Status", value="🟢 aktiv" if enabled else "🔴 deaktiviert", inline=False)
         embed.add_field(name="Rollen", value=roles, inline=False)
         embed.add_field(name="Log-Kanal", value=log_chan.mention if log_chan else "_(aus)_", inline=False)
-        if welcome_text:
+        if welcome_enabled:
             ziel = (guild.get_channel(welcome_chan).mention
                     if welcome_chan and guild.get_channel(welcome_chan) else "per DM")
-            embed.add_field(name="Willkommen", value=f"{ziel}\n> {welcome_text}", inline=False)
+            embed.add_field(name="Willkommen", value=f"🟢 Embed {ziel}", inline=False)
         else:
             embed.add_field(name="Willkommen", value="_(aus)_", inline=False)
+        embed.add_field(
+            name="Onboarding-DM",
+            value=f"🟢 aktiv\n> {onboarding_dm}" if onboarding_dm else "_(aus)_",
+            inline=False,
+        )
 
         # Systemcheck
         checks = []
