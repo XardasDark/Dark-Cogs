@@ -48,6 +48,7 @@ class TempVoice(commands.Cog):
             interface_channel_id=None,
             interface_message_id=None,
             temp_channels={},
+            button_roles={},             # {action_key: [role_id, ...]} – leer = für alle
         )
         self.config.register_member(profiles={})   # {gen_id: partial-override}
         self.store = TempVoiceStore(self.config)
@@ -282,9 +283,21 @@ class TempVoice(commands.Cog):
     # HILFEN FÜR DIE VIEWS  (Besitz auflösen, Aktion ausführen)
     # ─────────────────────────────────────────────────────────────────────────
 
-    async def resolve_owned(self, interaction: discord.Interaction) -> Optional[discord.VoiceChannel]:
+    async def _role_allowed(self, member: discord.Member, guild: discord.Guild,
+                            action: str) -> bool:
+        """True, wenn der Button für dieses Mitglied freigegeben ist.
+        Keine Beschränkung konfiguriert → für alle. Admins (Server verwalten) immer."""
+        role_ids = await self.store.get_button_roles(guild, action)
+        if not role_ids:
+            return True
+        if member.guild_permissions.manage_guild:
+            return True
+        return any(r.id in role_ids for r in member.roles)
+
+    async def resolve_owned(self, interaction: discord.Interaction,
+                            action: Optional[str] = None) -> Optional[discord.VoiceChannel]:
         """Gibt den TempVoice-Channel zurück, in dem der User sitzt UND Besitzer ist.
-        Andernfalls wird eine ephemere Fehlermeldung gesendet und None zurückgegeben."""
+        Prüft optional die Rollenfreigabe für `action`. Sonst ephemere Fehlermeldung + None."""
         member = interaction.user
         guild = interaction.guild
         vc = member.voice.channel if (member and member.voice) else None
@@ -298,6 +311,10 @@ class TempVoice(commands.Cog):
             await interaction.response.send_message(
                 "❌ Nur der **Besitzer** kann diesen Channel steuern. "
                 "Ist der Besitzer nicht mehr da, nutze 👑 **Übernehmen**.", ephemeral=True)
+            return None
+        if action and not await self._role_allowed(member, guild, action):
+            await interaction.response.send_message(
+                "❌ Für diesen Button fehlt dir die nötige Rolle.", ephemeral=True)
             return None
         return vc
 
@@ -335,6 +352,10 @@ class TempVoice(commands.Cog):
         if vc is None or not await self.store.is_temp_channel(guild, vc.id):
             await interaction.response.send_message(
                 "❌ Du befindest dich in keinem TempVoice-Channel.", ephemeral=True)
+            return
+        if not await self._role_allowed(member, guild, "claim"):
+            await interaction.response.send_message(
+                "❌ Für diesen Button fehlt dir die nötige Rolle.", ephemeral=True)
             return
         owner_id = await self.store.get_owner_id(guild, vc.id)
         if owner_id == member.id:
@@ -761,6 +782,56 @@ class TempVoice(commands.Cog):
                         value=interface.mention if interface else "_(nicht gesetzt)_", inline=False)
         embed.add_field(name="Aktive temporäre Channel", value=str(len(temps)), inline=False)
         embed.set_footer(text="Einstellungen je Generator: /tempvoice generator-list")
+        await ctx.send(embed=embed)
+
+    # ── Button-Rollenbeschränkung ───────────────────────────────────────────────
+
+    _BUTTON_CHOICES = [app_commands.Choice(name=label, value=key)
+                       for key, label in C.ACTION_LABELS.items()]
+
+    @tempvoice.command(name="button",
+                       description="Legt fest, welche Rolle einen bestimmten Button nutzen darf")
+    @commands.has_permissions(manage_guild=True)
+    @app_commands.describe(button="Welcher Button?", rolle="Rolle hinzufügen/entfernen (Umschalter)")
+    @app_commands.choices(button=_BUTTON_CHOICES)
+    async def tv_button(self, ctx: commands.Context, button: str, rolle: discord.Role) -> None:
+        if button not in C.ACTION_LABELS:
+            await ctx.send("❌ Unbekannter Button.")
+            return
+        now_allowed = await self.store.toggle_button_role(ctx.guild, button, rolle.id)
+        label = C.ACTION_LABELS[button]
+        if now_allowed:
+            await ctx.send(f"✅ **{label}** darf jetzt (auch) von {rolle.mention} genutzt werden.")
+        else:
+            await ctx.send(f"✅ {rolle.mention} darf **{label}** nicht mehr nutzen.")
+
+    @tempvoice.command(name="button-clear",
+                       description="Hebt die Rollenbeschränkung eines Buttons auf (wieder für alle)")
+    @commands.has_permissions(manage_guild=True)
+    @app_commands.describe(button="Welcher Button?")
+    @app_commands.choices(button=_BUTTON_CHOICES)
+    async def tv_button_clear(self, ctx: commands.Context, button: str) -> None:
+        if button not in C.ACTION_LABELS:
+            await ctx.send("❌ Unbekannter Button.")
+            return
+        await self.store.clear_button_roles(ctx.guild, button)
+        await ctx.send(f"✅ **{C.ACTION_LABELS[button]}** ist wieder für alle Besitzer nutzbar.")
+
+    @tempvoice.command(name="button-list", description="Zeigt die Rollenbeschränkungen der Buttons")
+    @commands.has_permissions(manage_guild=True)
+    async def tv_button_list(self, ctx: commands.Context) -> None:
+        data = await self.store.all_button_roles(ctx.guild)
+        embed = discord.Embed(title="🔐 Button-Berechtigungen", color=C.COLOR_INFO)
+        lines = []
+        for key, label in C.ACTION_LABELS.items():
+            ids = data.get(key, [])
+            if ids:
+                roles = " ".join(f"<@&{i}>" for i in ids)
+                lines.append(f"**{label}** → {roles}")
+            else:
+                lines.append(f"**{label}** → _alle_")
+        embed.description = "\n".join(lines)
+        embed.set_footer(text="Ohne Einschränkung darf jeder Channel-Besitzer den Button nutzen.")
         await ctx.send(embed=embed)
 
     # ─────────────────────────────────────────────────────────────────────────

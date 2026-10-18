@@ -70,7 +70,7 @@ class TempVoicePanel(discord.ui.View):
     @discord.ui.button(label=C.BTN_RENAME[0], emoji=C.BTN_RENAME[1],
                        style=discord.ButtonStyle.primary, custom_id=C.CID_RENAME, row=0)
     async def btn_rename(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction)
+        channel = await self.cog.resolve_owned(interaction, "rename")
         if channel is None:
             return
         await interaction.response.send_modal(RenameModal(self.cog, channel))
@@ -78,7 +78,7 @@ class TempVoicePanel(discord.ui.View):
     @discord.ui.button(label=C.BTN_LIMIT[0], emoji=C.BTN_LIMIT[1],
                        style=discord.ButtonStyle.primary, custom_id=C.CID_LIMIT, row=0)
     async def btn_limit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction)
+        channel = await self.cog.resolve_owned(interaction, "limit")
         if channel is None:
             return
         await interaction.response.send_modal(LimitModal(self.cog, channel))
@@ -86,7 +86,7 @@ class TempVoicePanel(discord.ui.View):
     @discord.ui.button(label=C.BTN_LOCK[0], emoji=C.BTN_LOCK[1],
                        style=discord.ButtonStyle.secondary, custom_id=C.CID_LOCK, row=0)
     async def btn_lock(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction)
+        channel = await self.cog.resolve_owned(interaction, "lock")
         if channel is None:
             return
         await self.cog.run_action(interaction, controls.toggle_lock, channel)
@@ -94,7 +94,7 @@ class TempVoicePanel(discord.ui.View):
     @discord.ui.button(label=C.BTN_HIDE[0], emoji=C.BTN_HIDE[1],
                        style=discord.ButtonStyle.secondary, custom_id=C.CID_HIDE, row=0)
     async def btn_hide(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction)
+        channel = await self.cog.resolve_owned(interaction, "hide")
         if channel is None:
             return
         await self.cog.run_action(interaction, controls.toggle_hide, channel)
@@ -104,7 +104,7 @@ class TempVoicePanel(discord.ui.View):
     @discord.ui.button(label=C.BTN_PERMIT[0], emoji=C.BTN_PERMIT[1],
                        style=discord.ButtonStyle.success, custom_id=C.CID_PERMIT, row=1)
     async def btn_permit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction)
+        channel = await self.cog.resolve_owned(interaction, "permit")
         if channel is None:
             return
         await interaction.response.send_message(
@@ -114,7 +114,7 @@ class TempVoicePanel(discord.ui.View):
     @discord.ui.button(label=C.BTN_KICK[0], emoji=C.BTN_KICK[1],
                        style=discord.ButtonStyle.danger, custom_id=C.CID_KICK, row=1)
     async def btn_kick(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction)
+        channel = await self.cog.resolve_owned(interaction, "kick")
         if channel is None:
             return
         await interaction.response.send_message(
@@ -129,7 +129,7 @@ class TempVoicePanel(discord.ui.View):
     @discord.ui.button(label=C.BTN_TRANSFER[0], emoji=C.BTN_TRANSFER[1],
                        style=discord.ButtonStyle.secondary, custom_id=C.CID_TRANSFER, row=1)
     async def btn_transfer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction)
+        channel = await self.cog.resolve_owned(interaction, "transfer")
         if channel is None:
             return
         await interaction.response.send_message(
@@ -141,7 +141,7 @@ class TempVoicePanel(discord.ui.View):
     @discord.ui.button(label=C.BTN_BITRATE[0], emoji=C.BTN_BITRATE[1],
                        style=discord.ButtonStyle.primary, custom_id=C.CID_BITRATE, row=2)
     async def btn_bitrate(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction)
+        channel = await self.cog.resolve_owned(interaction, "bitrate")
         if channel is None:
             return
         await interaction.response.send_message(
@@ -151,7 +151,7 @@ class TempVoicePanel(discord.ui.View):
     @discord.ui.button(label=C.BTN_REGION[0], emoji=C.BTN_REGION[1],
                        style=discord.ButtonStyle.primary, custom_id=C.CID_REGION, row=2)
     async def btn_region(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction)
+        channel = await self.cog.resolve_owned(interaction, "region")
         if channel is None:
             return
         await interaction.response.send_message(
@@ -161,7 +161,7 @@ class TempVoicePanel(discord.ui.View):
     @discord.ui.button(label=C.BTN_WAITING[0], emoji=C.BTN_WAITING[1],
                        style=discord.ButtonStyle.secondary, custom_id=C.CID_WAITING, row=2)
     async def btn_waiting(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction)
+        channel = await self.cog.resolve_owned(interaction, "waiting")
         if channel is None:
             return
         await self.cog.toggle_waiting_room(interaction, channel)

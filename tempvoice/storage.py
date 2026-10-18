@@ -87,6 +87,36 @@ class TempVoiceStore:
         async with self.config.guild(guild).generators() as gens:
             gens.pop(str(channel_id), None)
 
+    # ── Button-Rollenbeschränkung ───────────────────────────────────────────────
+
+    async def all_button_roles(self, guild: discord.Guild) -> Dict[str, List[int]]:
+        return await self.config.guild(guild).button_roles()
+
+    async def get_button_roles(self, guild: discord.Guild, action: str) -> List[int]:
+        data = await self.config.guild(guild).button_roles()
+        return list(data.get(action, []))
+
+    async def toggle_button_role(self, guild: discord.Guild, action: str,
+                                 role_id: int) -> bool:
+        """Fügt eine Rolle für einen Button hinzu oder entfernt sie. True = jetzt erlaubt."""
+        async with self.config.guild(guild).button_roles() as data:
+            ids = data.get(action, [])
+            if role_id in ids:
+                ids.remove(role_id)
+                present = False
+            else:
+                ids.append(role_id)
+                present = True
+            if ids:
+                data[action] = ids
+            else:
+                data.pop(action, None)
+            return present
+
+    async def clear_button_roles(self, guild: discord.Guild, action: str) -> None:
+        async with self.config.guild(guild).button_roles() as data:
+            data.pop(action, None)
+
     # ── Interface ───────────────────────────────────────────────────────────────
 
     async def get_interface(self, guild: discord.Guild) -> tuple:

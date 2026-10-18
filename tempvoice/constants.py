@@ -68,6 +68,24 @@ def waiting_room_name(main_name: str) -> str:
     return WAITING_ROOM_NAME_TEMPLATE.format(name=main_name)[:MAX_CHANNEL_NAME]
 
 # ─────────────────────────────────────────────────────────────────────────────
+# AKTIONS-SCHLÜSSEL  (für rollenbasierte Button-Beschränkung)
+# key → deutsches Label; dient Config-Keys, Command-Choices und Anzeige.
+# ─────────────────────────────────────────────────────────────────────────────
+ACTION_LABELS: Dict[str, str] = {
+    "rename":   "Name",
+    "limit":    "Limit",
+    "lock":     "Sperren",
+    "hide":     "Verbergen",
+    "permit":   "Erlauben",
+    "kick":     "Rauswerfen",
+    "claim":    "Übernehmen",
+    "transfer": "Übertragen",
+    "bitrate":  "Bitrate",
+    "region":   "Region",
+    "waiting":  "Warteraum",
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # VOICE-REGIONEN  (rtc_region-String → Anzeigename)
 # None = Automatisch (Discord wählt die beste Region selbst)
 # ─────────────────────────────────────────────────────────────────────────────
