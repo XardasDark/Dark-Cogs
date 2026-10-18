@@ -4,48 +4,179 @@
     "name":         "Schwertkämpfer",
     "emoji":        "🗡️",
     "default_role": "dd",
-    "description":  "Nahkampf-Klasse. Vorstufe von Ritter und Kreuzritter."
+    "tier":         1,
+    "parent":       null,
+    "description":  "1. Job. Nahkampf. Vorstufe von Ritter und Kreuzritter."
   },
   {
     "key":          "magier",
     "name":         "Magier",
     "emoji":        "🔮",
     "default_role": "dd",
-    "description":  "Fernkampf-Magie. Vorstufe von Wizard und Sage."
+    "tier":         1,
+    "parent":       null,
+    "description":  "1. Job. Fernkampf-Magie. Vorstufe von Zauberer und Weiser."
   },
   {
     "key":          "bogenschütze",
     "name":         "Bogenschütze",
     "emoji":        "🏹",
     "default_role": "dd",
-    "description":  "Fernkampf-Physisch. Vorstufe von Hunter und Bard/Dancer."
+    "tier":         1,
+    "parent":       null,
+    "description":  "1. Job. Fernkampf-Physisch. Vorstufe von Jäger, Barde und Tänzerin."
   },
   {
     "key":          "dieb",
     "name":         "Dieb",
     "emoji":        "🔪",
     "default_role": "dd",
-    "description":  "Schneller Nahkampf, hoher Ausweichen-Wert. Vorstufe von Assassin und Rogue."
+    "tier":         1,
+    "parent":       null,
+    "description":  "1. Job. Schneller Nahkampf. Vorstufe von Assassine und Schurke."
   },
   {
     "key":          "händler",
     "name":         "Händler",
     "emoji":        "💰",
     "default_role": "support",
-    "description":  "Support & Wirtschaft. Vorstufe von Blacksmith und Alchemist."
+    "tier":         1,
+    "parent":       null,
+    "description":  "1. Job. Support & Wirtschaft. Vorstufe von Schmied und Alchemist."
   },
   {
     "key":          "akolyth",
     "name":         "Akolyth",
     "emoji":        "✝️",
     "default_role": "heiler",
-    "description":  "Heiler und Support. Vorstufe von Priest und Monk."
+    "tier":         1,
+    "parent":       null,
+    "description":  "1. Job. Heiler & Support. Vorstufe von Priester und Mönch."
+  },
+  {
+    "key":          "ritter",
+    "name":         "Ritter",
+    "emoji":        "⚔️",
+    "default_role": "dd",
+    "tier":         2,
+    "parent":       "schwertkämpfer",
+    "description":  "2. Job von Schwertkämpfer. Starker Nahkampf-DD."
+  },
+  {
+    "key":          "kreuzritter",
+    "name":         "Kreuzritter",
+    "emoji":        "🛡️",
+    "default_role": "tank",
+    "tier":         2,
+    "parent":       "schwertkämpfer",
+    "description":  "2. Job von Schwertkämpfer. Schild-Tank & Support."
+  },
+  {
+    "key":          "zauberer",
+    "name":         "Zauberer",
+    "emoji":        "⚡",
+    "default_role": "dd",
+    "tier":         2,
+    "parent":       "magier",
+    "description":  "2. Job von Magier. Flächen-Magieschaden."
+  },
+  {
+    "key":          "weiser",
+    "name":         "Weiser",
+    "emoji":        "📖",
+    "default_role": "support",
+    "tier":         2,
+    "parent":       "magier",
+    "description":  "2. Job von Magier. Magie-Support & Utility."
+  },
+  {
+    "key":          "schmied",
+    "name":         "Schmied",
+    "emoji":        "🔨",
+    "default_role": "dd",
+    "tier":         2,
+    "parent":       "händler",
+    "description":  "2. Job von Händler. Nahkampf-DD & Herstellung."
+  },
+  {
+    "key":          "alchemist",
+    "name":         "Alchemist",
+    "emoji":        "⚗️",
+    "default_role": "support",
+    "tier":         2,
+    "parent":       "händler",
+    "description":  "2. Job von Händler. Tränke, Homunkulus & Support."
+  },
+  {
+    "key":          "priester",
+    "name":         "Priester",
+    "emoji":        "⛪",
+    "default_role": "heiler",
+    "tier":         2,
+    "parent":       "akolyth",
+    "description":  "2. Job von Akolyth. Haupt-Heiler & Buffs."
+  },
+  {
+    "key":          "mönch",
+    "name":         "Mönch",
+    "emoji":        "👊",
+    "default_role": "dd",
+    "tier":         2,
+    "parent":       "akolyth",
+    "description":  "2. Job von Akolyth. Nahkampf-Burst-DD."
+  },
+  {
+    "key":          "assassine",
+    "name":         "Assassine",
+    "emoji":        "🥷",
+    "default_role": "dd",
+    "tier":         2,
+    "parent":       "dieb",
+    "description":  "2. Job von Dieb. Hoher Einzelziel-Schaden."
+  },
+  {
+    "key":          "schurke",
+    "name":         "Schurke",
+    "emoji":        "🗝️",
+    "default_role": "dd",
+    "tier":         2,
+    "parent":       "dieb",
+    "description":  "2. Job von Dieb. DD mit Dieb-/Utility-Skills."
+  },
+  {
+    "key":          "jäger",
+    "name":         "Jäger",
+    "emoji":        "🦅",
+    "default_role": "dd",
+    "tier":         2,
+    "parent":       "bogenschütze",
+    "description":  "2. Job von Bogenschütze. Fernkampf-DD mit Falke & Fallen."
+  },
+  {
+    "key":          "barde",
+    "name":         "Barde",
+    "emoji":        "🎵",
+    "default_role": "support",
+    "tier":         2,
+    "parent":       "bogenschütze",
+    "description":  "2. Job von Bogenschütze (männlich). Buff-Lieder & Support."
+  },
+  {
+    "key":          "tänzerin",
+    "name":         "Tänzerin",
+    "emoji":        "💃",
+    "default_role": "support",
+    "tier":         2,
+    "parent":       "bogenschütze",
+    "description":  "2. Job von Bogenschütze (weiblich). Debuff-Tänze & Support."
   },
   {
     "key":          "novize",
     "name":         "Novize",
     "emoji":        "👤",
     "default_role": "beliebig",
+    "tier":         0,
+    "parent":       null,
     "description":  "Startklasse. Noch kein Job gewählt."
   }
 ]

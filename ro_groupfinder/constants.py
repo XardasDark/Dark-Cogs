@@ -32,6 +32,10 @@ ROLE_TYPES: Dict[str, Dict[str, str]] = {
         "name":  "DD",
         "emoji": "⚔️",
     },
+    "mobber": {
+        "name":  "Mobber",
+        "emoji": "🧲",
+    },
     "support": {
         "name":  "Support",
         "emoji": "✨",

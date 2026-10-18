@@ -949,6 +949,7 @@ class _SlotClassSelect(ui.Select):
             discord.SelectOption(
                 label=f"{c.get('emoji', '⚔️')} {c['name']}",
                 value=c["key"],
+                description=(c.get("description") or None) and c["description"][:100],
                 default=(session.state.draft_key == c["key"]),
             )
             for c in classes[:25]

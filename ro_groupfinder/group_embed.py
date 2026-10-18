@@ -271,18 +271,8 @@ def _build_join_class_options_for_slots(open_slots: List[Dict], guild_id: Option
     options = []
     seen    = set()
 
-    # Spezifische Klassen
-    for cls in load_classes(guild_id):
-        if has_free or cls["key"] in class_keys:
-            val = f"class:{cls['key']}"
-            if val not in seen:
-                options.append(discord.SelectOption(
-                    label=f"{cls.get('emoji','⚔️')} {cls['name']}",
-                    value=val,
-                ))
-                seen.add(val)
-
-    # Generische Rollen
+    # Generische Rollen zuerst – so bleiben die Auffang-Optionen (inkl. „Beliebig")
+    # auch bei Freitext-Slots garantiert im 25er-Limit von Discord erhalten.
     for key, role in ROLE_TYPES.items():
         if has_free or key in role_keys:
             val = f"role:{key}"
@@ -290,6 +280,18 @@ def _build_join_class_options_for_slots(open_slots: List[Dict], guild_id: Option
                 options.append(discord.SelectOption(
                     label=f"{role['emoji']} {role['name']}",
                     value=val,
+                ))
+                seen.add(val)
+
+    # Spezifische Klassen (1. & 2. Jobs; 2. Jobs per Beschreibung markiert)
+    for cls in load_classes(guild_id):
+        if has_free or cls["key"] in class_keys:
+            val = f"class:{cls['key']}"
+            if val not in seen:
+                options.append(discord.SelectOption(
+                    label=f"{cls.get('emoji','⚔️')} {cls['name']}",
+                    value=val,
+                    description=(cls.get("description") or None) and cls["description"][:100],
                 ))
                 seen.add(val)
 

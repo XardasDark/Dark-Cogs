@@ -2287,6 +2287,7 @@ class _AboView(ui.View):
             c_opts = [
                 discord.SelectOption(
                     label=c["name"][:100], value=c["key"],
+                    description=(c.get("description") or None) and c["description"][:100],
                     emoji=c.get("emoji") or None, default=c["key"] in sub["classes"],
                 )
                 for c in classes[:25]
