@@ -5,8 +5,8 @@
     "emoji": "🏰"
   },
   {
-    "key":   "memorial_goblin",
-    "name":  "Memorial Dungeon: Goblin Cave",
+    "key":   "memorial_orc",
+    "name":  "Memorial Dungeon: Orc Dungeon",
     "emoji": "🏚️"
   },
   {
@@ -15,19 +15,9 @@
     "emoji": "⚔️"
   },
   {
-    "key":   "grind_payon_cave",
-    "name":  "Grind: Payon Cave",
-    "emoji": "🕯️"
-  },
-  {
-    "key":   "grind_ant_hell",
-    "name":  "Grind: Ant Hell",
-    "emoji": "🐜"
-  },
-  {
-    "key":   "grind_pyramids",
-    "name":  "Grind: Pyramids",
-    "emoji": "🔺"
+    "key":   "grind_nordfeld",
+    "name":  "Grind: Nordfeld",
+    "emoji": "⛏️"
   },
   {
     "key":   "quest",
@@ -35,18 +25,8 @@
     "emoji": "📜"
   },
   {
-    "key":   "roleplay",
-    "name":  "Roleplay",
-    "emoji": "🎭"
-  },
-  {
     "key":   "mvp_hunt",
-    "name":  "MVP Hunt",
+    "name":  "MVP Jagt",
     "emoji": "💀"
-  },
-  {
-    "key":   "woe",
-    "name":  "War of Emperium (WoE)",
-    "emoji": "🏯"
   }
 ]
