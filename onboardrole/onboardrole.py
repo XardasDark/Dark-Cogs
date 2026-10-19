@@ -29,7 +29,7 @@ und ein zufällig gewähltes Banner-Bild aus dem Banner-Channel.
 
 import logging
 import random
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import discord
 from discord import app_commands
@@ -50,9 +50,9 @@ WELCOME_DESCRIPTION = (
     "Mach's dir gemütlich, schau dich ein bisschen um und viel Spaß beim gemeinsamen Zocken."
 )
 
-# Banner: zufällig eines von zwei Bildern aus diesen Nachrichten im Banner-Channel.
-BANNER_CHANNEL_ID = 1559840878002966599
-BANNER_MESSAGE_IDS = [1559896503948939374, 1559897089738281021]
+# Banner: zufälliges Bild aus diesem Channel (enthält ausschließlich Banner-Nachrichten).
+BANNER_CHANNEL_ID = 1561495949023514665
+BANNER_HISTORY_LIMIT = 100
 
 
 class OnboardRole(commands.Cog):
@@ -68,6 +68,7 @@ class OnboardRole(commands.Cog):
             welcome_enabled=False,      # Willkommens-Embed an/aus
             welcome_channel_id=None,    # None = per DM, sonst Kanal-ID
             onboarding_dm_text=None,    # None = keine Onboarding-DM
+            last_banner_message_id=None,  # verhindert dasselbe Banner 2x hintereinander
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -140,11 +141,23 @@ class OnboardRole(commands.Cog):
                 .replace("{server}", member.guild.name)
                 .replace("{count}", str(member.guild.member_count or 0)))
 
-    async def _pick_banner_url(self, guild: discord.Guild) -> Optional[str]:
-        """Holt zufällig eines der Banner-Bilder aus dem Banner-Channel.
+    @staticmethod
+    def _banner_from_message(msg: discord.Message) -> Optional[str]:
+        """Bild-URL aus einer Banner-Nachricht (Anhang bevorzugt, sonst Embed-Bild)."""
+        for att in msg.attachments:
+            if att.content_type is None or att.content_type.startswith("image"):
+                return att.url
+        for emb in msg.embeds:
+            if emb.image and emb.image.url:
+                return emb.image.url
+        return None
 
-        Die Attachment-URL wird pro Aufruf frisch geladen, damit die signierte
-        CDN-URL nicht abgelaufen ist.
+    async def _pick_banner_url(self, guild: discord.Guild) -> Optional[str]:
+        """Holt zufällig ein Banner-Bild aus dem Banner-Channel.
+
+        Vermeidet dasselbe Banner zweimal hintereinander (pro Server gemerkt) und
+        liest die Attachment-URL pro Aufruf frisch, damit die signierte CDN-URL
+        nicht abgelaufen ist.
         """
         channel = guild.get_channel(BANNER_CHANNEL_ID)
         if channel is None:
@@ -155,18 +168,24 @@ class OnboardRole(commands.Cog):
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return None
 
-        for msg_id in random.sample(BANNER_MESSAGE_IDS, k=len(BANNER_MESSAGE_IDS)):
-            try:
-                msg = await channel.fetch_message(msg_id)
-            except discord.HTTPException:
-                continue
-            for att in msg.attachments:
-                if att.content_type is None or att.content_type.startswith("image"):
-                    return att.url
-            for emb in msg.embeds:
-                if emb.image and emb.image.url:
-                    return emb.image.url
-        return None
+        # Alle Banner-Nachrichten einsammeln (message_id -> url).
+        banners: Dict[int, str] = {}
+        try:
+            async for msg in channel.history(limit=BANNER_HISTORY_LIMIT):
+                url = self._banner_from_message(msg)
+                if url:
+                    banners[msg.id] = url
+        except discord.HTTPException:
+            return None
+        if not banners:
+            return None
+
+        conf = self.config.guild(guild)
+        last_id = await conf.last_banner_message_id()
+        candidates = [mid for mid in banners if mid != last_id] or list(banners)
+        chosen_id = random.choice(candidates)
+        await conf.last_banner_message_id.set(chosen_id)
+        return banners[chosen_id]
 
     async def _send_welcome(self, member: discord.Member) -> None:
         conf = self.config.guild(member.guild)
