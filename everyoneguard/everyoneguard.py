@@ -175,17 +175,34 @@ class EveryoneGuard(commands.Cog):
         payload = await self._build_payload(message.guild, message.author)
         if payload is None:
             return
+
+        channel = message.channel
+        chan_name = getattr(channel, "name", "?")
+        perms = channel.permissions_for(message.guild.me)
+        if not perms.send_messages:
+            log.warning("EveryoneGuard: Kein Recht „Nachrichten senden\" in #%s (%s).",
+                        chan_name, message.guild.name)
+            return
+        # Ein Embed braucht das Recht „Links einbetten". Fehlt es, als normalen Text posten,
+        # statt still zu scheitern.
+        if "embed" in payload and not perms.embed_links:
+            log.warning("EveryoneGuard: Kein Recht „Links einbetten\" in #%s – poste als Text.",
+                        chan_name)
+            payload = {"content": payload["embed"].description}
+
+        # AllowedMentions.none(): der Hinweis-Text darf niemanden pingen –
+        # weder @everyone noch Rollen (z. B. Beispiel-Ping-Rollen im Text).
+        mentions = discord.AllowedMentions.none()
         try:
-            # AllowedMentions.none(): der Hinweis-Text darf niemanden pingen –
-            # weder @everyone noch Rollen (z. B. Beispiel-Ping-Rollen im Text).
-            await message.reply(
-                mention_author=False,
-                allowed_mentions=discord.AllowedMentions.none(),
-                **payload,
-            )
+            await message.reply(mention_author=False, allowed_mentions=mentions, **payload)
         except discord.HTTPException:
-            # Original-Nachricht evtl. schon gelöscht oder fehlende Rechte – unkritisch.
-            log.debug("EveryoneGuard: Hinweis konnte nicht gepostet werden", exc_info=True)
+            # z. B. Original-Nachricht schon gelöscht oder kein Verlauf-Recht:
+            # als normale Nachricht in den Kanal senden.
+            try:
+                await channel.send(allowed_mentions=mentions, **payload)
+            except discord.HTTPException:
+                log.warning("EveryoneGuard: Hinweis in #%s konnte nicht gepostet werden.",
+                            chan_name, exc_info=True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # BEFEHLE
@@ -321,13 +338,16 @@ class EveryoneGuard(commands.Cog):
         embed.add_field(name="Info-Text", value=f">>> {snippet}", inline=False)
 
         # Systemcheck
+        here_perms = ctx.channel.permissions_for(guild.me)
         checks = [
             ("Message-Content-Intent", self.bot.intents.message_content),
-            ("Recht „Nachrichten senden\"", guild.me.guild_permissions.send_messages),
+            ("Recht „Nachrichten senden\" (dieser Kanal)", here_perms.send_messages),
             # Pingt @everyone für normale Mitglieder bereits nativ ins Leere?
             ("@everyone-Rolle ohne „Erwähnen\"-Recht",
              not guild.default_role.permissions.mention_everyone),
         ]
+        if as_embed:
+            checks.append(("Recht „Links einbetten\" (dieser Kanal)", here_perms.embed_links))
         check_txt = "\n".join(f"{'✅' if ok else '❌'} {name}" for name, ok in checks)
         embed.add_field(name="Systemcheck", value=check_txt, inline=False)
         if guild.default_role.permissions.mention_everyone:
