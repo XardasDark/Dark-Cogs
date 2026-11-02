@@ -1,0 +1,23 @@
+{
+    "name": "EveryoneGuard",
+    "short": "Hinweis-Text, wenn Mitglieder ohne Freigabe @everyone/@here nutzen.",
+    "description": "Erkennt, wenn ein Mitglied ohne freigegebene Rolle @everyone (optional auch @here) schreibt, und postet darunter einen frei konfigurierbaren, mehrzeiligen Hinweis-Text (mit Rollen-/Kanal-Mentions und optional als Embed mit Markdown-Links). Die Original-Nachricht bleibt unverändert und wird nicht gelöscht. Den Ping selbst unterdrückt Discord nativ, solange Mitglieder nicht das Recht „@everyone, @here und alle Rollen erwähnen\" besitzen – `/everyoneguard info` prüft das. Benötigt den privilegierten „Message Content\"-Intent.",
+    "end_user_data_statement": "Dieser Cog speichert keine personenbezogenen Daten von Endnutzern. Gespeichert werden nur serverbezogene Einstellungen (freigegebene Rollen-IDs, Hinweis-Text und Schalter).",
+    "install_msg": "Danke für die Installation von EveryoneGuard! 📢 Starte mit `/everyoneguard setup`. Wichtig: Der „Message Content\"-Intent muss aktiv sein und die @everyone-Rolle sollte in den Servereinstellungen NICHT „@everyone erwähnen\" dürfen – sonst pingt Discord trotzdem. `/everyoneguard info` zeigt, ob alles passt.",
+    "author": [
+        "XardasDark"
+    ],
+    "required_cogs": {},
+    "requirements": [],
+    "tags": [
+        "everyone",
+        "mention",
+        "ping",
+        "moderation",
+        "notice"
+    ],
+    "min_bot_version": "3.5.0",
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}
