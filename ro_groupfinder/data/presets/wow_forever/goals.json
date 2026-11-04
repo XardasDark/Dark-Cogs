@@ -1,0 +1,15 @@
+[
+  { "key": "mc",         "name": "Raid: Geschmolzener Kern",             "emoji": "🔥" },
+  { "key": "onyxia",     "name": "Raid: Onyxias Hort",                   "emoji": "🐲" },
+  { "key": "bwl",        "name": "Raid: Pechschwingenhort",              "emoji": "🐉" },
+  { "key": "zg",         "name": "Raid: Zul'Gurub",                      "emoji": "🐍" },
+  { "key": "aq20",       "name": "Raid: Ruinen von Ahn'Qiraj",           "emoji": "🏜️" },
+  { "key": "aq40",       "name": "Raid: Tempel von Ahn'Qiraj",           "emoji": "🪲" },
+  { "key": "naxx",       "name": "Raid: Naxxramas",                      "emoji": "☠️" },
+  { "key": "worldboss",  "name": "Weltboss",                             "emoji": "🌍" },
+  { "key": "dungeon",    "name": "5-Mann Dungeon",                       "emoji": "🗝️" },
+  { "key": "quest",      "name": "Quest-/Level-Gruppe",                  "emoji": "📜" },
+  { "key": "farm",       "name": "Farmen / Berufe",                      "emoji": "⛏️" },
+  { "key": "pvp_bg",     "name": "PvP: Schlachtfeld",                    "emoji": "⚔️" },
+  { "key": "pvp_world",  "name": "PvP: Open World / Premade",            "emoji": "🩸" }
+]

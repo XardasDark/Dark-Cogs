@@ -1,0 +1,74 @@
+[
+  {
+    "key":          "krieger",
+    "name":         "Krieger",
+    "emoji":        "⚔️",
+    "default_role": "tank",
+    "roles":        ["tank", "dd"],
+    "description":  "Primärer Tank; als Furor/Waffen auch Nahkampf-DD."
+  },
+  {
+    "key":          "paladin",
+    "name":         "Paladin",
+    "emoji":        "📿",
+    "default_role": "heiler",
+    "roles":        ["heiler", "dd"],
+    "description":  "Heilig-Heiler; als Vergelter Nahkampf-DD."
+  },
+  {
+    "key":          "jaeger",
+    "name":         "Jäger",
+    "emoji":        "🏹",
+    "default_role": "dd",
+    "roles":        ["dd"],
+    "description":  "Fernkampf-DD mit Begleiter."
+  },
+  {
+    "key":          "schurke",
+    "name":         "Schurke",
+    "emoji":        "🗡️",
+    "default_role": "dd",
+    "roles":        ["dd"],
+    "description":  "Nahkampf-DD mit hohem Burst."
+  },
+  {
+    "key":          "priester",
+    "name":         "Priester",
+    "emoji":        "🙏",
+    "default_role": "heiler",
+    "roles":        ["heiler", "dd"],
+    "description":  "Heiler; als Schatten Fernkampf-DD."
+  },
+  {
+    "key":          "schamane",
+    "name":         "Schamane",
+    "emoji":        "⚡",
+    "default_role": "heiler",
+    "roles":        ["heiler", "dd"],
+    "description":  "Heiler; als Verstärker/Elementar DD."
+  },
+  {
+    "key":          "magier",
+    "name":         "Magier",
+    "emoji":        "🔮",
+    "default_role": "dd",
+    "roles":        ["dd"],
+    "description":  "Fernkampf-Zauber-DD (Frost/Feuer/Arkan)."
+  },
+  {
+    "key":          "hexenmeister",
+    "name":         "Hexenmeister",
+    "emoji":        "😈",
+    "default_role": "dd",
+    "roles":        ["dd"],
+    "description":  "Fernkampf-DD mit Dämon und DoTs."
+  },
+  {
+    "key":          "druide",
+    "name":         "Druide",
+    "emoji":        "🐾",
+    "default_role": "dd",
+    "roles":        ["tank", "heiler", "dd"],
+    "description":  "Flexibel: Bär (Tank), Baum (Heiler), Katze/Eule (DD)."
+  }
+]

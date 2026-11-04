@@ -1,0 +1,6 @@
+{
+  "game_name":        "WoW Forever",
+  "char_placeholder": "Dein Charaktername (z. B. Jaina)",
+  "max_players":      25,
+  "requirements":     []
+}
