@@ -359,7 +359,7 @@ class ROGroupFinder(commands.Cog):
         await message.edit(embed=build_group_embed(group))
 
         # Übersicht offener Gruppen wieder nach unten schieben
-        await refresh_overview(self.bot, state.guild_id, move_to_bottom=True)
+        await refresh_overview(self.bot, state.guild_id, state.channel_id, move_to_bottom=True)
 
         # Passende Abonnenten benachrichtigen (LFG-Alarm)
         await notify_subscribers(self.bot, group)
@@ -816,7 +816,7 @@ class ROGroupFinder(commands.Cog):
                 pass
 
         delete_group(guild_id, msg_id)
-        await refresh_overview(self.bot, guild_id)
+        await refresh_overview(self.bot, guild_id, group["channel_id"])
         await self._reply(ctx, f"\U0001f5d1\ufe0f Gruppe **{goal}** (ID `{gruppen_id}`) wurde gel\u00f6scht.")
 
     @gruppe_setup.command(name="info", description="Zeigt die aktuelle Konfiguration")
@@ -1353,7 +1353,7 @@ class ROGroupFinder(commands.Cog):
             await notify_group_full(self.bot, group)
 
         # Übersicht aktualisieren (Belegung/Status geändert)
-        await refresh_overview(self.bot, guild_id)
+        await refresh_overview(self.bot, guild_id, group["channel_id"])
 
         await interaction.followup.send(
             f"✅ Du bist der Gruppe beigetreten als **{class_emoji} {class_display}**!",
@@ -1434,7 +1434,7 @@ class ROGroupFinder(commands.Cog):
 
         await notify_creator_leave(self.bot, group, player_name, slot_index)
         await notify_leave_in_forum(self.bot, group, player_name)
-        await refresh_overview(self.bot, guild_id)
+        await refresh_overview(self.bot, guild_id, group["channel_id"])
         await notify_subscribers(self.bot, group)   # freier Slot → Abonnenten
 
         # Embed aktualisieren
@@ -1558,7 +1558,7 @@ class ROGroupFinder(commands.Cog):
 
         # Post-Ansicht + Übersicht aktualisieren
         await self._refresh_group_message(group)
-        await refresh_overview(self.bot, interaction.guild_id)
+        await refresh_overview(self.bot, interaction.guild_id, group["channel_id"])
 
     async def _handle_finish(
         self, interaction: discord.Interaction, msg_id: int, parts: list
@@ -1609,7 +1609,7 @@ class ROGroupFinder(commands.Cog):
         # Alle Mitglieder benachrichtigen + Post auf Abgeschlossen-Ansicht bringen
         await notify_group_finished(self.bot, group)
         await self._refresh_group_message(group)
-        await refresh_overview(self.bot, guild_id)
+        await refresh_overview(self.bot, guild_id, group["channel_id"])
 
         try:
             await interaction.edit_original_response(
@@ -1666,7 +1666,7 @@ class ROGroupFinder(commands.Cog):
 
         await notify_creator_removed(self.bot, group, player_name, slot_index)
         await notify_leave_in_forum(self.bot, group, player_name, removed=True)
-        await refresh_overview(self.bot, interaction.guild_id)
+        await refresh_overview(self.bot, interaction.guild_id, group["channel_id"])
         await notify_subscribers(self.bot, group)   # freier Slot → Abonnenten
 
         # Nächsten Wartelisten-Spieler benachrichtigen
@@ -1796,7 +1796,7 @@ class ROGroupFinder(commands.Cog):
         await notify_leader_change_in_forum(
             self.bot, group, new_id, new_name, old_leader_name
         )
-        await refresh_overview(self.bot, interaction.guild_id)
+        await refresh_overview(self.bot, interaction.guild_id, group["channel_id"])
 
         try:
             await interaction.edit_original_response(
@@ -1842,7 +1842,7 @@ class ROGroupFinder(commands.Cog):
         save_group(interaction.guild_id, group)
 
         await self._refresh_group_message(group)
-        await refresh_overview(self.bot, interaction.guild_id)
+        await refresh_overview(self.bot, interaction.guild_id, group["channel_id"])
 
         try:
             await interaction.edit_original_response(
@@ -1970,7 +1970,7 @@ class ROGroupFinder(commands.Cog):
                 "geschlossen und später gelöscht/archiviert."
             )
 
-        await refresh_overview(self.bot, guild_id)
+        await refresh_overview(self.bot, guild_id, group["channel_id"])
 
         try:
             await interaction.edit_original_response(content=final_txt, embed=None, view=None)
@@ -2004,7 +2004,7 @@ class ROGroupFinder(commands.Cog):
                 pass
 
         await notify_edit(self.bot, group, changes)
-        await refresh_overview(self.bot, interaction.guild_id)
+        await refresh_overview(self.bot, interaction.guild_id, group["channel_id"])
 
     # ─────────────────────────────────────────────────────────────────────────
     # DM-AKTIONEN: SUCHE AKTIV HALTEN / ERNEUT SUCHEN
@@ -2156,7 +2156,7 @@ class ROGroupFinder(commands.Cog):
             await create_forum_post(self.bot, new_group)
             save_group(guild_id, new_group)
             await message.edit(embed=build_group_embed(new_group))
-            await refresh_overview(self.bot, guild_id, move_to_bottom=True)
+            await refresh_overview(self.bot, guild_id, new_group["channel_id"], move_to_bottom=True)
             await notify_subscribers(self.bot, new_group)
         except Exception:
             await interaction.response.edit_message(

@@ -176,7 +176,7 @@ class GroupScheduler:
             group["post_finalized"] = True
             group["post_removed"]   = True
             save_group(guild_id, group)
-            await refresh_overview(self.bot, guild_id)
+            await refresh_overview(self.bot, guild_id, group["channel_id"])
 
     # ─────────────────────────────────────────────────────────────────────────
     # TASK 2 – ERINNERUNGEN
@@ -406,7 +406,7 @@ class GroupScheduler:
             await notify_group_finished(self.bot, group)
             # Post auf Abgeschlossen-Ansicht (mit "Wieder öffnen"-Button) bringen.
             await self._edit_group_post(group)
-            await refresh_overview(self.bot, guild_id)
+            await refresh_overview(self.bot, guild_id, group["channel_id"])
 
     # ─────────────────────────────────────────────────────────────────────────
     # TASK 6 – AUFRÄUM-PIPELINE (Thread schließen/löschen, Record entfernen)
@@ -466,7 +466,7 @@ class GroupScheduler:
             thread_done = (not has_thread) or group.get("thread_deleted")
             if thread_done and group.get("post_finalized") and group.get("post_removed"):
                 delete_group(guild_id, group.get("message_id"))
-                await refresh_overview(self.bot, guild_id)
+                await refresh_overview(self.bot, guild_id, group["channel_id"])
                 continue
 
             if changed:
