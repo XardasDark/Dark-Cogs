@@ -128,7 +128,7 @@ from .subscriptions import notify_subscribers
 from .constants import (
     COLOR_OPEN, COLOR_CLOSED, RECURRENCE_OPTIONS, ROLE_TYPES,
     DEFAULT_CLEANUP_DAYS, DEFAULT_REMINDER_MINUTES, DEFAULT_WAITLIST_TIMEOUT_MINUTES,
-    NOTIFICATION_CATEGORIES, SLOT_TYPE_CLASS,
+    NOTIFICATION_CATEGORIES, SLOT_TYPE_CLASS, SLOT_TYPE_ROLE,
 )
 
 
@@ -1050,15 +1050,21 @@ class ROGroupFinder(commands.Cog):
 
         # Session anlegen
         session_key = f"{interaction.guild_id}:{user_id}"
-        _join_sessions[session_key] = {
+        single_slot_index = open_slots[0]["slot_index"] if len(open_slots) == 1 else None
+        session = {
             "msg_id":     msg_id,
             "guild_id":   interaction.guild_id,
-            "slot_index": open_slots[0]["slot_index"] if len(open_slots) == 1 else None,
+            "slot_index": single_slot_index,
             "class_display": None,
             "class_emoji":   None,
         }
+        _join_sessions[session_key] = session
+        # Bei nur einem offenen Slot ist der Slot bereits fix → Klasse vorbelegen,
+        # damit das gefilterte Dropdown und der Bestätigen-Button sofort passen.
+        if single_slot_index is not None:
+            self._preset_session_class_for_slot(session, group, single_slot_index)
 
-        view = build_join_slot_view(group, user_id)
+        view = build_join_slot_view(group, user_id, selected_slot_index=single_slot_index)
         if not view:
             await interaction.response.send_message("❌ Keine Slots verfügbar.", ephemeral=True)
             return
@@ -1073,18 +1079,55 @@ class ROGroupFinder(commands.Cog):
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+    def _preset_session_class_for_slot(self, session: dict, group: dict, slot_index: int) -> None:
+        """
+        Belegt die Session-Klasse passend zum gewählten Slot vor:
+          - Klassen-Slot → feste Klasse (Auswahl ist eh vorgegeben)
+          - Rollen-Slot  → zurücksetzen (Spieler MUSS eine konkrete Klasse wählen)
+          - Frei-Slot    → zurücksetzen (Spieler muss aktiv wählen)
+        Verhindert außerdem, dass eine vorher für einen anderen Slot getroffene
+        Auswahl „hängen bleibt".
+        """
+        slot = next((s for s in group.get("slots", []) if s["slot_index"] == slot_index), None)
+        if not slot:
+            return
+        stype = slot.get("slot_type")
+        if stype == SLOT_TYPE_CLASS and slot.get("class_key"):
+            cls = get_class_by_key(group.get("guild_id"), slot["class_key"])
+            if cls:
+                session["class_display"] = cls["name"]
+                session["class_emoji"]   = cls.get("emoji", slot.get("emoji", "⚔️"))
+                return
+        # Rollen-Slot / Frei / unbekannt: Auswahl zurücksetzen → Klasse ist Pflicht.
+        session["class_display"] = None
+        session["class_emoji"]   = None
+
     async def _handle_join_slot_select(
         self, interaction: discord.Interaction, msg_id: int, parts: list
     ) -> None:
         user_id     = interaction.user.id
         session_key = f"{interaction.guild_id}:{user_id}"
-        if session_key not in _join_sessions:
+        session     = _join_sessions.get(session_key)
+        if session is None:
             await interaction.response.defer()
             return
 
-        selected = interaction.data["values"][0]
-        _join_sessions[session_key]["slot_index"] = int(selected)
-        await interaction.response.defer()
+        selected = int(interaction.data["values"][0])
+        session["slot_index"] = selected
+
+        group = get_group_by_message(interaction.guild_id, msg_id)
+        if not group:
+            await interaction.response.defer()
+            return
+
+        # Klasse an den neuen Slot anpassen und Dropdown passend neu aufbauen,
+        # damit nur noch zum Slot passende Klassen/Rollen wählbar sind.
+        self._preset_session_class_for_slot(session, group, selected)
+        view = build_join_slot_view(group, user_id, selected_slot_index=selected)
+        if view is None:
+            await interaction.response.defer()
+            return
+        await interaction.response.edit_message(view=view)
 
     async def _handle_join_class_select(
         self, interaction: discord.Interaction, msg_id: int, parts: list
@@ -1096,6 +1139,10 @@ class ROGroupFinder(commands.Cog):
             return
 
         value = interaction.data["values"][0]
+        # Deaktivierter Platzhalter ("Bitte zuerst Slot wählen") – ignorieren.
+        if ":" not in value:
+            await interaction.response.defer()
+            return
         # Format: "role:dd" oder "class:dieb"
         vtype, vkey = value.split(":", 1)
 
@@ -1181,6 +1228,24 @@ class ROGroupFinder(commands.Cog):
             if slot_cls:
                 class_display = slot_cls["name"]
                 class_emoji   = slot_cls.get("emoji", target_slot.get("emoji", "⚔️"))
+        elif target_slot and target_slot.get("slot_type") == SLOT_TYPE_ROLE and target_slot.get("role_key"):
+            # Rollen-Slots verlangen eine KONKRETE Klasse mit passender default_role
+            # ("beliebig" = jede Klasse). Nur wenn die Rolle gar keine Klasse hat,
+            # ist die generische Rolle als Fallback erlaubt.
+            rkey     = target_slot["role_key"]
+            classes  = load_classes(group.get("guild_id"))
+            concrete = classes if rkey == "beliebig" else [c for c in classes if c.get("default_role") == rkey]
+            sel_cls  = next((c for c in concrete if c["name"] == class_display), None)
+            if sel_cls:
+                class_display = sel_cls["name"]
+                class_emoji   = sel_cls.get("emoji", target_slot.get("emoji", "⚔️"))
+            elif concrete:
+                # Slot verlangt eine konkrete Klasse, es kam aber keine gültige an.
+                await interaction.followup.send(
+                    "❌ Für diesen Slot musst du eine konkrete Klasse auswählen.",
+                    ephemeral=True,
+                )
+                return
 
         success = fill_slot(
             group        = group,

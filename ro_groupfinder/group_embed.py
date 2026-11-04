@@ -198,11 +198,17 @@ def build_group_action_view(group: Dict) -> ui.View:
 # JOIN-FLOW: Klassen-/Rollen-Auswahl beim Beitreten
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_join_slot_view(group: Dict, user_id: int) -> Optional[ui.View]:
+def build_join_slot_view(group: Dict, user_id: int,
+                         selected_slot_index: Optional[int] = None) -> Optional[ui.View]:
     """
     Gibt eine Ephemeral-View zurück, mit der der Spieler einen offenen Slot
     und die passende Klasse/Rolle auswählen kann.
-    Die Optionen sind auf die offenen Slots beschränkt.
+
+    Das Klassen-/Rollen-Dropdown wird IMMER auf den konkret gewählten Slot
+    gefiltert (``selected_slot_index``) – bei nur einem offenen Slot automatisch
+    auf diesen. So sieht man für einen DD-Slot nur DD-Optionen, für einen
+    Kleriker-Slot nur den Kleriker usw. Solange bei mehreren offenen Slots noch
+    keiner gewählt ist, bleibt das Klassen-Dropdown deaktiviert.
     """
     open_slots = get_open_slots(group)
     if not open_slots:
@@ -210,13 +216,21 @@ def build_join_slot_view(group: Dict, user_id: int) -> Optional[ui.View]:
 
     view   = ui.View(timeout=120)
     msg_id = str(group.get("message_id", ""))
+    multiple = len(open_slots) > 1
 
-    # Slot-Auswahl (wenn mehrere offen)
-    if len(open_slots) > 1:
+    # Effektiv gewählter Slot: explizit gewählt, sonst der einzige offene.
+    effective_index = selected_slot_index
+    if effective_index is None and not multiple:
+        effective_index = open_slots[0]["slot_index"]
+    effective_slot = next((s for s in open_slots if s["slot_index"] == effective_index), None)
+
+    # Slot-Auswahl (nur wenn mehrere offen) – der aktuelle Slot wird vorausgewählt.
+    if multiple:
         slot_options = [
             discord.SelectOption(
-                label=f"Slot {s['slot_index'] + 1}: {s['emoji']} {s['display_name']}",
+                label=f"Slot {s['slot_index'] + 1}: {s['emoji']} {s['display_name']}"[:100],
                 value=str(s["slot_index"]),
+                default=(s["slot_index"] == effective_index),
             )
             for s in open_slots[:25]
         ]
@@ -228,14 +242,24 @@ def build_join_slot_view(group: Dict, user_id: int) -> Optional[ui.View]:
         )
         view.add_item(slot_sel)
 
-    # Klasse/Rolle Auswahl – auf offene Slots beschränkt
-    class_options = _build_join_class_options_for_slots(open_slots, group.get("guild_id"))
-    class_sel = ui.Select(
-        placeholder="Deine Klasse / Rolle...",
-        options=class_options,
-        custom_id=f"join_class_select:{msg_id}:{user_id}",
-        row=1,
-    )
+    # Klasse/Rolle Auswahl – strikt auf den gewählten Slot beschränkt.
+    if effective_slot is not None:
+        class_options = _build_join_class_options_for_slot(effective_slot, group.get("guild_id"))
+        class_sel = ui.Select(
+            placeholder=f"Klasse / Rolle für {effective_slot.get('display_name', 'Slot')}..."[:150],
+            options=class_options,
+            custom_id=f"join_class_select:{msg_id}:{user_id}",
+            row=1,
+        )
+    else:
+        # Noch kein Slot gewählt → deaktivierter Platzhalter.
+        class_sel = ui.Select(
+            placeholder="Bitte zuerst oben einen Slot wählen...",
+            options=[discord.SelectOption(label="—", value="none")],
+            disabled=True,
+            custom_id=f"join_class_select:{msg_id}:{user_id}",
+            row=1,
+        )
     view.add_item(class_sel)
 
     confirm_btn = ui.Button(
@@ -255,6 +279,69 @@ def build_join_slot_view(group: Dict, user_id: int) -> Optional[ui.View]:
     view.add_item(cancel_btn)
 
     return view
+
+
+def _build_join_class_options_for_slot(slot: Dict, guild_id: Optional[int] = None) -> List[discord.SelectOption]:
+    """
+    Erstellt die Klassen-/Rollen-Optionen für GENAU EINEN Slot:
+      - SLOT_TYPE_CLASS → nur diese eine Klasse (de facto vorausgefüllt)
+      - SLOT_TYPE_ROLE  → die generische Rolle + alle Klassen mit passender
+                          ``default_role`` (z. B. DD-Slot → DD + alle DD-Klassen)
+      - SLOT_TYPE_FREE  → alle Rollen + alle Klassen
+    """
+    options: List[discord.SelectOption] = []
+    seen: set = set()
+
+    def add_role(key: str) -> None:
+        role = ROLE_TYPES.get(key)
+        if not role:
+            return
+        val = f"role:{key}"
+        if val not in seen:
+            options.append(discord.SelectOption(label=f"{role['emoji']} {role['name']}", value=val))
+            seen.add(val)
+
+    def add_class(cls: Dict) -> None:
+        val = f"class:{cls['key']}"
+        if val not in seen:
+            options.append(discord.SelectOption(
+                label=f"{cls.get('emoji', '⚔️')} {cls['name']}",
+                value=val,
+                description=(cls.get("description") or None) and cls["description"][:100],
+            ))
+            seen.add(val)
+
+    classes = load_classes(guild_id)
+    stype   = slot.get("slot_type")
+
+    if stype == SLOT_TYPE_CLASS and slot.get("class_key"):
+        cls = next((c for c in classes if c["key"] == slot["class_key"]), None)
+        if cls:
+            add_class(cls)
+
+    elif stype == SLOT_TYPE_ROLE and slot.get("role_key"):
+        rkey = slot["role_key"]
+        # Rollen-Slots verlangen eine KONKRETE Klasse – keine generische Rolle.
+        # "beliebig" = jede Klasse, sonst nur Klassen mit passender default_role.
+        for cls in classes:
+            if rkey == "beliebig" or cls.get("default_role") == rkey:
+                add_class(cls)
+        # Nur falls die Rolle gar keine passende Klasse hat (z. B. Mobber ohne
+        # eigene Klassen), bleibt die generische Rolle als einzige Option, damit
+        # der Slot überhaupt befüllbar ist.
+        if not options:
+            add_role(rkey)
+
+    else:  # SLOT_TYPE_FREE oder unbekannt → alles erlauben
+        for key in ROLE_TYPES:
+            add_role(key)
+        for cls in classes:
+            add_class(cls)
+
+    # Fallback, falls z. B. die hinterlegte Klasse nicht mehr existiert.
+    return options[:25] if options else [
+        discord.SelectOption(label="Beliebig", value="role:beliebig", emoji="❓")
+    ]
 
 
 def _build_join_class_options_for_slots(open_slots: List[Dict], guild_id: Optional[int] = None) -> List[discord.SelectOption]:
