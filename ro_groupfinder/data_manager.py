@@ -626,6 +626,21 @@ def get_class_by_key(guild_id: Optional[int], key: str,
     return None
 
 
+def class_roles(cls: Dict) -> List[str]:
+    """
+    Rollen, die eine Klasse füllen kann.
+
+    Nutzt das optionale Feld ``roles`` (Liste, z. B. ["tank","heiler","dd"] für
+    flexible Klassen wie den WoW-Druiden). Fehlt es, gilt ``default_role`` als
+    einzige Rolle (abwärtskompatibel für Ragnarok/Aion).
+    """
+    roles = cls.get("roles")
+    if isinstance(roles, list) and roles:
+        return [str(r) for r in roles]
+    dr = cls.get("default_role")
+    return [dr] if dr else []
+
+
 def resolve_goal_name(group: Dict) -> str:
     """
     Gibt den anzeigbaren Zielnamen einer Gruppe zurück.

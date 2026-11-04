@@ -91,6 +91,7 @@ from .data_manager import (
     load_goals,
     load_classes,
     get_class_by_key,
+    class_roles,
     resolve_goal_name,
     list_presets,
     apply_preset,
@@ -1293,7 +1294,7 @@ class ROGroupFinder(commands.Cog):
             # ist die generische Rolle als Fallback erlaubt.
             rkey     = target_slot["role_key"]
             classes  = load_classes(group.get("guild_id"), group.get("channel_id"))
-            concrete = classes if rkey == "beliebig" else [c for c in classes if c.get("default_role") == rkey]
+            concrete = classes if rkey == "beliebig" else [c for c in classes if rkey in class_roles(c)]
             sel_cls  = next((c for c in concrete if c["name"] == class_display), None)
             if sel_cls:
                 class_display = sel_cls["name"]

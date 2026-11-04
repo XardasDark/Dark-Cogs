@@ -23,6 +23,7 @@ from .data_manager import (
     load_classes, get_open_slots, get_filled_slots,
     is_user_in_group, is_user_in_waitlist,
     format_datetime_display, resolve_goal_name, get_requirement_defs,
+    class_roles,
 )
 
 
@@ -323,9 +324,10 @@ def _build_join_class_options_for_slot(slot: Dict, guild_id: Optional[int] = Non
     elif stype == SLOT_TYPE_ROLE and slot.get("role_key"):
         rkey = slot["role_key"]
         # Rollen-Slots verlangen eine KONKRETE Klasse – keine generische Rolle.
-        # "beliebig" = jede Klasse, sonst nur Klassen mit passender default_role.
+        # "beliebig" = jede Klasse, sonst jede Klasse, die DIESE Rolle füllen kann
+        # (class_roles() berücksichtigt flexible Klassen wie den Druiden).
         for cls in classes:
-            if rkey == "beliebig" or cls.get("default_role") == rkey:
+            if rkey == "beliebig" or rkey in class_roles(cls):
                 add_class(cls)
         # Nur falls die Rolle gar keine passende Klasse hat (z. B. Mobber ohne
         # eigene Klassen), bleibt die generische Rolle als einzige Option, damit
