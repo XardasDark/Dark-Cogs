@@ -22,7 +22,7 @@ import discord
 from discord import ui
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import re
 
 from .data_manager import load_goals, load_classes, build_slot, stored_datetime_to_local_str, get_char_placeholder, get_requirement_defs, get_max_players
@@ -359,15 +359,17 @@ def build_state_from_group(
 
 
     # ── Datum & Zeit (gespeichertes UTC → lokale Guild-Zeit) ──────────────────
+    # Kopie: Termin um einen Tag nach hinten, gleiche Uhrzeit – meist will man
+    # dieselbe Gruppe einen Tag später erneut erstellen. (Zeitlos bleibt zeitlos.)
     local_str = stored_datetime_to_local_str(group.get("datetime"), guild_id)
     if local_str:
-        state.dt_str = local_str
         try:
-            dt = datetime.strptime(local_str, "%d.%m.%Y %H:%M")
+            dt = datetime.strptime(local_str, "%d.%m.%Y %H:%M") + timedelta(days=1)
+            state.dt_str = dt.strftime("%d.%m.%Y %H:%M")
             state._dt_day, state._dt_month, state._dt_year = dt.day, dt.month, dt.year
             state._dt_time = f"{dt.hour:02d}:{dt.minute:02d}"
         except ValueError:
-            pass
+            state.dt_str = local_str
 
     # ── Wiederholung / Kommentar ──────────────────────────────────────────────
     state.recurrence = group.get("recurrence", "none")
