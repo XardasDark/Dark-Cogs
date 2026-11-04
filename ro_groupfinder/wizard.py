@@ -357,21 +357,6 @@ def build_state_from_group(
         for sig, qty in grouped
     ]
 
-    # ── Ersteller in seinen ursprünglichen Slot vorbelegen ────────────────────
-    src_creator_id = group.get("creator_id")
-    creator_slot = next(
-        (s for s in group.get("slots", []) if s.get("filled_by_id") == src_creator_id),
-        None,
-    )
-    if creator_slot is not None:
-        state.prefilled_members.append({
-            "slot_index":  creator_slot["slot_index"],
-            "ingame_name": creator_slot.get("filled_by_ingame")
-                           or group.get("creator_ingame")
-                           or creator_name,
-            "is_creator":  True,
-            "user_id":     creator_id,
-        })
 
     # ── Datum & Zeit (gespeichertes UTC → lokale Guild-Zeit) ──────────────────
     local_str = stored_datetime_to_local_str(group.get("datetime"), guild_id)
