@@ -227,7 +227,11 @@ class ROGroupFinder(commands.Cog):
             await ctx.send("\u274c Dieser Befehl funktioniert nur als Slash-Command: `/gruppe erstellen`")
             return
 
-        interaction = ctx.interaction
+        await self._begin_create_wizard(ctx.interaction)
+
+    async def _begin_create_wizard(self, interaction: discord.Interaction) -> None:
+        """Startet den Erstell-Wizard – gemeinsam genutzt von `/gruppe erstellen`
+        und dem „Gruppe erstellen\"-Button unter der Übersicht."""
         guild_id    = interaction.guild_id
         channel_id  = interaction.channel_id
 
@@ -1025,6 +1029,10 @@ class ROGroupFinder(commands.Cog):
             return
         if action == "group_recreate":
             await self._handle_group_recreate(interaction, parts)
+            return
+        if action == "overview_create":
+            # Button unter der Übersicht → Erstell-Wizard starten.
+            await self._begin_create_wizard(interaction)
             return
 
         msg_id  = int(parts[1]) if parts[1].isdigit() else None

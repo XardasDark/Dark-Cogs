@@ -40,6 +40,21 @@ from .group_embed import build_group_embed, build_group_action_view
 MAX_OVERVIEW_GROUPS = 25
 
 
+def _build_overview_view() -> discord.ui.View:
+    """Persistente View mit „Gruppe erstellen"-Button unter der Übersicht.
+
+    Der Klick wird über den on_interaction-Dispatcher des Cogs (custom_id
+    ``overview_create``) abgewickelt – genau wie die übrigen Gruppen-Buttons.
+    """
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        label="➕ Gruppe erstellen",
+        style=discord.ButtonStyle.success,
+        custom_id="overview_create:create",
+    ))
+    return view
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HILFSFUNKTIONEN
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,7 +193,7 @@ async def _refresh_one(bot, guild_id: int, channel_id: int, *, move_to_bottom: b
 
     async def _post_new():
         try:
-            message = await channel.send(embed=embed)
+            message = await channel.send(embed=embed, view=_build_overview_view())
             _set_overview_msg_id(guild_id, channel_id, message.id)
         except Exception:
             pass
@@ -197,7 +212,7 @@ async def _refresh_one(bot, guild_id: int, channel_id: int, *, move_to_bottom: b
     if msg_id:
         try:
             message = await channel.fetch_message(msg_id)
-            await message.edit(embed=embed)
+            await message.edit(embed=embed, view=_build_overview_view())
             return
         except discord.NotFound:
             pass
