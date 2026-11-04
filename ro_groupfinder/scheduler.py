@@ -359,8 +359,8 @@ class GroupScheduler:
                 save_group(guild_id, new_group)
                 await message.edit(embed=build_group_embed(new_group))
 
-                # Übersicht wieder nach unten schieben (neuer Post)
-                await refresh_overview(self.bot, guild_id, move_to_bottom=True)
+                # Übersicht wieder nach unten schieben (neuer Post) – nur im Channel dieser Gruppe
+                await refresh_overview(self.bot, guild_id, new_group["channel_id"], move_to_bottom=True)
                 # Passende Abonnenten benachrichtigen
                 await notify_subscribers(self.bot, new_group)
 

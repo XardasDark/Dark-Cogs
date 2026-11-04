@@ -49,6 +49,15 @@ from .data_manager import (
     set_forum_channel,
     set_ping_role,
     get_ping_role,
+    get_ping_role_for_channel,
+    list_profiles,
+    get_profile_by_channel,
+    get_profile_by_game,
+    add_or_update_profile,
+    set_profile_field,
+    remove_profile,
+    get_group_channel_ids,
+    migrate_to_profiles,
     set_guild_setting,
     get_guild_settings,
     get_guild_groups,
@@ -165,6 +174,8 @@ class ROGroupFinder(commands.Cog):
         migrate_legacy_data()
         # Bestandsguilds einmalig das Default-Spiel-Preset zuweisen.
         migrate_games()
+        # Einzelspiel-Konfig (games.json + settings) → Spiel-Profile (idempotent).
+        migrate_to_profiles()
         self.scheduler.start()
 
     async def cog_unload(self) -> None:
@@ -220,16 +231,34 @@ class ROGroupFinder(commands.Cog):
         guild_id    = interaction.guild_id
         channel_id  = interaction.channel_id
 
-        # First-Run-Guard: ohne gewähltes Spiel gibt es keine Klassen/Ziele.
-        if get_game(guild_id) is None:
+        # Spiel-Profil des aktuellen Channels bestimmt, welches Spiel hier gilt.
+        profile  = get_profile_by_channel(guild_id, channel_id)
+        profiles = list_profiles(guild_id)
+
+        if profile is None and profiles:
+            channel_list = "\n".join(
+                f"• <#{p['group_channel_id']}> – **{p.get('game_name', p.get('game_key', '?'))}**"
+                for p in profiles if p.get("group_channel_id")
+            )
             await interaction.response.send_message(
-                "⚠️ Für diesen Server wurde noch kein Spiel eingerichtet.\n"
-                "Ein Admin muss zuerst `/gruppe-setup spiel` ausführen und ein Spiel auswählen.",
+                "❌ In diesem Channel können keine Gruppen erstellt werden.\n"
+                "Nutze einen der eingerichteten Spiel-Channel:\n" + channel_list,
                 ephemeral=True,
             )
             return
 
-        allowed_ch  = get_group_channel(guild_id)
+        if profile is None and get_game(guild_id) is None:
+            # Weder Profile noch Alt-Spiel → nichts eingerichtet.
+            await interaction.response.send_message(
+                "⚠️ Für diesen Server wurde noch kein Spiel eingerichtet.\n"
+                "Ein Admin muss zuerst `/gruppe-setup spiele` ausführen und ein Spiel "
+                "einem Channel zuordnen.",
+                ephemeral=True,
+            )
+            return
+
+        # Alt-Bestand ohne Profile: bisherige Einzel-Channel-Beschränkung.
+        allowed_ch  = get_group_channel(guild_id) if profile is None else None
 
         if allowed_ch and channel_id != allowed_ch:
             ch      = interaction.guild.get_channel(allowed_ch)
@@ -306,7 +335,7 @@ class ROGroupFinder(commands.Cog):
         # message_id=0 würden bis zum Edit ins Leere zeigen ("Gruppe nicht gefunden").
         # Ping-Rolle nur hier (ein Spieler erstellt die Gruppe) – nicht beim
         # Bot-Repost wiederkehrender Gruppen (siehe scheduler._task_recurrence).
-        ping_content, ping_mentions = self._group_ping(interaction.guild, state.guild_id)
+        ping_content, ping_mentions = self._group_ping(interaction.guild, state.guild_id, state.channel_id)
         group["message_id"] = 0
         message = await channel.send(
             content=ping_content,
@@ -470,12 +499,13 @@ class ROGroupFinder(commands.Cog):
             )
             return
 
-        # Ziel-Channel: konfigurierter Gruppen-Channel, sonst der der Quell-Gruppe
-        channel_id = get_group_channel(guild_id) or source.get("channel_id")
+        # Ziel-Channel: der Channel der Quell-Gruppe (behält das richtige Spiel-Profil),
+        # sonst der Alt-Gruppen-Channel.
+        channel_id = source.get("channel_id") or get_group_channel(guild_id)
         if not channel_id or not interaction.guild.get_channel(channel_id):
             await interaction.response.send_message(
                 "❌ Der Gruppen-Channel konnte nicht gefunden werden. "
-                "Bitte lege ihn mit `/gruppe-setup channel` fest.",
+                "Bitte lege ihn mit `/gruppe-setup spiele` fest.",
                 ephemeral=True,
             )
             return
@@ -538,12 +568,12 @@ class ROGroupFinder(commands.Cog):
         if ctx.invoked_subcommand is None:
             await ctx.send_help(ctx.command)
 
-    @gruppe_setup.command(name="spiel", description="Spiel dieses Servers w\u00e4hlen (legt Klassen & Ziele fest)")
+    @gruppe_setup.command(name="spiele", description="Spiele einrichten: Spiel \u2192 Gruppen-Channel + Forum zuordnen")
     @commands.guild_only()
     @commands.admin()
-    async def gruppe_config_spiel(self, ctx: commands.Context) -> None:
+    async def gruppe_config_spiele(self, ctx: commands.Context) -> None:
         if not ctx.interaction:
-            await ctx.send("\u274c Dieser Befehl funktioniert nur als Slash-Command: `/gruppe-setup spiel`")
+            await ctx.send("\u274c Dieser Befehl funktioniert nur als Slash-Command: `/gruppe-setup spiele`")
             return
         interaction = ctx.interaction
 
@@ -555,75 +585,60 @@ class ROGroupFinder(commands.Cog):
             )
             return
 
-        current  = get_game(ctx.guild.id)
-        cur_name = current.get("game_name") if current else None
-        if cur_name:
-            desc = (
-                f"Aktuelles Spiel: **{cur_name}**\n\n"
-                "W\u00e4hle unten ein Spiel. **Achtung:** Beim Wechsel werden die Klassen und "
-                "Ziele dieses Servers durch das Preset **ersetzt** \u2013 eigene Anpassungen gehen verloren."
-            )
-        else:
-            desc = (
-                "F\u00fcr diesen Server ist noch **kein Spiel** eingerichtet.\n\n"
-                "W\u00e4hle unten ein Spiel. Die passenden Klassen und Ziele werden dann als Kopie "
-                "f\u00fcr diesen Server \u00fcbernommen."
-            )
-        embed = discord.Embed(title="\U0001f3ae Spiel einrichten", description=desc, color=COLOR_OPEN)
+        view = _ProfileSetupView(self, ctx.guild.id, presets)
         await interaction.response.send_message(
-            embed=embed,
-            view=_GameSetupView(ctx.guild.id, presets, has_current=bool(current)),
-            ephemeral=True,
+            embed=view.build_embed(ctx.guild), view=view, ephemeral=True,
         )
 
-    @gruppe_setup.command(name="channel", description="Legt den Channel f\u00fcr Gruppenanfragen fest")
+    def _resolve_profile_channel_id(self, guild_id: int,
+                                    channel: Optional[discord.TextChannel]) -> Optional[int]:
+        """
+        Liefert die Gruppen-Channel-ID des gemeinten Spiel-Profils:
+          - explizit angegebener Channel (muss ein konfigurierter Spiel-Channel sein),
+          - sonst das einzige Profil der Guild,
+          - sonst None (mehrdeutig/keins).
+        """
+        profiles = list_profiles(guild_id)
+        if channel is not None:
+            if any(p.get("group_channel_id") == channel.id for p in profiles):
+                return channel.id
+            return None
+        if len(profiles) == 1:
+            return profiles[0].get("group_channel_id")
+        return None
+
+    def _profile_channel_hint(self, guild_id: int) -> str:
+        """Hinweistext, wenn kein eindeutiges Spiel-Profil bestimmt werden konnte."""
+        profiles = list_profiles(guild_id)
+        if not profiles:
+            return "\u274c Es ist noch kein Spiel eingerichtet. Nutze zuerst `/gruppe-setup spiele`."
+        lst = ", ".join(f"<#{p['group_channel_id']}>" for p in profiles if p.get("group_channel_id"))
+        return ("\u2139\ufe0f Es gibt mehrere Spiele \u2013 gib den **channel** an, f\u00fcr den die Einstellung gelten "
+                f"soll. Konfiguriert: {lst}")
+
+    @gruppe_setup.command(name="pingrolle", description="Ping-Rolle eines Spiels setzen (leer = aus)")
     @commands.guild_only()
     @commands.admin()
-    async def gruppe_config_channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
-        set_group_channel(ctx.guild.id, channel.id)
-
-        note = ""
-        if get_guild_settings(ctx.guild.id).get("readonly_enforced"):
-            ok = await self._apply_readonly(channel)
-            note = (
-                "\n\U0001f512 **Nur-Befehle-Modus** aktiv: normale Nachrichten werden hier "
-                "automatisch gel\u00f6scht, die `/gruppe`-Befehle bleiben nutzbar.\n"
-                "\u2139\ufe0f Der Bot braucht daf\u00fcr das Recht **Nachrichten verwalten** in diesem Channel."
-                if ok else
-                "\n\u26a0\ufe0f Der Nur-Befehle-Modus konnte nicht eingerichtet werden. "
-                "Bitte pr\u00fcfe die Berechtigungen des Bots."
-            )
-        # \u00dcbersicht offener Gruppen (neu) unten im Channel posten
-        await refresh_overview(self.bot, ctx.guild.id, move_to_bottom=True)
-
-        await self._reply(ctx, f"\u2705 Gruppen-Channel auf {channel.mention} gesetzt.{note}")
-
-    @gruppe_setup.command(name="forum", description="Legt den Forum-Channel f\u00fcr Diskussionsposts fest")
-    @commands.guild_only()
-    @commands.admin()
-    async def gruppe_config_forum(self, ctx: commands.Context, forum: discord.ForumChannel) -> None:
-        set_forum_channel(ctx.guild.id, forum.id)
-        await self._reply(
-            ctx,
-            f"\u2705 Forum-Channel auf {forum.mention} gesetzt. F\u00fcr jede neue Gruppe wird "
-            f"dort automatisch ein Diskussionsbeitrag erstellt.",
-        )
-
-    @gruppe_setup.command(name="pingrolle", description="Rolle die gepingt wird, wenn ein Spieler eine Gruppe erstellt (leer = aus)")
-    @commands.guild_only()
-    @commands.admin()
-    async def gruppe_config_pingrolle(self, ctx: commands.Context, rolle: Optional[discord.Role] = None) -> None:
-        if rolle is None:
-            set_ping_role(ctx.guild.id, None)
-            await self._reply(ctx, "\u2705 Ping-Rolle **deaktiviert**. Neue Gruppen werden ohne Ping gepostet.")
+    @app_commands.describe(
+        channel="Gruppen-Channel des Spiels (bei nur einem Spiel optional)",
+        rolle="Rolle, die bei neuen Spieler-Gruppen gepingt wird (leer = aus)",
+    )
+    async def gruppe_config_pingrolle(self, ctx: commands.Context,
+                                      channel: Optional[discord.TextChannel] = None,
+                                      rolle: Optional[discord.Role] = None) -> None:
+        target = self._resolve_profile_channel_id(ctx.guild.id, channel)
+        if target is None:
+            await self._reply(ctx, self._profile_channel_hint(ctx.guild.id))
             return
-        set_ping_role(ctx.guild.id, rolle.id)
-        await self._reply(
-            ctx,
-            f"\u2705 Ping-Rolle auf {rolle.mention} gesetzt. Wenn ein **Spieler** eine Gruppe erstellt, "
-            f"wird diese Rolle im Post angepingt. Bei vom Bot wiederhergestellten (regelm\u00e4\u00dfigen) "
-            f"Gruppen wird **nicht** gepingt.",
-        )
+        set_profile_field(ctx.guild.id, target, "ping_role_id", rolle.id if rolle else None)
+        if rolle is None:
+            await self._reply(ctx, f"\u2705 Ping-Rolle f\u00fcr <#{target}> **deaktiviert** \u2013 neue Gruppen ohne Ping.")
+        else:
+            await self._reply(
+                ctx,
+                f"\u2705 Ping-Rolle f\u00fcr <#{target}> auf {rolle.mention} gesetzt. Wenn ein **Spieler** dort "
+                f"eine Gruppe erstellt, wird diese Rolle gepingt (nicht bei Bot-Reposts).",
+            )
 
     @gruppe_setup.command(name="startende", description="Stunden nach Gruppenstart bis die Gruppe automatisch beendet wird (0 = aus)")
     @commands.guild_only()
@@ -693,32 +708,46 @@ class ROGroupFinder(commands.Cog):
 
         set_guild_setting(ctx.guild.id, "readonly_enforced", enabled)
 
-        channel_id = get_group_channel(ctx.guild.id)
-        channel    = ctx.guild.get_channel(channel_id) if channel_id else None
-        applied    = None
-        if isinstance(channel, discord.TextChannel):
-            applied = await (self._apply_readonly(channel) if enabled else self._clear_readonly(channel))
+        # Auf ALLE konfigurierten Spiel-Channel anwenden.
+        applied_mentions = []
+        for cid in get_group_channel_ids(ctx.guild.id):
+            channel = ctx.guild.get_channel(cid)
+            if isinstance(channel, discord.TextChannel):
+                ok = await (self._apply_readonly(channel) if enabled else self._clear_readonly(channel))
+                if ok:
+                    applied_mentions.append(channel.mention)
 
+        chans = ", ".join(applied_mentions)
         if enabled:
             extra = (
-                f" In {channel.mention} werden getippte Nachrichten jetzt automatisch gel\u00f6scht "
+                f" In {chans} werden getippte Nachrichten jetzt automatisch gel\u00f6scht "
                 f"(Bot braucht **Nachrichten verwalten**); `/gruppe`-Befehle bleiben nutzbar."
-                if applied else ""
+                if applied_mentions else ""
             )
             await self._reply(ctx, f"\u2705 Nur-Befehle-Modus **aktiviert**.{extra}")
         else:
-            extra = f" In {channel.mention} werden Nachrichten nicht mehr gel\u00f6scht." if applied else ""
+            extra = f" In {chans} werden Nachrichten nicht mehr gel\u00f6scht." if applied_mentions else ""
             await self._reply(ctx, f"\u2705 Nur-Befehle-Modus **deaktiviert**.{extra}")
 
     @gruppe_setup.command(name="archiv", description="Legt einen Archiv-Channel f\u00fcr geschlossene Gruppen-Posts fest")
     @commands.guild_only()
     @commands.admin()
-    async def gruppe_config_archiv(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
-        set_guild_setting(ctx.guild.id, "archive_channel_id", channel.id)
+    @app_commands.describe(
+        archiv_channel="Zielkanal f\u00fcr geschlossene/abgelaufene Posts dieses Spiels",
+        channel="Gruppen-Channel des Spiels (bei nur einem Spiel optional)",
+    )
+    async def gruppe_config_archiv(self, ctx: commands.Context,
+                                   archiv_channel: discord.TextChannel,
+                                   channel: Optional[discord.TextChannel] = None) -> None:
+        target = self._resolve_profile_channel_id(ctx.guild.id, channel)
+        if target is None:
+            await self._reply(ctx, self._profile_channel_hint(ctx.guild.id))
+            return
+        set_profile_field(ctx.guild.id, target, "archive_channel_id", archiv_channel.id)
         await self._reply(
             ctx,
-            f"\u2705 Archiv-Channel auf {channel.mention} gesetzt. Geschlossene, abgeschlossene "
-            f"und abgelaufene Gruppen-Posts werden k\u00fcnftig dorthin verschoben.",
+            f"\u2705 Archiv-Channel f\u00fcr <#{target}> auf {archiv_channel.mention} gesetzt. Geschlossene, "
+            f"abgeschlossene und abgelaufene Posts dieses Spiels werden k\u00fcnftig dorthin verschoben.",
         )
 
     @gruppe_setup.command(name="geschlossen", description="Was mit geschlossenen Posts passiert (behalten/loeschen)")
@@ -734,15 +763,18 @@ class ROGroupFinder(commands.Cog):
             await self._reply(ctx, "\u274c Bitte **behalten** oder **loeschen** angeben.")
             return
 
-        # Ein Archiv-Channel hat Vorrang \u2013 bei Wahl von behalten/loeschen wird er
-        # deaktiviert, damit die Einstellung eindeutig greift.
+        # Ein Archiv-Channel hat Vorrang \u2013 daher wird er f\u00fcr ALLE Spiele deaktiviert,
+        # damit die globale Einstellung behalten/loeschen eindeutig greift.
+        for p in list_profiles(ctx.guild.id):
+            if p.get("group_channel_id"):
+                set_profile_field(ctx.guild.id, p["group_channel_id"], "archive_channel_id", None)
         set_guild_setting(ctx.guild.id, "archive_channel_id", None)
         set_guild_setting(ctx.guild.id, "closed_post_action", action)
 
         if action == "keep":
-            await self._reply(ctx, "\u2705 Geschlossene Posts bleiben **im Channel** (kein Archiv).")
+            await self._reply(ctx, "\u2705 Geschlossene Posts bleiben **im Channel** (Archiv f\u00fcr alle Spiele aus).")
         else:
-            await self._reply(ctx, "\u2705 Geschlossene Posts werden **gel\u00f6scht** (kein Archiv).")
+            await self._reply(ctx, "\u2705 Geschlossene Posts werden **gel\u00f6scht** (Archiv f\u00fcr alle Spiele aus).")
 
     @gruppe_setup.command(name="loeschen", description="L\u00f6scht eine Gruppe per ID (aus dem Post-Footer), z.B. f\u00fcr kaputte alte Posts")
     @commands.guild_only()
@@ -787,25 +819,45 @@ class ROGroupFinder(commands.Cog):
     @commands.admin()
     async def gruppe_config_info(self, ctx: commands.Context) -> None:
         s     = get_guild_settings(ctx.guild.id)
-        ch    = ctx.guild.get_channel(s.get("group_channel_id") or 0)
-        forum = ctx.guild.get_channel(s.get("forum_channel_id") or 0)
+        guild = ctx.guild
 
         embed = discord.Embed(title="\u2699\ufe0f RO Group Finder \u2013 Konfiguration", color=COLOR_OPEN)
-        embed.add_field(name="\U0001f4cc Gruppen-Channel",    value=ch.mention if ch else "Nicht gesetzt", inline=False)
-        embed.add_field(name="\U0001f4ac Forum-Channel",      value=forum.mention if forum else "Nicht gesetzt", inline=False)
 
-        ping_role = ctx.guild.get_role(s.get("ping_role_id") or 0)
-        embed.add_field(
-            name="\U0001f514 Ping-Rolle",
-            value=ping_role.mention if ping_role else "Nicht gesetzt",
-            inline=False,
-        )
-
-        archive = ctx.guild.get_channel(s.get("archive_channel_id") or 0)
-        if archive:
-            closed_val = f"Archiv: {archive.mention}"
+        profiles = list_profiles(guild.id)
+        if profiles:
+            for p in profiles:
+                gch   = guild.get_channel(p.get("group_channel_id") or 0)
+                forum = guild.get_channel(p.get("forum_channel_id") or 0)
+                arch  = guild.get_channel(p.get("archive_channel_id") or 0)
+                prole = guild.get_role(p.get("ping_role_id") or 0)
+                dash  = "\u2014"
+                gch_m   = gch.mention if gch else dash
+                forum_m = forum.mention if forum else dash
+                arch_m  = arch.mention if arch else dash
+                prole_m = prole.mention if prole else dash
+                n_cls   = len(p.get("classes", []))
+                n_goals = len(p.get("goals", []))
+                lines = [
+                    f"\ud83d\udccc Gruppen-Channel: {gch_m}",
+                    f"\ud83d\udcac Forum: {forum_m}",
+                    f"\ud83d\uddc4\ufe0f Archiv: {arch_m}",
+                    f"\ud83d\udd14 Ping-Rolle: {prole_m}",
+                    f"\ud83c\udff7\ufe0f {n_cls} Klassen, {n_goals} Ziele",
+                ]
+                embed.add_field(
+                    name=f"\ud83c\udfae {p.get('game_name', p.get('game_key', '?'))}",
+                    value="\n".join(lines), inline=False,
+                )
         else:
-            closed_val = "Löschen" if s.get("closed_post_action") == "delete" else "Im Channel behalten"
+            embed.add_field(
+                name="\ud83c\udfae Spiele",
+                value="Noch keine Spiele eingerichtet \u2013 `/gruppe-setup spiele`.",
+                inline=False,
+            )
+
+        embed.add_field(name="\u2500\u2500 Serverweit \u2500\u2500", value="\u200b", inline=False)
+
+        closed_val = "Löschen" if s.get("closed_post_action") == "delete" else "Im Channel behalten"
         embed.add_field(name="\U0001f5c4️ Geschlossene Posts", value=closed_val, inline=False)
 
         embed.add_field(name="\U0001f512 Nur-Befehle",        value="An" if s.get("readonly_enforced") else "Aus", inline=True)
@@ -884,8 +936,6 @@ class ROGroupFinder(commands.Cog):
         set_guild_setting(ctx.guild.id, "waitlist_timeout_minutes", minuten)
         await self._reply(ctx, f"\u2705 Wartelisten-Timeout auf **{minuten} Minuten** gesetzt.")
 
-    @gruppe_config_channel.error
-    @gruppe_config_forum.error
     @gruppe_config_startende.error
     @gruppe_config_threadschliessen.error
     @gruppe_config_threadloeschen.error
@@ -936,14 +986,14 @@ class ROGroupFinder(commands.Cog):
         else:
             await ctx.send(**kwargs)
 
-    def _group_ping(self, guild: Optional[discord.Guild], guild_id: int):
+    def _group_ping(self, guild: Optional[discord.Guild], guild_id: int,
+                    channel_id: Optional[int] = None):
         """
         Liefert (content, allowed_mentions) für eine von einem Spieler erstellte
-        Gruppe. Ist keine Ping-Rolle gesetzt (oder nicht mehr vorhanden), wird kein
-        Ping gesendet. Bewusst nur für Spieler-Erstellung genutzt – nicht für den
-        Bot-Repost wiederkehrender Gruppen.
+        Gruppe. Die Ping-Rolle stammt aus dem Spiel-Profil des Channels (sonst Alt-
+        Setting). Ist keine gesetzt/mehr vorhanden, wird kein Ping gesendet.
         """
-        role_id = get_ping_role(guild_id)
+        role_id = get_ping_role_for_channel(guild_id, channel_id)
         role    = guild.get_role(role_id) if (guild and role_id) else None
         if not role:
             return None, None
@@ -1054,6 +1104,7 @@ class ROGroupFinder(commands.Cog):
         session = {
             "msg_id":     msg_id,
             "guild_id":   interaction.guild_id,
+            "channel_id": group.get("channel_id"),
             "slot_index": single_slot_index,
             "class_display": None,
             "class_emoji":   None,
@@ -1093,7 +1144,7 @@ class ROGroupFinder(commands.Cog):
             return
         stype = slot.get("slot_type")
         if stype == SLOT_TYPE_CLASS and slot.get("class_key"):
-            cls = get_class_by_key(group.get("guild_id"), slot["class_key"])
+            cls = get_class_by_key(group.get("guild_id"), slot["class_key"], group.get("channel_id"))
             if cls:
                 session["class_display"] = cls["name"]
                 session["class_emoji"]   = cls.get("emoji", slot.get("emoji", "⚔️"))
@@ -1151,7 +1202,7 @@ class ROGroupFinder(commands.Cog):
             _join_sessions[session_key]["class_display"] = role.get("name", vkey)
             _join_sessions[session_key]["class_emoji"]   = role.get("emoji", "❓")
         else:
-            classes = load_classes(interaction.guild_id)
+            classes = load_classes(interaction.guild_id, interaction.channel_id)
             cls = next((c for c in classes if c["key"] == vkey), None)
             if cls:
                 _join_sessions[session_key]["class_display"] = cls["name"]
@@ -1224,7 +1275,7 @@ class ROGroupFinder(commands.Cog):
         # Die Klassen-Auswahl aus dem Dropdown wird hier bewusst überschrieben,
         target_slot = next((s for s in group["slots"] if s["slot_index"] == slot_index), None)
         if target_slot and target_slot.get("slot_type") == SLOT_TYPE_CLASS and target_slot.get("class_key"):
-            slot_cls = get_class_by_key(group.get("guild_id"), target_slot["class_key"])
+            slot_cls = get_class_by_key(group.get("guild_id"), target_slot["class_key"], group.get("channel_id"))
             if slot_cls:
                 class_display = slot_cls["name"]
                 class_emoji   = slot_cls.get("emoji", target_slot.get("emoji", "⚔️"))
@@ -1233,7 +1284,7 @@ class ROGroupFinder(commands.Cog):
             # ("beliebig" = jede Klasse). Nur wenn die Rolle gar keine Klasse hat,
             # ist die generische Rolle als Fallback erlaubt.
             rkey     = target_slot["role_key"]
-            classes  = load_classes(group.get("guild_id"))
+            classes  = load_classes(group.get("guild_id"), group.get("channel_id"))
             concrete = classes if rkey == "beliebig" else [c for c in classes if c.get("default_role") == rkey]
             sel_cls  = next((c for c in concrete if c["name"] == class_display), None)
             if sel_cls:
@@ -2178,8 +2229,7 @@ class ROGroupFinder(commands.Cog):
         if message.guild is None or message.author.bot:
             return
 
-        channel_id = get_group_channel(message.guild.id)
-        if not channel_id or message.channel.id != channel_id:
+        if message.channel.id not in get_group_channel_ids(message.guild.id):
             return
 
         if not get_guild_settings(message.guild.id).get("readonly_enforced"):
@@ -2480,79 +2530,169 @@ class _DeleteConfirmView(ui.View):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SPIEL-SETUP VIEW  (/gruppe-setup spiel – copy-on-apply)
+# SPIEL-PROFIL-SETUP VIEW  (/gruppe-setup spiele – Spiel → Channel + Forum)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class _GameSetupView(ui.View):
-    """Ephemere Spiel-Auswahl für Admins. Wendet ein Preset copy-on-apply an.
-
-    Ist bereits ein Spiel gesetzt, erfordert ein Wechsel eine zusätzliche
-    Bestätigung (Überschreib-Schutz), da eigene Anpassungen verloren gehen.
+class _ProfileSetupView(ui.View):
+    """
+    Ephemeres Menü für Admins: Spiel wählen → Gruppen-Channel + Forum zuordnen und
+    als Spiel-Profil speichern. Mehrfach nutzbar, um mehrere Spiele einzurichten.
     """
 
-    def __init__(self, guild_id: int, presets: List[Dict], has_current: bool):
-        super().__init__(timeout=180)
-        self.guild_id    = guild_id
-        self.has_current = has_current
-        self._names      = {p["key"]: p["game_name"] for p in presets}
-        self._pending: Optional[str] = None
+    def __init__(self, cog: "ROGroupFinder", guild_id: int, presets: List[Dict]):
+        super().__init__(timeout=300)
+        self.cog      = cog
+        self.guild_id = guild_id
+        self._names   = {p["key"]: p["game_name"] for p in presets}
+        self.sel_game_key: Optional[str]      = None
+        self.sel_group_channel_id: Optional[int] = None
+        self.sel_forum_channel_id: Optional[int] = None
+        self._status: str = ""
 
-        options = [
-            discord.SelectOption(
-                label=p["game_name"][:100],
-                value=p["key"],
-                description=f"Preset: {p['key']}"[:100],
-            )
+        game_opts = [
+            discord.SelectOption(label=p["game_name"][:100], value=p["key"],
+                                 description=f"Preset: {p['key']}"[:100])
             for p in presets[:25]
         ]
-        self.select = ui.Select(placeholder="Spiel wählen…", options=options, row=0)
-        self.select.callback = self._on_select
-        self.add_item(self.select)
+        self.game_select = ui.Select(placeholder="1) Spiel wählen…", options=game_opts, row=0)
+        self.game_select.callback = self._on_game
+        self.add_item(self.game_select)
 
-        self.confirm_btn = ui.Button(
-            label="Wechsel bestätigen", style=discord.ButtonStyle.danger, row=1, disabled=True
+        self.group_select = ui.ChannelSelect(
+            placeholder="2) Gruppen-Channel wählen…",
+            channel_types=[discord.ChannelType.text], row=1,
         )
-        self.confirm_btn.callback = self._on_confirm
-        if has_current:
-            self.add_item(self.confirm_btn)
+        self.group_select.callback = self._on_group
+        self.add_item(self.group_select)
 
-    async def _apply(self, interaction: discord.Interaction, key: str) -> None:
-        result = apply_preset(self.guild_id, key)
-        if result is None:
-            await interaction.response.edit_message(
-                content=f"❌ Preset `{key}` konnte nicht geladen werden.", embed=None, view=None
-            )
-            self.stop()
-            return
+        self.forum_select = ui.ChannelSelect(
+            placeholder="3) Forum-Channel wählen (optional)…",
+            channel_types=[discord.ChannelType.forum], row=2,
+        )
+        self.forum_select.callback = self._on_forum
+        self.add_item(self.forum_select)
+
+        save_btn = ui.Button(label="💾 Speichern", style=discord.ButtonStyle.success, row=3)
+        save_btn.callback = self._on_save
+        self.add_item(save_btn)
+
+        remove_btn = ui.Button(label="🗑️ Channel-Zuordnung entfernen",
+                               style=discord.ButtonStyle.danger, row=3)
+        remove_btn.callback = self._on_remove
+        self.add_item(remove_btn)
+
+    def _guild(self) -> Optional[discord.Guild]:
+        return self.cog.bot.get_guild(self.guild_id)
+
+    def build_embed(self, guild: Optional[discord.Guild] = None) -> discord.Embed:
+        guild = guild or self._guild()
         embed = discord.Embed(
-            title="✅ Spiel eingerichtet",
+            title="🎮 Spiele einrichten",
             description=(
-                f"Dieser Server nutzt jetzt **{result.get('game_name', key)}**.\n"
-                f"Übernommen: **{len(result.get('classes', []))}** Klassen, "
-                f"**{len(result.get('goals', []))}** Ziele.\n\n"
-                "Spieler können nun mit `/gruppe erstellen` Gruppen anlegen."
+                "Ordne jedem Spiel einen **Gruppen-Channel** und ein **Forum** zu und klicke "
+                "**Speichern**. Wiederhole das für weitere Spiele.\n"
             ),
             color=COLOR_OPEN,
         )
-        await interaction.response.edit_message(embed=embed, view=None)
-        self.stop()
+        # Aktuelle Auswahl
+        dash = "—"
+        sel_game = self._names.get(self.sel_game_key, dash)
+        gch = guild.get_channel(self.sel_group_channel_id) if (guild and self.sel_group_channel_id) else None
+        fch = guild.get_channel(self.sel_forum_channel_id) if (guild and self.sel_forum_channel_id) else None
+        gch_m = gch.mention if gch else dash
+        fch_m = fch.mention if fch else dash
+        embed.add_field(
+            name="Aktuelle Auswahl",
+            value=(f"Spiel: **{sel_game}**\n"
+                   f"Gruppen-Channel: {gch_m}\n"
+                   f"Forum: {fch_m}"),
+            inline=False,
+        )
+        # Bereits konfigurierte Profile
+        profiles = list_profiles(self.guild_id)
+        if profiles:
+            lines = []
+            for p in profiles:
+                c = guild.get_channel(p.get("group_channel_id") or 0) if guild else None
+                f = guild.get_channel(p.get("forum_channel_id") or 0) if guild else None
+                game_name = p.get("game_name", p.get("game_key", "?"))
+                c_m = c.mention if c else dash
+                f_m = f.mention if f else dash
+                lines.append(f"**{game_name}** → {c_m} (Forum: {f_m})")
+            embed.add_field(name="Eingerichtete Spiele", value="\n".join(lines), inline=False)
+        if self._status:
+            embed.add_field(name="​", value=self._status, inline=False)
+        return embed
 
-    async def _on_select(self, interaction: discord.Interaction) -> None:
-        key = self.select.values[0]
-        if self.has_current:
-            # Überschreib-Schutz: erst bestätigen
-            self._pending = key
-            self.confirm_btn.disabled = False
-            self.confirm_btn.label = f"Wechsel zu „{self._names.get(key, key)}“ bestätigen"[:80]
-            await interaction.response.edit_message(view=self)
-        else:
-            await self._apply(interaction, key)
+    async def _refresh(self, interaction: discord.Interaction) -> None:
+        await interaction.response.edit_message(embed=self.build_embed(interaction.guild), view=self)
 
-    async def _on_confirm(self, interaction: discord.Interaction) -> None:
-        if not self._pending:
-            await interaction.response.defer()
+    async def _on_game(self, interaction: discord.Interaction) -> None:
+        self.sel_game_key = self.game_select.values[0]
+        self._status = ""
+        await self._refresh(interaction)
+
+    async def _on_group(self, interaction: discord.Interaction) -> None:
+        self.sel_group_channel_id = self.group_select.values[0].id
+        self._status = ""
+        await self._refresh(interaction)
+
+    async def _on_forum(self, interaction: discord.Interaction) -> None:
+        self.sel_forum_channel_id = self.forum_select.values[0].id
+        self._status = ""
+        await self._refresh(interaction)
+
+    async def _on_save(self, interaction: discord.Interaction) -> None:
+        if not self.sel_game_key or not self.sel_group_channel_id:
+            self._status = "⚠️ Bitte mindestens **Spiel** und **Gruppen-Channel** wählen."
+            await self._refresh(interaction)
             return
-        await self._apply(interaction, self._pending)
+
+        # Gruppen-Channel darf nicht schon einem ANDEREN Spiel zugeordnet sein.
+        existing = get_profile_by_channel(self.guild_id, self.sel_group_channel_id)
+        if existing and existing.get("game_key") != self.sel_game_key:
+            self._status = (f"⚠️ <#{self.sel_group_channel_id}> gehört bereits zu "
+                            f"**{existing.get('game_name', existing.get('game_key'))}**. "
+                            f"Entferne es zuerst oder wähle einen anderen Channel.")
+            await self._refresh(interaction)
+            return
+
+        prof = add_or_update_profile(
+            self.guild_id, self.sel_game_key,
+            self.sel_group_channel_id, self.sel_forum_channel_id,
+        )
+        if prof is None:
+            self._status = f"❌ Preset `{self.sel_game_key}` konnte nicht geladen werden."
+            await self._refresh(interaction)
+            return
+
+        # Readonly anwenden (falls serverweit aktiv) und Übersicht posten.
+        guild = interaction.guild
+        channel = guild.get_channel(self.sel_group_channel_id) if guild else None
+        if isinstance(channel, discord.TextChannel) and \
+                get_guild_settings(self.guild_id).get("readonly_enforced"):
+            await self.cog._apply_readonly(channel)
+        await refresh_overview(self.cog.bot, self.guild_id, self.sel_group_channel_id, move_to_bottom=True)
+
+        self._status = (f"✅ **{prof.get('game_name', self.sel_game_key)}** → "
+                        f"<#{self.sel_group_channel_id}> gespeichert "
+                        f"({len(prof.get('classes', []))} Klassen, {len(prof.get('goals', []))} Ziele).")
+        # Auswahl für das nächste Spiel zurücksetzen.
+        self.sel_game_key = None
+        self.sel_group_channel_id = None
+        self.sel_forum_channel_id = None
+        await self._refresh(interaction)
+
+    async def _on_remove(self, interaction: discord.Interaction) -> None:
+        if not self.sel_group_channel_id:
+            self._status = "⚠️ Wähle den **Gruppen-Channel** des zu entfernenden Spiels."
+            await self._refresh(interaction)
+            return
+        ok = remove_profile(self.guild_id, self.sel_group_channel_id)
+        self._status = (f"🗑️ Zuordnung für <#{self.sel_group_channel_id}> entfernt."
+                        if ok else "ℹ️ Für diesen Channel war kein Spiel eingerichtet.")
+        self.sel_group_channel_id = None
+        await self._refresh(interaction)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2574,7 +2714,8 @@ class JoinConfirmModal(ui.Modal, title="Beitreten bestätigen"):
             guild_id = int(session_key.split(":", 1)[0])
         except (ValueError, IndexError):
             guild_id = None
-        self.ingame_name.placeholder = get_char_placeholder(guild_id)
+        channel_id = (_join_sessions.get(session_key) or {}).get("channel_id")
+        self.ingame_name.placeholder = get_char_placeholder(guild_id, channel_id)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -2603,8 +2744,8 @@ class WaitlistJoinModal(ui.Modal, title="Warteliste beitreten"):
         self.group     = group
         self.user_id   = user_id
         self.scheduler = scheduler
-        # Platzhalter spielabhängig (aus dem angewandten Preset der Guild)
-        self.ingame_name.placeholder = get_char_placeholder(group.get("guild_id"))
+        # Platzhalter spielabhängig (aus dem Profil des Gruppen-Channels)
+        self.ingame_name.placeholder = get_char_placeholder(group.get("guild_id"), group.get("channel_id"))
 
     async def on_submit(self, interaction: discord.Interaction):
         position = add_to_waitlist(
@@ -2736,7 +2877,7 @@ class EditRequirementsModal(ui.Modal, title="Anforderungen ändern"):
         self.cog   = cog
         self._inputs = []  # Liste von (key, TextInput)
         current = group.get("requirements") or {}
-        for d in get_requirement_defs(group.get("guild_id"))[:5]:
+        for d in get_requirement_defs(group.get("guild_id"), group.get("channel_id"))[:5]:
             val = current.get(d["key"])
             ti = ui.TextInput(
                 label=d["name"][:45],

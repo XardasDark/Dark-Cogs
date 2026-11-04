@@ -30,6 +30,10 @@ from .data_manager import (
     get_guild_groups,
     parse_stored_datetime,
     resolve_goal_name,
+    list_profiles,
+    get_profile_by_channel,
+    set_profile_field,
+    get_archive_channel_for_group,
 )
 from .group_embed import build_group_embed, build_group_action_view
 
@@ -86,11 +90,16 @@ def _sort_key(group: Dict):
     return (1, 0.0, group.get("created_at", ""))
 
 
-def build_overview_embed(guild_id: int) -> discord.Embed:
-    """Baut das Übersichts-Embed aller offenen/vollen Gruppen einer Guild."""
+def build_overview_embed(guild_id: int, channel_id: Optional[int] = None) -> discord.Embed:
+    """
+    Baut das Übersichts-Embed der offenen/vollen Gruppen.
+    Mit `channel_id` nur Gruppen dieses Spiel-Channels (pro Profil eine Übersicht),
+    ohne `channel_id` alle Gruppen der Guild (Alt-Verhalten).
+    """
     active = [
         g for g in get_guild_groups(guild_id).values()
         if g.get("status") in ("open", "full")
+        and (channel_id is None or g.get("channel_id") == channel_id)
     ]
     active.sort(key=_sort_key)
 
@@ -120,30 +129,57 @@ def build_overview_embed(guild_id: int) -> discord.Embed:
 # ÜBERSICHT AKTUALISIEREN
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def refresh_overview(bot, guild_id: int, *, move_to_bottom: bool = False) -> None:
-    """
-    Aktualisiert die Übersichts-Nachricht im Gruppen-Channel.
+def _overview_targets(guild_id: int, channel_id: Optional[int]) -> list:
+    """Welche Gruppen-Channel ihre Übersicht bekommen sollen."""
+    if channel_id is not None:
+        return [channel_id]
+    ids = [p["group_channel_id"] for p in list_profiles(guild_id) if p.get("group_channel_id")]
+    if ids:
+        return ids
+    legacy = get_guild_settings(guild_id).get("group_channel_id")
+    return [legacy] if legacy else []
 
-    move_to_bottom=True: alte Nachricht löschen und neu ganz unten posten
-    (nötig, nachdem ein neuer Gruppen-Post erstellt wurde, damit die Übersicht
-    wieder als letzte Nachricht steht).
-    """
-    settings   = get_guild_settings(guild_id)
-    channel_id = settings.get("group_channel_id")
-    if not channel_id:
-        return
 
+def _get_overview_msg_id(guild_id: int, channel_id: int) -> Optional[int]:
+    prof = get_profile_by_channel(guild_id, channel_id)
+    if prof is not None:
+        return prof.get("overview_message_id")
+    return get_guild_settings(guild_id).get("overview_message_id")
+
+
+def _set_overview_msg_id(guild_id: int, channel_id: int, msg_id: Optional[int]) -> None:
+    prof = get_profile_by_channel(guild_id, channel_id)
+    if prof is not None:
+        set_profile_field(guild_id, channel_id, "overview_message_id", msg_id)
+    else:
+        set_guild_setting(guild_id, "overview_message_id", msg_id)
+
+
+async def refresh_overview(bot, guild_id: int, channel_id: Optional[int] = None,
+                           *, move_to_bottom: bool = False) -> None:
+    """
+    Aktualisiert die Übersichts-Nachricht(en).
+
+    Mit `channel_id` nur die Übersicht dieses Spiel-Channels, ohne `channel_id`
+    die aller konfigurierten Spiel-Channel (bzw. der Alt-Gruppen-Channel).
+    move_to_bottom=True: alte Nachricht löschen und neu ganz unten posten.
+    """
+    for cid in _overview_targets(guild_id, channel_id):
+        await _refresh_one(bot, guild_id, cid, move_to_bottom=move_to_bottom)
+
+
+async def _refresh_one(bot, guild_id: int, channel_id: int, *, move_to_bottom: bool) -> None:
     channel = await _resolve_channel(bot, channel_id)
     if channel is None:
         return
 
-    embed  = build_overview_embed(guild_id)
-    msg_id = settings.get("overview_message_id")
+    embed  = build_overview_embed(guild_id, channel_id)
+    msg_id = _get_overview_msg_id(guild_id, channel_id)
 
     async def _post_new():
         try:
             message = await channel.send(embed=embed)
-            set_guild_setting(guild_id, "overview_message_id", message.id)
+            _set_overview_msg_id(guild_id, channel_id, message.id)
         except Exception:
             pass
 
@@ -194,8 +230,8 @@ async def finalize_group_post(bot, group: Dict, *, allow_keep: bool = True) -> b
         except Exception:
             original = None
 
-    archive_id = settings.get("archive_channel_id")
-    action     = settings.get("closed_post_action", "keep")
+    archive_id = get_archive_channel_for_group(group)      # pro Spiel-Profil (Alt-Fallback intern)
+    action     = settings.get("closed_post_action", "keep")  # serverweit
 
     # 1. Archiv-Channel hat Vorrang
     if archive_id:

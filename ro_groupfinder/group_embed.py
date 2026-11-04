@@ -72,7 +72,7 @@ def build_group_embed(group: Dict) -> discord.Embed:
 
     # ── Zusatz-Anforderungen (spielspezifisch, z. B. Gear Score / Kampfkraft) ──
     reqs = group.get("requirements") or {}
-    for d in get_requirement_defs(group.get("guild_id")):
+    for d in get_requirement_defs(group.get("guild_id"), group.get("channel_id")):
         val = reqs.get(d["key"])
         if val is not None:
             emoji = d.get("emoji", "")
@@ -244,7 +244,7 @@ def build_join_slot_view(group: Dict, user_id: int,
 
     # Klasse/Rolle Auswahl – strikt auf den gewählten Slot beschränkt.
     if effective_slot is not None:
-        class_options = _build_join_class_options_for_slot(effective_slot, group.get("guild_id"))
+        class_options = _build_join_class_options_for_slot(effective_slot, group.get("guild_id"), group.get("channel_id"))
         class_sel = ui.Select(
             placeholder=f"Klasse / Rolle für {effective_slot.get('display_name', 'Slot')}..."[:150],
             options=class_options,
@@ -281,7 +281,8 @@ def build_join_slot_view(group: Dict, user_id: int,
     return view
 
 
-def _build_join_class_options_for_slot(slot: Dict, guild_id: Optional[int] = None) -> List[discord.SelectOption]:
+def _build_join_class_options_for_slot(slot: Dict, guild_id: Optional[int] = None,
+                                       channel_id: Optional[int] = None) -> List[discord.SelectOption]:
     """
     Erstellt die Klassen-/Rollen-Optionen für GENAU EINEN Slot:
       - SLOT_TYPE_CLASS → nur diese eine Klasse (de facto vorausgefüllt)
@@ -311,7 +312,7 @@ def _build_join_class_options_for_slot(slot: Dict, guild_id: Optional[int] = Non
             ))
             seen.add(val)
 
-    classes = load_classes(guild_id)
+    classes = load_classes(guild_id, channel_id)
     stype   = slot.get("slot_type")
 
     if stype == SLOT_TYPE_CLASS and slot.get("class_key"):
@@ -515,7 +516,7 @@ def build_edit_view(group: Dict) -> ui.View:
         discord.SelectOption(label="🎯 Ziel ändern",             value="goal"),
     ]
     # Zusatz-Anforderungen nur anbieten, wenn das Spiel welche definiert
-    if get_requirement_defs(group.get("guild_id")):
+    if get_requirement_defs(group.get("guild_id"), group.get("channel_id")):
         edit_options.append(
             discord.SelectOption(label="⚙️ Anforderungen (z. B. Gear Score)", value="requirements")
         )

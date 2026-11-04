@@ -26,6 +26,8 @@ from .data_manager import (
     get_guild_settings,
     resolve_goal_name,
     stored_datetime_to_local_str,
+    get_forum_channel_for_group,
+    get_archive_channel_for_group,
 )
 
 
@@ -75,8 +77,7 @@ async def create_forum_post(bot, group: Dict) -> Optional[int]:
     zur Gruppe enthält (braucht message_id). Der Aufrufer muss die Gruppe
     anschließend speichern (save_group), damit die Thread-ID persistiert wird.
     """
-    settings = get_guild_settings(group["guild_id"])
-    forum_id = settings.get("forum_channel_id")
+    forum_id = get_forum_channel_for_group(group)   # Forum des Spiel-Profils (Alt-Fallback intern)
     if not forum_id:
         return None
 
@@ -355,8 +356,7 @@ async def delete_forum_post(bot, group: Dict, *, archive: bool = True) -> None:
         return
 
     if archive:
-        settings   = get_guild_settings(group["guild_id"])
-        archive_id = settings.get("archive_channel_id")
+        archive_id = get_archive_channel_for_group(group)   # Archiv des Spiel-Profils
         if archive_id:
             archive_ch = await _resolve_channel(bot, archive_id)
             if archive_ch is not None:

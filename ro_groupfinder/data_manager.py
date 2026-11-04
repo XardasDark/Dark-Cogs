@@ -88,7 +88,8 @@ _EXPIRED_FILE  = os.path.join(_DATA_DIR, "expired_snapshots.json")
 _GOALS_FILE    = os.path.join(_BUNDLED_DIR, "goals.json")      # gebündelt (read-only, Alt-Fallback)
 _CLASSES_FILE  = os.path.join(_BUNDLED_DIR, "classes.json")    # gebündelt (read-only, Alt-Fallback)
 _PRESETS_DIR   = os.path.join(_BUNDLED_DIR, "presets")         # gebündelte Spiel-Presets (read-only)
-_GAMES_FILE    = os.path.join(_DATA_DIR, "games.json")         # pro Guild angewandtes Spiel (copy-on-apply)
+_GAMES_FILE    = os.path.join(_DATA_DIR, "games.json")         # ALT: ein Spiel pro Guild (copy-on-apply) – nur noch Fallback
+_PROFILES_FILE = os.path.join(_DATA_DIR, "profiles.json")      # NEU: mehrere Spiel-Profile pro Guild (je Gruppen-Channel)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -230,7 +231,7 @@ def migrate_games() -> None:
     Jede Guild, die den Cog bereits nutzt (taucht in settings.json ODER groups.json
     auf) und noch keinen games.json-Eintrag hat, bekommt das Default-Preset
     (ragnarok_zero) zugewiesen. Dadurch feuert der First-Run-Guard bei bestehenden
-    Servern nicht; neue Guilds ohne Vordaten müssen `/gruppe-setup spiel` durchlaufen.
+    Servern nicht; neue Guilds ohne Vordaten müssen `/gruppe-setup spiele` durchlaufen.
 
     Wird beim cog_load nach migrate_legacy_data() aufgerufen.
     """
@@ -332,6 +333,214 @@ def apply_preset(guild_id: int, preset_key: str) -> Optional[Dict]:
     return games[str(guild_id)]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SPIEL-PROFILE  (mehrere Spiele pro Guild, je an einen Gruppen-Channel gebunden)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Ein Profil bindet ein Spiel-Preset (copy-on-apply) an genau einen Gruppen-Channel
+# und trägt dessen kanalgebundene Einstellungen (Forum, Archiv, Ping-Rolle,
+# Overview-Nachricht). Schlüssel innerhalb einer Guild ist `group_channel_id`.
+# profiles.json:  { "<guild_id>": [ { ...game..., group_channel_id, forum_channel_id,
+#                   archive_channel_id, ping_role_id, overview_message_id }, ... ] }
+
+# Nur diese Felder sind kanalgebunden; der Rest eines Profils sind die Spiel-Daten.
+_PROFILE_CHANNEL_FIELDS = (
+    "group_channel_id", "forum_channel_id", "archive_channel_id",
+    "ping_role_id", "overview_message_id",
+)
+
+
+def load_profiles() -> Dict:
+    """Lädt alle Spiel-Profile (keyed by guild_id als String → Liste von Profilen)."""
+    return _load_json(_PROFILES_FILE, {})
+
+
+def save_profiles(data: Dict) -> None:
+    """Speichert alle Spiel-Profile."""
+    _save_json(_PROFILES_FILE, data)
+
+
+def list_profiles(guild_id: Optional[int]) -> List[Dict]:
+    """Gibt alle Spiel-Profile einer Guild zurück (leer, falls keine)."""
+    if guild_id is None:
+        return []
+    return list(load_profiles().get(str(guild_id), []))
+
+
+def get_profile_by_channel(guild_id: Optional[int], channel_id: Optional[int]) -> Optional[Dict]:
+    """Findet das Profil, dessen Gruppen-Channel == channel_id ist."""
+    if guild_id is None or channel_id is None:
+        return None
+    for p in load_profiles().get(str(guild_id), []):
+        if p.get("group_channel_id") == channel_id:
+            return p
+    return None
+
+
+def get_profile_by_game(guild_id: Optional[int], game_key: str) -> Optional[Dict]:
+    """Findet das erste Profil mit diesem Spiel-Key."""
+    if guild_id is None:
+        return None
+    for p in load_profiles().get(str(guild_id), []):
+        if p.get("game_key") == game_key:
+            return p
+    return None
+
+
+def get_profile_for_group(group: Dict) -> Optional[Dict]:
+    """Profil, zu dem eine Gruppe gehört (über ihren Gruppen-Channel)."""
+    return get_profile_by_channel(group.get("guild_id"), group.get("channel_id"))
+
+
+def add_or_update_profile(guild_id: int, game_key: str, group_channel_id: int,
+                          forum_channel_id: Optional[int] = None) -> Optional[Dict]:
+    """
+    Legt ein Spiel-Profil für einen Gruppen-Channel an oder aktualisiert es
+    (copy-on-apply der Preset-Daten). Existiert für den Channel bereits ein Profil,
+    werden dessen Spiel-Daten ersetzt und die Kanal-Bindungen beibehalten.
+    Gibt das Profil zurück, oder None wenn das Preset unbekannt ist.
+    """
+    preset = load_preset(game_key)
+    if preset is None:
+        return None
+    data = load_profiles()
+    gkey = str(guild_id)
+    profiles = data.setdefault(gkey, [])
+    existing = next((p for p in profiles if p.get("group_channel_id") == group_channel_id), None)
+    if existing is None:
+        profile = dict(preset)
+        for field in _PROFILE_CHANNEL_FIELDS:
+            profile.setdefault(field, None)
+        profile["group_channel_id"] = group_channel_id
+        profile["forum_channel_id"] = forum_channel_id
+        profiles.append(profile)
+    else:
+        preserved = {f: existing.get(f) for f in _PROFILE_CHANNEL_FIELDS}
+        existing.clear()
+        existing.update(preset)
+        existing.update(preserved)
+        if forum_channel_id is not None:
+            existing["forum_channel_id"] = forum_channel_id
+        profile = existing
+    save_profiles(data)
+    return profile
+
+
+def set_profile_field(guild_id: int, group_channel_id: int, key: str, value: Any) -> bool:
+    """Setzt ein kanalgebundenes Feld eines Profils (forum/archive/ping/overview)."""
+    data = load_profiles()
+    for p in data.get(str(guild_id), []):
+        if p.get("group_channel_id") == group_channel_id:
+            p[key] = value
+            save_profiles(data)
+            return True
+    return False
+
+
+def remove_profile(guild_id: int, group_channel_id: int) -> bool:
+    """Entfernt das Profil eines Gruppen-Channels. True, wenn etwas entfernt wurde."""
+    data = load_profiles()
+    gkey = str(guild_id)
+    profiles = data.get(gkey, [])
+    remaining = [p for p in profiles if p.get("group_channel_id") != group_channel_id]
+    if len(remaining) == len(profiles):
+        return False
+    if remaining:
+        data[gkey] = remaining
+    else:
+        data.pop(gkey, None)
+    save_profiles(data)
+    return True
+
+
+def get_group_channel_ids(guild_id: Optional[int]) -> List[int]:
+    """Alle konfigurierten Gruppen-Channel der Guild (Profile; sonst Alt-Setting)."""
+    ids = [p["group_channel_id"] for p in list_profiles(guild_id) if p.get("group_channel_id")]
+    if ids:
+        return ids
+    if guild_id is not None:
+        legacy = get_guild_settings(guild_id).get("group_channel_id")
+        if legacy:
+            return [legacy]
+    return []
+
+
+def get_forum_channel_for_group(group: Dict) -> Optional[int]:
+    """Forum-Channel-ID für die Gruppe (Profil; sonst Alt-Setting)."""
+    prof = get_profile_for_group(group)
+    if prof is not None and prof.get("forum_channel_id"):
+        return prof["forum_channel_id"]
+    return get_guild_settings(group.get("guild_id")).get("forum_channel_id")
+
+
+def get_archive_channel_for_group(group: Dict) -> Optional[int]:
+    """Archiv-Channel-ID für die Gruppe (Profil; sonst Alt-Setting)."""
+    prof = get_profile_for_group(group)
+    if prof is not None:
+        return prof.get("archive_channel_id")
+    return get_guild_settings(group.get("guild_id")).get("archive_channel_id")
+
+
+def get_ping_role_for_channel(guild_id: Optional[int], channel_id: Optional[int]) -> Optional[int]:
+    """Ping-Rollen-ID für einen Gruppen-Channel (Profil; sonst Alt-Setting)."""
+    prof = get_profile_by_channel(guild_id, channel_id)
+    if prof is not None:
+        return prof.get("ping_role_id")
+    if guild_id is not None:
+        return get_guild_settings(guild_id).get("ping_role_id")
+    return None
+
+
+def migrate_to_profiles() -> None:
+    """
+    Einmalige, idempotente Migration vom Einzelspiel-Modell (games.json + Kanal-
+    Felder in settings.json) auf Spiel-Profile. Für jede Guild mit angewandtem Spiel
+    UND gesetztem Gruppen-Channel, die noch kein Profil hat, wird genau ein Profil
+    angelegt. games.json/settings bleiben als Fallback erhalten.
+    """
+    games = load_games()
+    if not games:
+        return
+    profiles = load_profiles()
+    all_settings = load_settings()
+    changed = False
+    for gkey, game in games.items():
+        if profiles.get(gkey):
+            continue  # bereits Profile vorhanden
+        s = all_settings.get(gkey, {})
+        group_ch = s.get("group_channel_id")
+        if not group_ch:
+            continue  # ohne Gruppen-Channel kein sinnvolles Profil
+        profile = dict(game)
+        profile["group_channel_id"]   = group_ch
+        profile["forum_channel_id"]   = s.get("forum_channel_id")
+        profile["archive_channel_id"] = s.get("archive_channel_id")
+        profile["ping_role_id"]       = s.get("ping_role_id")
+        profile["overview_message_id"] = s.get("overview_message_id")
+        profiles.setdefault(gkey, []).append(profile)
+        changed = True
+    if changed:
+        save_profiles(profiles)
+        log.info("ro_groupfinder: %d Guild(s) auf Spiel-Profile migriert.", len(profiles))
+
+
+def _resolve_game(guild_id: Optional[int], channel_id: Optional[int] = None) -> Dict:
+    """
+    Liefert die effektiven Spiel-Daten für einen Kontext:
+      1. Profil, das zum Channel passt,
+      2. sonst – genau ein Profil in der Guild → dieses,
+      3. sonst Alt-Fallback (`_guild_game`: games.json bzw. Default-Preset).
+    """
+    prof = get_profile_by_channel(guild_id, channel_id)
+    if prof is not None:
+        return prof
+    if guild_id is not None:
+        profiles = load_profiles().get(str(guild_id), [])
+        if len(profiles) == 1:
+            return profiles[0]
+    return _guild_game(guild_id)
+
+
 def _guild_game(guild_id: Optional[int]) -> Dict:
     """
     Liefert die effektiven Spiel-Daten einer Guild (classes/goals/meta).
@@ -357,17 +566,17 @@ def _guild_game(guild_id: Optional[int]) -> Dict:
     }
 
 
-def get_game_name(guild_id: Optional[int]) -> str:
-    """Anzeigename des Spiels einer Guild (mit Fallback)."""
-    return _guild_game(guild_id).get("game_name", DEFAULT_GAME_KEY)
+def get_game_name(guild_id: Optional[int], channel_id: Optional[int] = None) -> str:
+    """Anzeigename des Spiels (Profil per Channel; mit Fallback)."""
+    return _resolve_game(guild_id, channel_id).get("game_name", DEFAULT_GAME_KEY)
 
 
-def get_char_placeholder(guild_id: Optional[int]) -> str:
-    """Platzhaltertext für die In-Game-Namen-Eingabe einer Guild (mit Fallback)."""
-    return _guild_game(guild_id).get("char_placeholder", DEFAULT_CHAR_PLACEHOLDER)
+def get_char_placeholder(guild_id: Optional[int], channel_id: Optional[int] = None) -> str:
+    """Platzhaltertext für die In-Game-Namen-Eingabe (Profil per Channel; mit Fallback)."""
+    return _resolve_game(guild_id, channel_id).get("char_placeholder", DEFAULT_CHAR_PLACEHOLDER)
 
 
-def get_max_players(guild_id: Optional[int]) -> int:
+def get_max_players(guild_id: Optional[int], channel_id: Optional[int] = None) -> int:
     """
     Maximale Gruppengröße der Guild (aus dem Spiel-Preset, Default 12).
     Immer auf [MIN_PLAYERS, MAX_PLAYERS_HARD_CAP] begrenzt – der harte Deckel (25)
@@ -375,44 +584,43 @@ def get_max_players(guild_id: Optional[int]) -> int:
     25 Optionen zulassen.
     """
     try:
-        val = int(_guild_game(guild_id).get("max_players", DEFAULT_MAX_PLAYERS))
+        val = int(_resolve_game(guild_id, channel_id).get("max_players", DEFAULT_MAX_PLAYERS))
     except (TypeError, ValueError):
         val = DEFAULT_MAX_PLAYERS
     return max(MIN_PLAYERS, min(val, MAX_PLAYERS_HARD_CAP))
 
 
-def get_requirement_defs(guild_id: Optional[int]) -> List[Dict]:
+def get_requirement_defs(guild_id: Optional[int], channel_id: Optional[int] = None) -> List[Dict]:
     """
-    Spielspezifische Zusatz-Anforderungen der Guild (z. B. Gear Score, Kampfkraft).
-    Jeder Eintrag: { "key", "name", "emoji", "placeholder" }. Leer, wenn das Spiel
-    keine definiert (z. B. Ragnarok) → die Felder erscheinen dann nirgends.
+    Spielspezifische Zusatz-Anforderungen (Profil per Channel; z. B. Gear Score,
+    Kampfkraft). Jeder Eintrag: { "key", "name", "emoji", "placeholder" }. Leer, wenn
+    das Spiel keine definiert (z. B. Ragnarok) → die Felder erscheinen dann nirgends.
     """
-    return list(_guild_game(guild_id).get("requirements", []))
+    return list(_resolve_game(guild_id, channel_id).get("requirements", []))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GOALS & CLASSES  (pro Guild, aus dem angewandten Spiel)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_goals(guild_id: Optional[int] = None) -> List[Dict]:
+def load_goals(guild_id: Optional[int] = None, channel_id: Optional[int] = None) -> List[Dict]:
     """
-    Lädt die Gruppenziele für eine Guild (aus dem angewandten Spiel-Preset).
-    Ohne guild_id (oder ohne angewandtes Spiel) greift der Default-Fallback.
+    Lädt die Gruppenziele (Profil per Channel; sonst Default-Fallback).
     """
-    return list(_guild_game(guild_id).get("goals", []))
+    return list(_resolve_game(guild_id, channel_id).get("goals", []))
 
 
-def load_classes(guild_id: Optional[int] = None) -> List[Dict]:
+def load_classes(guild_id: Optional[int] = None, channel_id: Optional[int] = None) -> List[Dict]:
     """
-    Lädt die Klassen für eine Guild (aus dem angewandten Spiel-Preset).
-    Ohne guild_id (oder ohne angewandtes Spiel) greift der Default-Fallback.
+    Lädt die Klassen (Profil per Channel; sonst Default-Fallback).
     """
-    return list(_guild_game(guild_id).get("classes", []))
+    return list(_resolve_game(guild_id, channel_id).get("classes", []))
 
 
-def get_class_by_key(guild_id: Optional[int], key: str) -> Optional[Dict]:
-    """Gibt eine Klasse der Guild anhand ihres Keys zurück, oder None."""
-    for cls in load_classes(guild_id):
+def get_class_by_key(guild_id: Optional[int], key: str,
+                     channel_id: Optional[int] = None) -> Optional[Dict]:
+    """Gibt eine Klasse anhand ihres Keys zurück (Profil per Channel), oder None."""
+    for cls in load_classes(guild_id, channel_id):
         if cls["key"] == key:
             return cls
     return None
@@ -436,7 +644,7 @@ def resolve_goal_name(group: Dict) -> str:
         return custom
     key = group.get("goal") or ""
     if key and key != "__custom__":
-        for g in load_goals(group.get("guild_id")):
+        for g in load_goals(group.get("guild_id"), group.get("channel_id")):
             if g.get("key") == key:
                 return g.get("name") or key
     return key or "–"
@@ -818,6 +1026,8 @@ def create_group(
         "message_id":          None,     # wird nach Post gesetzt
         "channel_id":          channel_id,
         "guild_id":            guild_id,
+        # Spiel-Kontext (Robustheit); Laufzeit-Auflösung primär über channel_id/Profil.
+        "game_key":            (_resolve_game(guild_id, channel_id) or {}).get("game_key"),
         "is_generic":          is_generic,
         "creator_id":          creator_id,
         "creator_name":        creator_name,
