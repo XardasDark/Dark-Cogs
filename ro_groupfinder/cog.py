@@ -294,6 +294,12 @@ class ROGroupFinder(commands.Cog):
     async def _wizard_complete(
         self, interaction: discord.Interaction, state: WizardState
     ) -> None:
+        # Interaction SOFORT bestätigen: das Posten (Forum-Call, Overview-Refresh,
+        # Subscriber-Pings) dauert länger als die 3s-Frist für die erste Antwort.
+        # Ohne defer() läuft der Token ab → 404 Unknown interaction (10062).
+        # Deferred Update (thinking=False) bearbeitet still die Ausgangsnachricht.
+        await interaction.response.defer()
+
         # Nutzereingabe gilt als lokale Guild-Zeit → wird als UTC gespeichert.
         dt = parse_local_input(state.dt_str, state.guild_id) if state.dt_str else None
 
@@ -331,8 +337,10 @@ class ROGroupFinder(commands.Cog):
 
         channel = interaction.guild.get_channel(state.channel_id)
         if not channel:
-            await interaction.response.send_message(
-                "\u274c Der Gruppen-Channel konnte nicht gefunden werden.", ephemeral=True
+            await interaction.edit_original_response(
+                content="\u274c Der Gruppen-Channel konnte nicht gefunden werden.",
+                embed=None,
+                view=None,
             )
             return
 
@@ -367,7 +375,7 @@ class ROGroupFinder(commands.Cog):
         if interaction.user.id in _wizard_sessions:
             del _wizard_sessions[interaction.user.id]
 
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content="\u2705 **Deine Gruppenanfrage wurde gepostet!**",
             embed=None,
             view=None,
