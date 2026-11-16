@@ -13,18 +13,25 @@ import discord
 
 from .constants import (
     PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN, TICKET_MANAGE,
-    COLOR_PANEL, COLOR_TICKET, COLOR_PENDING, COLOR_CLOSED,
-    STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STATUS_LABELS, STAGE_LABELS,
+    COLOR_PANEL, COLOR_TICKET, COLOR_PENDING, COLOR_CLOSED, COLOR_INFO,
+    STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STATUS_LABELS,
+    STAGE_IN_PROGRESS, STAGE_WAITING, STAGE_LABELS,
     KIND_GROUP,
 )
 
 
-def _status_color(status: str) -> int:
-    return {
-        STATUS_OPEN: COLOR_TICKET,
-        STATUS_CLOSE_REQUESTED: COLOR_PENDING,
-        STATUS_CLOSED: COLOR_CLOSED,
-    }.get(status, COLOR_TICKET)
+def _ticket_color(status: str, stage=None) -> int:
+    """Embed-Farbe: Lebenszyklus hat Vorrang; bei offenen Tickets färbt die Stufe mit."""
+    if status == STATUS_CLOSED:
+        return COLOR_CLOSED
+    if status == STATUS_CLOSE_REQUESTED:
+        return COLOR_PENDING
+    # offen → Bearbeitungs-Stufe bestimmt die Farbe
+    if stage == STAGE_IN_PROGRESS:
+        return COLOR_INFO       # 🔵 blau
+    if stage == STAGE_WAITING:
+        return COLOR_PENDING    # 🟡 gelb
+    return COLOR_TICKET         # 🟢 grün
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,7 +94,7 @@ def build_ticket_embed(ticket: Dict[str, Any], category: Dict[str, Any],
     title = label or ticket.get("category_label") or category.get("name", ticket["category_key"])
     embed = discord.Embed(
         title=f"{emoji}{title}",
-        color=_status_color(ticket["status"]),
+        color=_ticket_color(ticket["status"], ticket.get("stage")),
         timestamp=discord.utils.utcnow(),
     )
     opener_mention = opener.mention if opener else f"<@{ticket['opener_id']}>"

@@ -556,10 +556,13 @@ class KuhHilfe(commands.Cog):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     async def _mgmt_ticket(self, interaction: discord.Interaction):
-        """Lädt das Ticket zum aktuellen Channel oder meldet Fehler (für Panel-Aktionen)."""
+        """Lädt das Ticket zum aktuellen Channel oder meldet Fehler (für Panel-Aktionen).
+
+        Erwartet, dass die Interaktion bereits via defer() bestätigt wurde.
+        """
         ticket = await self.store.get_ticket(interaction.guild, interaction.channel_id)
         if not ticket:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Zu diesem Channel gibt es kein aktives Ticket mehr.", ephemeral=True)
         return ticket
 
@@ -567,9 +570,10 @@ class KuhHilfe(commands.Cog):
                                   ticket: Dict[str, Any]) -> None:
         embed, view = await manage.build_manage(
             self, interaction.guild, interaction.channel_id, ticket, interaction.user.id)
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.edit_original_response(embed=embed, view=view)
 
     async def mgmt_set_stage(self, interaction: discord.Interaction, stage) -> None:
+        await interaction.response.defer()
         ticket = await self._mgmt_ticket(interaction)
         if not ticket:
             return
@@ -585,6 +589,7 @@ class KuhHilfe(commands.Cog):
 
     async def mgmt_add_members(self, interaction: discord.Interaction,
                                member_ids: List[int]) -> None:
+        await interaction.response.defer()
         ticket = await self._mgmt_ticket(interaction)
         if not ticket:
             return
@@ -616,6 +621,7 @@ class KuhHilfe(commands.Cog):
         await self._mgmt_refresh_panel(interaction, ticket)
 
     async def mgmt_remove_member(self, interaction: discord.Interaction, member_id: int) -> None:
+        await interaction.response.defer()
         ticket = await self._mgmt_ticket(interaction)
         if not ticket:
             return
@@ -638,12 +644,13 @@ class KuhHilfe(commands.Cog):
         await self._mgmt_refresh_panel(interaction, ticket)
 
     async def mgmt_reassign(self, interaction: discord.Interaction, new_path: str) -> None:
+        await interaction.response.defer()
         ticket = await self._mgmt_ticket(interaction)
         if not ticket:
             return
         new_leaf, new_label = await self.store.resolve_leaf(interaction.guild, new_path)
         if new_leaf is None:
-            await interaction.response.send_message("❌ Zielkategorie existiert nicht mehr.", ephemeral=True)
+            await interaction.followup.send("❌ Zielkategorie existiert nicht mehr.", ephemeral=True)
             return
         guild, channel = interaction.guild, interaction.channel
         opener = guild.get_member(ticket["opener_id"])
