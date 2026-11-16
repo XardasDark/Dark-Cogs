@@ -304,6 +304,25 @@ class KuhHilfeStore:
             })
             return None
 
+    async def set_fields(self, guild: discord.Guild, path: str,
+                        fields: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Setzt die Felder einer Kategorie komplett (z. B. aus einer Vorlage)."""
+        async with self.config.guild(guild).categories() as cats:
+            leaf = self._resolve(cats, path)
+            if leaf is None or self.is_group(leaf):
+                return None
+            cleaned = []
+            for f in fields[:MAX_FIELDS]:
+                cleaned.append({
+                    "label": str(f.get("label", "Feld")).strip()[:45] or "Feld",
+                    "style": f.get("style") if f.get("style") in ("short", "paragraph") else "short",
+                    "required": bool(f.get("required", True)),
+                    "placeholder": (f.get("placeholder") or "").strip()[:100] or None,
+                    "max_length": max(1, min(int(f.get("max_length", 1000)), 4000)),
+                })
+            leaf["fields"] = cleaned
+            return leaf
+
     async def remove_field(self, guild: discord.Guild, path: str,
                          index: int) -> Optional[Dict[str, Any]]:
         """Entfernt das Feld an 1-basierter Position; gibt es zurück oder None."""

@@ -26,7 +26,7 @@ from discord import app_commands
 from redbot.core import Config, commands
 from redbot.core.bot import Red
 
-from . import views, tickets, admin_ui
+from . import views, tickets, admin_ui, presets
 from .storage import KuhHilfeStore
 from .wizard import WizardSelectView, make_modal
 from .util import resolve_emoji
@@ -599,6 +599,23 @@ class KuhHilfe(commands.Cog):
             embed.add_field(name="Details (R=Rollen, U=User, F=Felder)",
                             value="\n".join(lines)[:1024], inline=False)
         await self._reply(ctx, embed=embed)
+
+    # ── Vorlage ────────────────────────────────────────────────────────────────
+    @setup_group.command(name="vorlagen",
+                      description="Fügt eine generische Standard-Struktur hinzu (Vorhandenes bleibt)")
+    async def vorlagen(self, ctx: commands.Context) -> None:
+        summary = await presets.apply_presets(self.store, ctx.guild)
+        await self.refresh_panel(ctx.guild)
+        if not summary["groups"] and not summary["categories"]:
+            await self._reply(ctx, "ℹ️ Alle Standard-Einträge sind bereits vorhanden – nichts hinzugefügt.")
+            return
+        extra = f" · {summary['skipped']} bereits vorhanden" if summary["skipped"] else ""
+        await self._reply(
+            ctx,
+            f"✅ Standard-Vorlage geladen: **{summary['groups']}** Gruppe(n), "
+            f"**{summary['categories']}** Kategorie(n) hinzugefügt{extra}.\n"
+            "Weise den Kategorien jetzt Rollen/User zu – am einfachsten über "
+            "`/kuhhilfe-setup verwalten`.")
 
     # ── Gruppen (Oberkategorien) ───────────────────────────────────────────────
     @setup_group.command(name="gruppe-add",

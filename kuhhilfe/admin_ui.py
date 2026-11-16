@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import discord
 
-from . import views
+from . import views, presets
 from .util import clean_emoji, resolve_emoji, emoji_for_input
 from .constants import (
     COLOR_INFO, COLOR_ERROR, COLOR_PANEL, COLOR_CLOSED,
@@ -89,7 +89,9 @@ async def root_screen(cog, guild: discord.Guild, author_id: int
         embed.add_field(name="Struktur", value="\n".join(lines)[:1024], inline=False)
     else:
         embed.add_field(name="Struktur",
-                        value="_Noch nichts angelegt. Starte mit **➕ Gruppe** oder **➕ Kategorie**._",
+                        value=("_Noch nichts angelegt._\n"
+                               "Starte mit **📥 Vorlage** (fertige Standard-Kategorien) "
+                               "oder lege mit **➕ Gruppe** / **➕ Kategorie** eigene an."),
                         inline=False)
 
     embed.add_field(name="Zusammenfassung",
@@ -165,6 +167,20 @@ class RootView(_BaseView):
     async def panel_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         embed, view = await panel_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Vorlage", emoji="📥", style=discord.ButtonStyle.secondary, row=2)
+    async def presets_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        summary = await presets.apply_presets(self.cog.store, self.guild)
+        await self.cog.refresh_panel(self.guild)
+        embed, view = await root_screen(self.cog, self.guild, self.author_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+        if not summary["groups"] and not summary["categories"]:
+            note = "ℹ️ Alle Standard-Einträge waren bereits vorhanden."
+        else:
+            extra = f" · {summary['skipped']} bereits vorhanden" if summary["skipped"] else ""
+            note = (f"📥 Vorlage geladen: {summary['groups']} Gruppe(n), "
+                    f"{summary['categories']} Kategorie(n) hinzugefügt{extra}.")
+        await interaction.followup.send(note, ephemeral=True)
 
 
 async def _reopen_root(view: _BaseView, interaction: discord.Interaction) -> None:
