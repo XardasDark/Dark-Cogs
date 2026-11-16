@@ -26,7 +26,7 @@ from discord import app_commands
 from redbot.core import Config, commands
 from redbot.core.bot import Red
 
-from . import views, tickets
+from . import views, tickets, admin_ui
 from .storage import KuhHilfeStore
 from .wizard import WizardSelectView, make_modal
 from .constants import (
@@ -468,37 +468,57 @@ class KuhHilfe(commands.Cog):
         if ctx.invoked_subcommand is None:
             await ctx.send_help(ctx.command)
 
-    # ── Setup ────────────────────────────────────────────────────────────────
-    @setup_group.command(name="panel", description="Postet das Support-Panel in einen Channel")
-    @app_commands.describe(channel="Channel, in dem das Panel mit dem Button erscheinen soll")
-    async def panel_cmd(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
-        cats = await self.store.list_categories(ctx.guild)
-        embed = views.build_panel_embed(ctx.guild, cats)
-        try:
-            msg = await channel.send(embed=embed, view=views.build_panel_view())
-        except discord.Forbidden:
-            await self._reply(ctx, f"❌ Ich darf in {channel.mention} nicht schreiben.")
-            return
-        await self.store.set_panel(ctx.guild, channel.id, msg.id)
-        await self._reply(ctx, f"✅ Support-Panel in {channel.mention} gepostet.")
+    # ── Panel-Helfer (von Menü & Slash-Befehlen genutzt) ───────────────────────
+    async def post_panel(self, guild: discord.Guild,
+                         channel: discord.TextChannel) -> discord.Message:
+        cats = await self.store.list_categories(guild)
+        embed = views.build_panel_embed(guild, cats)
+        msg = await channel.send(embed=embed, view=views.build_panel_view())
+        await self.store.set_panel(guild, channel.id, msg.id)
+        return msg
 
-    @setup_group.command(name="panel-aktualisieren", description="Aktualisiert das bestehende Panel")
-    async def panel_refresh(self, ctx: commands.Context) -> None:
-        settings = await self.store.get_settings(ctx.guild)
+    async def refresh_panel(self, guild: discord.Guild) -> bool:
+        settings = await self.store.get_settings(guild)
         ch_id, msg_id = settings.get("panel_channel_id"), settings.get("panel_message_id")
-        channel = ctx.guild.get_channel(ch_id) if ch_id else None
+        channel = guild.get_channel(ch_id) if ch_id else None
         if not channel or not msg_id:
-            await self._reply(ctx, "❌ Es ist noch kein Panel gesetzt. Nutze `/kuhhilfe-setup panel`.")
-            return
-        cats = await self.store.list_categories(ctx.guild)
-        embed = views.build_panel_embed(ctx.guild, cats)
+            return False
+        cats = await self.store.list_categories(guild)
+        embed = views.build_panel_embed(guild, cats)
         try:
             msg = await channel.fetch_message(msg_id)
             await msg.edit(embed=embed, view=views.build_panel_view())
         except discord.NotFound:
             msg = await channel.send(embed=embed, view=views.build_panel_view())
-            await self.store.set_panel(ctx.guild, channel.id, msg.id)
-        await self._reply(ctx, "✅ Panel aktualisiert.")
+            await self.store.set_panel(guild, channel.id, msg.id)
+        return True
+
+    # ── Setup ────────────────────────────────────────────────────────────────
+    @setup_group.command(name="verwalten",
+                      description="Öffnet das interaktive Verwaltungs-Menü (empfohlen)")
+    async def verwalten(self, ctx: commands.Context) -> None:
+        embed, view = await admin_ui.root_screen(self, ctx.guild, ctx.author.id)
+        if ctx.interaction:
+            await ctx.interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        else:
+            await ctx.send(embed=embed, view=view)
+
+    @setup_group.command(name="panel", description="Postet das Support-Panel in einen Channel")
+    @app_commands.describe(channel="Channel, in dem das Panel mit dem Button erscheinen soll")
+    async def panel_cmd(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
+        try:
+            await self.post_panel(ctx.guild, channel)
+        except discord.Forbidden:
+            await self._reply(ctx, f"❌ Ich darf in {channel.mention} nicht schreiben.")
+            return
+        await self._reply(ctx, f"✅ Support-Panel in {channel.mention} gepostet.")
+
+    @setup_group.command(name="panel-aktualisieren", description="Aktualisiert das bestehende Panel")
+    async def panel_refresh(self, ctx: commands.Context) -> None:
+        if await self.refresh_panel(ctx.guild):
+            await self._reply(ctx, "✅ Panel aktualisiert.")
+        else:
+            await self._reply(ctx, "❌ Es ist noch kein Panel gesetzt. Nutze `/kuhhilfe-setup panel`.")
 
     @setup_group.command(name="ticket-ablage",
                       description="Discord-Kanalkategorie, UNTER der die Ticket-Channels einsortiert werden")

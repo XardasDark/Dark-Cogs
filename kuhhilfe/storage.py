@@ -202,6 +202,37 @@ class KuhHilfeStore:
             cats[key] = leaf
             return leaf, key
 
+    async def edit_node(self, guild: discord.Guild, path: str, name: Optional[str],
+                       emoji: Optional[str], description: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Ändert Anzeige-Felder (Name/Emoji/Beschreibung) eines Knotens; Key bleibt."""
+        async with self.config.guild(guild).categories() as cats:
+            node = self._resolve(cats, path)
+            if node is None:
+                return None
+            if name and name.strip():
+                node["name"] = name.strip()
+            node["emoji"] = (emoji or "").strip() or None
+            node["description"] = (description or "").strip() or None
+            return node
+
+    async def set_roles(self, guild: discord.Guild, path: str,
+                       role_ids: List[int]) -> Optional[Dict[str, Any]]:
+        async with self.config.guild(guild).categories() as cats:
+            leaf = self._resolve(cats, path)
+            if leaf is None or self.is_group(leaf):
+                return None
+            leaf["role_ids"] = list(dict.fromkeys(int(i) for i in role_ids))
+            return leaf
+
+    async def set_users(self, guild: discord.Guild, path: str,
+                       user_ids: List[int]) -> Optional[Dict[str, Any]]:
+        async with self.config.guild(guild).categories() as cats:
+            leaf = self._resolve(cats, path)
+            if leaf is None or self.is_group(leaf):
+                return None
+            leaf["user_ids"] = list(dict.fromkeys(int(i) for i in user_ids))
+            return leaf
+
     async def remove_node(self, guild: discord.Guild, path: str) -> bool:
         """Entfernt eine Gruppe (inkl. Kinder) oder eine Leaf am Pfad."""
         async with self.config.guild(guild).categories() as cats:
