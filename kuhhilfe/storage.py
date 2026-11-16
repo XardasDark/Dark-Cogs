@@ -68,8 +68,10 @@ class KuhHilfeStore:
     async def set_max_open(self, guild: discord.Guild, value: int) -> None:
         await self.config.guild(guild).max_open_per_user.set(max(0, value))
 
-    async def set_delete_delay(self, guild: discord.Guild, seconds: int) -> None:
-        await self.config.guild(guild).delete_delay_seconds.set(max(0, seconds))
+    async def set_delete_delay(self, guild: discord.Guild, seconds: Optional[int]) -> None:
+        """seconds=None → nie automatisch löschen; 0 → sofort; >0 → nach N Sekunden."""
+        value = None if seconds is None else max(0, seconds)
+        await self.config.guild(guild).delete_delay_seconds.set(value)
 
     async def set_confirm_delete(self, guild: discord.Guild, seconds: int) -> None:
         await self.config.guild(guild).confirm_delete_seconds.set(max(0, seconds))

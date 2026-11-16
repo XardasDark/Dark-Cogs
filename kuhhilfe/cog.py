@@ -436,42 +436,63 @@ class KuhHilfe(commands.Cog):
         await interaction.response.edit_message(
             embed=embed, view=views.build_ticket_controls(STATUS_CLOSED))
 
-        # Transcript ins Archiv (optional)
+        # Hinweis + Zeitplan – das Transcript entsteht erst KURZ VOR dem Löschen
+        # (nicht hier), damit Schließen/Wieder-Öffnen keine Transcript-Dubletten erzeugt.
         settings = await self.store.get_settings(guild)
-        transcript_channel_id = settings.get("transcript_channel_id")
-        if transcript_channel_id:
-            archive = guild.get_channel(transcript_channel_id)
-            if isinstance(archive, (discord.TextChannel, discord.Thread)):
-                try:
-                    transcript = await tickets.generate_transcript(channel, ticket)
-                    summary = discord.Embed(
-                        title=f"📄 Transcript · Ticket {ticket['id']}",
-                        color=COLOR_CLOSED, timestamp=discord.utils.utcnow())
-                    summary.add_field(
-                        name="Kategorie",
-                        value=(label or ticket.get("category_label") or ticket["category_key"]),
-                        inline=True)
-                    summary.add_field(
-                        name="Ersteller",
-                        value=(opener.mention if opener else f"<@{ticket['opener_id']}>"), inline=True)
-                    summary.add_field(name="Geschlossen von", value=interaction.user.mention, inline=True)
-                    await archive.send(embed=summary, file=transcript)
-                except discord.DiscordException:
-                    log.exception("Transcript konnte nicht gespeichert werden")
-
-        delay = settings.get("delete_delay_seconds", DEFAULT_DELETE_DELAY) or 0
-        if delay <= 0:
+        delay = settings.get("delete_delay_seconds", DEFAULT_DELETE_DELAY)
+        if delay is None:
+            await channel.send(embed=discord.Embed(
+                description=(f"✅ Ticket von {interaction.user.mention} geschlossen. "
+                             "Dieser Channel bleibt bestehen (keine automatische Löschung) – "
+                             "mit **♻️ Wieder öffnen** reaktivieren oder manuell löschen."),
+                color=COLOR_CLOSED))
+        elif delay <= 0:
             await self._delete_ticket_channel(guild, channel, ticket)
         else:
             minutes = max(1, round(delay / 60))
             await channel.send(embed=discord.Embed(
                 description=(f"✅ Ticket von {interaction.user.mention} geschlossen. "
-                             f"Dieser Channel wird in **{minutes} Min** automatisch gelöscht."),
+                             f"Dieser Channel wird in **{minutes} Min** automatisch gelöscht "
+                             "(das Transcript wird dann erstellt)."),
                 color=COLOR_CLOSED))
+
+    async def _write_transcript(self, guild: discord.Guild,
+                                channel: discord.abc.GuildChannel,
+                                ticket: Dict[str, Any]) -> None:
+        """Erzeugt EINMAL ein Transcript ins Archiv – unmittelbar vor dem Löschen."""
+        settings = await self.store.get_settings(guild)
+        archive_id = settings.get("transcript_channel_id")
+        if not archive_id:
+            return
+        archive = guild.get_channel(archive_id)
+        if not isinstance(archive, (discord.TextChannel, discord.Thread)):
+            return
+        _, label = await self.store.resolve_leaf(guild, ticket["category_key"])
+        opener = guild.get_member(ticket["opener_id"])
+        closed_by = ticket.get("closed_by")
+        try:
+            transcript = await tickets.generate_transcript(channel, ticket)
+            summary = discord.Embed(
+                title=f"📄 Transcript · Ticket {ticket['id']}",
+                color=COLOR_CLOSED, timestamp=discord.utils.utcnow())
+            summary.add_field(
+                name="Kategorie",
+                value=(label or ticket.get("category_label") or ticket["category_key"]), inline=True)
+            summary.add_field(
+                name="Ersteller",
+                value=(opener.mention if opener else f"<@{ticket['opener_id']}>"), inline=True)
+            if closed_by:
+                summary.add_field(name="Geschlossen von", value=f"<@{closed_by}>", inline=True)
+            await archive.send(embed=summary, file=transcript)
+        except discord.DiscordException:
+            log.exception("Transcript konnte nicht gespeichert werden")
 
     async def _delete_ticket_channel(self, guild: discord.Guild,
                                      channel: Optional[discord.abc.GuildChannel],
                                      ticket: Dict[str, Any]) -> None:
+        # Transcript zuerst (solange der Channel noch existiert), dann löschen.
+        if channel is not None:
+            await self._write_transcript(guild, channel, ticket)
         await self.store.delete_ticket(guild, ticket["channel_id"])
         if channel is not None:
             try:
@@ -497,7 +518,10 @@ class KuhHilfe(commands.Cog):
         now = int(time.time())
         for guild in self.bot.guilds:
             settings = await self.store.get_settings(guild)
-            delay = settings.get("delete_delay_seconds", DEFAULT_DELETE_DELAY) or 0
+            delay = settings.get("delete_delay_seconds", DEFAULT_DELETE_DELAY)
+            if delay is None:
+                continue  # „nie löschen" → geschlossene Channels bleiben bestehen
+            delay = max(0, delay)
             tickets_map = await self.store.all_tickets(guild)
             for ticket in list(tickets_map.values()):
                 if ticket.get("status") != STATUS_CLOSED:
@@ -602,11 +626,16 @@ class KuhHilfe(commands.Cog):
         await self._reply(ctx, f"✅ Offene Tickets pro Nutzer: **{txt}**.")
 
     @setup_group.command(name="loeschzeit",
-                      description="Minuten bis zum Löschen eines geschlossenen Channels (Default 5)")
-    @app_commands.describe(minuten="Minuten bis zum Löschen (0 = sofort)")
+                      description="Minuten bis zum Löschen eines geschlossenen Channels (0 = sofort, negativ = nie)")
+    @app_commands.describe(minuten="Minuten bis zum Löschen · 0 = sofort · negativ (z. B. -1) = nie löschen")
     async def set_delete_delay(self, ctx: commands.Context, minuten: int) -> None:
-        await self.store.set_delete_delay(ctx.guild, max(0, minuten) * 60)
-        txt = "sofort" if minuten <= 0 else f"{minuten} Min"
+        if minuten < 0:
+            await self.store.set_delete_delay(ctx.guild, None)
+            await self._reply(ctx, "✅ Geschlossene Channels werden **nie** automatisch gelöscht "
+                                   "(Transcript nur, wenn ein Channel tatsächlich gelöscht wird).")
+            return
+        await self.store.set_delete_delay(ctx.guild, minuten * 60)
+        txt = "sofort" if minuten == 0 else f"{minuten} Min"
         await self._reply(ctx, f"✅ Geschlossene Channels werden **{txt}** nach dem Schließen gelöscht.")
 
     @setup_group.command(name="bestaetigungen",
@@ -632,8 +661,9 @@ class KuhHilfe(commands.Cog):
         embed.add_field(name="Archiv", value=_ch(s.get("transcript_channel_id")), inline=True)
         limit = s.get("max_open_per_user", DEFAULT_MAX_OPEN)
         embed.add_field(name="Limit/Nutzer", value=("unbegrenzt" if not limit else str(limit)), inline=True)
-        embed.add_field(name="Löschzeit",
-                        value=f"{round((s.get('delete_delay_seconds') or 0) / 60)} Min", inline=True)
+        dd = s.get("delete_delay_seconds", DEFAULT_DELETE_DELAY)
+        delay_txt = "nie" if dd is None else ("sofort" if dd <= 0 else f"{round(dd / 60)} Min")
+        embed.add_field(name="Löschzeit", value=delay_txt, inline=True)
         cd = s.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE)
         embed.add_field(name="Bestätigungen",
                         value=("dauerhaft" if not cd else f"{cd} Sek."), inline=True)

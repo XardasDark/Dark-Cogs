@@ -112,11 +112,12 @@ def _settings_summary(guild: discord.Guild, s: Dict[str, Any]) -> str:
         c = guild.get_channel(cid) if cid else None
         return c.mention if c else "_nicht gesetzt_"
     limit = s.get("max_open_per_user", DEFAULT_MAX_OPEN)
-    delay = round((s.get("delete_delay_seconds") or 0) / 60)
+    dd = s.get("delete_delay_seconds", DEFAULT_DELETE_DELAY)
+    delay_txt = "nie" if dd is None else ("sofort" if dd <= 0 else f"{round(dd / 60)} Min")
     cd = s.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE)
     return (f"Panel: {ch(s.get('panel_channel_id'))} · Ablage: {ch(s.get('ticket_category_id'))} · "
             f"Archiv: {ch(s.get('transcript_channel_id'))}\n"
-            f"Limit/Nutzer: {'unbegrenzt' if not limit else limit} · Löschzeit: {delay} Min · "
+            f"Limit/Nutzer: {'unbegrenzt' if not limit else limit} · Löschzeit: {delay_txt} · "
             f"Bestätigungen: {'dauerhaft' if not cd else str(cd) + ' Sek.'}")
 
 
@@ -727,16 +728,22 @@ class DelayModal(discord.ui.Modal, title="Löschzeit nach dem Schließen"):
         self.guild = guild
         self.author_id = author_id
         self.f_value = discord.ui.TextInput(
-            label="Minuten bis Löschen (0 = sofort)", required=True, max_length=4, default="5")
+            label="Minuten · 0 = sofort · - = nie löschen", required=True, max_length=10,
+            placeholder="z. B. 5, 0 oder -", default="5")
         self.add_item(self.f_value)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        try:
-            minutes = max(0, int(str(self.f_value.value).strip()))
-        except ValueError:
-            await interaction.response.send_message("❌ Bitte eine Zahl eingeben.", ephemeral=True)
-            return
-        await self.cog.store.set_delete_delay(self.guild, minutes * 60)
+        raw = str(self.f_value.value).strip().lower()
+        if raw in ("-", "–", "—", "nie", "never", "unendlich", "∞", "-1", "x"):
+            await self.cog.store.set_delete_delay(self.guild, None)
+        else:
+            try:
+                minutes = max(0, int(raw))
+            except ValueError:
+                await interaction.response.send_message(
+                    "❌ Bitte eine Zahl (Minuten) oder »-« eingeben.", ephemeral=True)
+                return
+            await self.cog.store.set_delete_delay(self.guild, minutes * 60)
         embed, view = await settings_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
 
