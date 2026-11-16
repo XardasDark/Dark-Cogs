@@ -71,6 +71,9 @@ class KuhHilfeStore:
     async def set_delete_delay(self, guild: discord.Guild, seconds: int) -> None:
         await self.config.guild(guild).delete_delay_seconds.set(max(0, seconds))
 
+    async def set_confirm_delete(self, guild: discord.Guild, seconds: int) -> None:
+        await self.config.guild(guild).confirm_delete_seconds.set(max(0, seconds))
+
     # ─────────────────────────────────────────────────────────────────────────
     # KATEGORIE-BAUM – Helfer
     # ─────────────────────────────────────────────────────────────────────────

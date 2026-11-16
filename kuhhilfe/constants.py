@@ -75,6 +75,7 @@ DEFAULT_FIELDS = [
 # ─────────────────────────────────────────────────────────────────────────────
 DEFAULT_MAX_OPEN      = 2      # gleichzeitig offene Tickets pro Nutzer (0 = unbegrenzt)
 DEFAULT_DELETE_DELAY  = 300    # Sekunden bis zum Löschen nach dem Schließen (5 Min)
+DEFAULT_CONFIRM_DELETE = 60    # Sekunden, bis ephemere Nutzer-Bestätigungen verschwinden (0 = aus)
 
 # Länge/Validierung für Kategorie-Keys
 KEY_MAX_LENGTH = 32

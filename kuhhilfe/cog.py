@@ -34,7 +34,7 @@ from .constants import (
     PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN,
     COLOR_INFO, COLOR_ERROR, COLOR_CLOSED,
     STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED,
-    DEFAULT_MAX_OPEN, DEFAULT_DELETE_DELAY,
+    DEFAULT_MAX_OPEN, DEFAULT_DELETE_DELAY, DEFAULT_CONFIRM_DELETE,
     FIELD_STYLE_LABELS, MAX_FIELDS, CATEGORY_PATH_SEP,
 )
 
@@ -56,6 +56,7 @@ class KuhHilfe(commands.Cog):
             transcript_channel_id=None,
             max_open_per_user=DEFAULT_MAX_OPEN,
             delete_delay_seconds=DEFAULT_DELETE_DELAY,
+            confirm_delete_seconds=DEFAULT_CONFIRM_DELETE,
             categories={},
             tickets={},
         )
@@ -97,6 +98,24 @@ class KuhHilfe(commands.Cog):
                 await ctx.interaction.response.send_message(**kwargs)
         else:
             await ctx.send(**kwargs)
+
+    def _autodelete(self, interaction: discord.Interaction, seconds: int,
+                    message: Optional[discord.Message] = None) -> None:
+        """Löscht eine ephemere Nachricht nach `seconds` Sekunden (0 = nie)."""
+        if not seconds or seconds <= 0:
+            return
+
+        async def _run() -> None:
+            try:
+                await asyncio.sleep(seconds)
+                if message is not None:
+                    await message.delete()
+                else:
+                    await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass  # Nachricht schon weg oder Interaktions-Token abgelaufen
+
+        self.bot.loop.create_task(_run())
 
     async def _ac_leaf(self, interaction: discord.Interaction,
                        current: str) -> List[app_commands.Choice]:
@@ -173,6 +192,8 @@ class KuhHilfe(commands.Cog):
                     description="⚠️ Der Support ist noch nicht eingerichtet. Bitte wende dich an das Team.",
                     color=COLOR_ERROR),
                 ephemeral=True)
+            settings = await self.store.get_settings(guild)
+            self._autodelete(interaction, settings.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE))
             return
 
         if not await self._within_limit(interaction):
@@ -235,6 +256,7 @@ class KuhHilfe(commands.Cog):
                                  f"Bitte schließe zuerst ein bestehendes (max. {limit})."),
                     color=COLOR_ERROR),
                 ephemeral=True)
+            self._autodelete(interaction, settings.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE))
             return False
         return True
 
@@ -287,12 +309,14 @@ class KuhHilfe(commands.Cog):
             allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
         )
 
-        await interaction.followup.send(
+        confirm = await interaction.followup.send(
             embed=discord.Embed(
                 description=f"✅ Dein Ticket wurde erstellt: {channel.mention}\n"
                             f"Ticket-ID: `{ticket_id}`",
                 color=COLOR_INFO),
-            ephemeral=True)
+            ephemeral=True, wait=True)
+        self._autodelete(interaction, settings.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE),
+                         confirm)
 
     # ─────────────────────────────────────────────────────────────────────────
     # TICKET-AKTIONEN
@@ -585,6 +609,14 @@ class KuhHilfe(commands.Cog):
         txt = "sofort" if minuten <= 0 else f"{minuten} Min"
         await self._reply(ctx, f"✅ Geschlossene Channels werden **{txt}** nach dem Schließen gelöscht.")
 
+    @setup_group.command(name="bestaetigungen",
+                      description="Sekunden, bis ephemere Nutzer-Bestätigungen verschwinden (0 = aus)")
+    @app_commands.describe(sekunden="Sekunden bis zum automatischen Ausblenden (0 = dauerhaft)")
+    async def set_confirm_delete(self, ctx: commands.Context, sekunden: int) -> None:
+        await self.store.set_confirm_delete(ctx.guild, max(0, sekunden))
+        txt = "dauerhaft sichtbar" if sekunden <= 0 else f"nach {sekunden} Sek. ausgeblendet"
+        await self._reply(ctx, f"✅ Nutzer-Bestätigungen (nur für den Nutzer sichtbar) werden **{txt}**.")
+
     @setup_group.command(name="status", description="Zeigt die aktuelle KuhHilfe-Konfiguration")
     async def status_cmd(self, ctx: commands.Context) -> None:
         s = await self.store.get_settings(ctx.guild)
@@ -602,6 +634,9 @@ class KuhHilfe(commands.Cog):
         embed.add_field(name="Limit/Nutzer", value=("unbegrenzt" if not limit else str(limit)), inline=True)
         embed.add_field(name="Löschzeit",
                         value=f"{round((s.get('delete_delay_seconds') or 0) / 60)} Min", inline=True)
+        cd = s.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE)
+        embed.add_field(name="Bestätigungen",
+                        value=("dauerhaft" if not cd else f"{cd} Sek."), inline=True)
         leaves = await self.store.iter_leaves(ctx.guild)
         groups = await self.store.iter_groups(ctx.guild)
         embed.add_field(name="Struktur",

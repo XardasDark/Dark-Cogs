@@ -20,7 +20,7 @@ from .util import clean_emoji, resolve_emoji, emoji_for_input
 from .constants import (
     COLOR_INFO, COLOR_ERROR, COLOR_PANEL, COLOR_CLOSED,
     KIND_GROUP, CATEGORY_PATH_SEP, MAX_FIELDS, FIELD_STYLE_LABELS,
-    DEFAULT_MAX_OPEN, DEFAULT_DELETE_DELAY,
+    DEFAULT_MAX_OPEN, DEFAULT_DELETE_DELAY, DEFAULT_CONFIRM_DELETE,
 )
 
 MENU_TIMEOUT = 300  # Sekunden Inaktivität, dann wird das Menü deaktiviert
@@ -113,9 +113,11 @@ def _settings_summary(guild: discord.Guild, s: Dict[str, Any]) -> str:
         return c.mention if c else "_nicht gesetzt_"
     limit = s.get("max_open_per_user", DEFAULT_MAX_OPEN)
     delay = round((s.get("delete_delay_seconds") or 0) / 60)
+    cd = s.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE)
     return (f"Panel: {ch(s.get('panel_channel_id'))} · Ablage: {ch(s.get('ticket_category_id'))} · "
             f"Archiv: {ch(s.get('transcript_channel_id'))}\n"
-            f"Limit/Nutzer: {'unbegrenzt' if not limit else limit} · Löschzeit: {delay} Min")
+            f"Limit/Nutzer: {'unbegrenzt' if not limit else limit} · Löschzeit: {delay} Min · "
+            f"Bestätigungen: {'dauerhaft' if not cd else str(cd) + ' Sek.'}")
 
 
 class RootView(_BaseView):
@@ -417,7 +419,8 @@ async def settings_screen(cog, guild, author_id
         name="Hinweise",
         value=("**Ablage** = Discord-Kanalkategorie, unter der die Ticket-Channels einsortiert "
                "werden (optional).\n**Archiv** = Channel für Transcripts beim Schließen (optional).\n"
-               "**Limit/Löschzeit** per Button."),
+               "**Limit/Löschzeit/Bestätigungen** per Button. *Bestätigungen* = Sekunden, bis die "
+               "nur für den Nutzer sichtbaren »blauen« Hinweise automatisch verschwinden."),
         inline=False)
     return embed, SettingsView(cog, guild, author_id, s)
 
@@ -461,6 +464,10 @@ class SettingsView(_BaseView):
     @discord.ui.button(label="Löschzeit", emoji="⏱️", style=discord.ButtonStyle.secondary, row=2)
     async def delay_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(DelayModal(self.cog, self.guild, self.author_id))
+
+    @discord.ui.button(label="Bestätigungen", emoji="💬", style=discord.ButtonStyle.secondary, row=2)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(ConfirmDeleteModal(self.cog, self.guild, self.author_id))
 
     @discord.ui.button(label="Zurück", emoji="⬅️", style=discord.ButtonStyle.secondary, row=2)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -730,5 +737,26 @@ class DelayModal(discord.ui.Modal, title="Löschzeit nach dem Schließen"):
             await interaction.response.send_message("❌ Bitte eine Zahl eingeben.", ephemeral=True)
             return
         await self.cog.store.set_delete_delay(self.guild, minutes * 60)
+        embed, view = await settings_screen(self.cog, self.guild, self.author_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class ConfirmDeleteModal(discord.ui.Modal, title="Bestätigungen automatisch ausblenden"):
+    def __init__(self, cog, guild, author_id):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.guild = guild
+        self.author_id = author_id
+        self.f_value = discord.ui.TextInput(
+            label="Sekunden bis Ausblenden (0 = dauerhaft)", required=True, max_length=5, default="60")
+        self.add_item(self.f_value)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            seconds = max(0, int(str(self.f_value.value).strip()))
+        except ValueError:
+            await interaction.response.send_message("❌ Bitte eine Zahl eingeben.", ephemeral=True)
+            return
+        await self.cog.store.set_confirm_delete(self.guild, seconds)
         embed, view = await settings_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
