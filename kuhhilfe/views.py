@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import discord
 
 from .constants import (
-    PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM,
+    PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN,
     COLOR_PANEL, COLOR_TICKET, COLOR_PENDING, COLOR_CLOSED,
     STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STATUS_LABELS,
     KIND_GROUP,
@@ -107,15 +107,25 @@ def build_ticket_embed(ticket: Dict[str, Any], category: Dict[str, Any],
     return embed
 
 
+def _reopen_button() -> discord.ui.Button:
+    return discord.ui.Button(
+        label="Wieder öffnen",
+        emoji="♻️",
+        style=discord.ButtonStyle.success,
+        custom_id=TICKET_REOPEN,
+    )
+
+
 def build_ticket_controls(status: str) -> discord.ui.View:
     """
     Persistente Controls im Ticket-Channel.
     - open:            [Übernehmen] [Schließen]
-    - close_requested: [Übernehmen] [Schließen bestätigen]
-    - closed:          (keine aktiven Buttons)
+    - close_requested: [Übernehmen] [Schließen bestätigen] [Wieder öffnen]
+    - closed:          [Wieder öffnen]   (Support kann die Schließung rückgängig machen)
     """
     view = discord.ui.View(timeout=None)
     if status == STATUS_CLOSED:
+        view.add_item(_reopen_button())
         return view
 
     view.add_item(discord.ui.Button(
@@ -132,6 +142,7 @@ def build_ticket_controls(status: str) -> discord.ui.View:
             style=discord.ButtonStyle.danger,
             custom_id=TICKET_CONFIRM,
         ))
+        view.add_item(_reopen_button())
     else:
         view.add_item(discord.ui.Button(
             label="Schließen",

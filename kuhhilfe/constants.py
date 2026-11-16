@@ -14,6 +14,7 @@ PANEL_OPEN          = "kuhhilfe:panel:open"
 TICKET_CLAIM        = "kuhhilfe:ticket:claim"
 TICKET_CLOSE        = "kuhhilfe:ticket:close"
 TICKET_CONFIRM      = "kuhhilfe:ticket:confirm_close"
+TICKET_REOPEN       = "kuhhilfe:ticket:reopen"
 
 # Präfixe der ephemeren Wizard-Komponenten (kurzlebig, eigene View-Callbacks)
 WIZARD_CAT_SELECT   = "kuhhilfe:wizard:cat"

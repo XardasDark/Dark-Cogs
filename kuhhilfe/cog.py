@@ -31,7 +31,7 @@ from .storage import KuhHilfeStore
 from .wizard import WizardSelectView, make_modal
 from .util import resolve_emoji
 from .constants import (
-    PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM,
+    PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN,
     COLOR_INFO, COLOR_ERROR, COLOR_CLOSED,
     STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED,
     DEFAULT_MAX_OPEN, DEFAULT_DELETE_DELAY,
@@ -156,6 +156,8 @@ class KuhHilfe(commands.Cog):
                 await self._handle_close(interaction)
             elif custom_id == TICKET_CONFIRM:
                 await self._handle_confirm_close(interaction)
+            elif custom_id == TICKET_REOPEN:
+                await self._handle_reopen(interaction)
         except discord.DiscordException:
             log.exception("Fehler bei KuhHilfe-Interaktion (%s)", custom_id)
 
@@ -370,6 +372,30 @@ class KuhHilfe(commands.Cog):
                 "❌ Nur zuständige Support-Mitglieder können die Schließung bestätigen.", ephemeral=True)
             return
         await self._effective_close(interaction, ticket, leaf, label)
+
+    async def _handle_reopen(self, interaction: discord.Interaction) -> None:
+        ticket, leaf, label = await self._load_ticket_ctx(interaction)
+        if not ticket:
+            return
+        if not self.is_support_for(interaction.user, leaf):
+            await interaction.response.send_message(
+                "❌ Nur zuständige Support-Mitglieder können ein Ticket wieder öffnen.", ephemeral=True)
+            return
+        if ticket["status"] == STATUS_OPEN:
+            await interaction.response.send_message("ℹ️ Dieses Ticket ist bereits offen.", ephemeral=True)
+            return
+
+        # Status zurück auf offen → der Lösch-Scheduler fasst es nicht mehr an
+        ticket = await self.store.update_ticket(
+            interaction.guild, interaction.channel_id,
+            status=STATUS_OPEN, closed_at=None, closed_by=None)
+        opener = interaction.guild.get_member(ticket["opener_id"])
+        embed = views.build_ticket_embed(ticket, leaf, opener, interaction.guild, label)
+        await interaction.response.edit_message(
+            embed=embed, view=views.build_ticket_controls(STATUS_OPEN))
+        await interaction.channel.send(
+            f"♻️ {interaction.user.mention} hat dieses Ticket wieder geöffnet – "
+            "die geplante Löschung wurde abgebrochen.")
 
     async def _effective_close(self, interaction: discord.Interaction,
                                ticket: Dict[str, Any], leaf: Dict[str, Any],
