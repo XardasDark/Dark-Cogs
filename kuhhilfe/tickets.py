@@ -59,14 +59,19 @@ async def create_ticket_channel(guild: discord.Guild, opener: discord.Member,
 
     overwrites = build_overwrites(guild, opener, category)
     reason = f"KuhHilfe-Ticket {ticket_id} von {opener} ({opener.id})"
-    channel = await guild.create_text_channel(
-        name=ticket_id,
-        category=parent,
-        overwrites=overwrites,
-        topic=f"Ticket {ticket_id} · {category.get('name', '')} · Ersteller: {opener}",
-        reason=reason,
-    )
-    return channel
+    topic = f"Ticket {ticket_id} · {category.get('name', '')} · Ersteller: {opener}"
+    try:
+        return await guild.create_text_channel(
+            name=ticket_id, category=parent, overwrites=overwrites, topic=topic, reason=reason)
+    except discord.Forbidden:
+        raise
+    except discord.HTTPException:
+        # Häufigster Fall: die Ziel-Kanalkategorie ist voll (max. 50 Channels).
+        # Fallback: Channel ohne Kanalkategorie (oben in der Liste) erstellen.
+        if parent is None:
+            raise
+        return await guild.create_text_channel(
+            name=ticket_id, category=None, overwrites=overwrites, topic=topic, reason=reason)
 
 
 async def generate_transcript(channel: discord.TextChannel,

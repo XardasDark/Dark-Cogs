@@ -60,6 +60,9 @@ class KuhHilfe(commands.Cog):
             modlog_channel_id=None,
             inactivity_hours=0,
             inactivity_warn_hours=0,
+            cooldown_seconds=0,
+            blacklist=[],
+            cooldowns={},
             categories={},
             tickets={},
         )
@@ -249,7 +252,7 @@ class KuhHilfe(commands.Cog):
             self._autodelete(interaction, settings.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE))
             return
 
-        if not await self._within_limit(interaction):
+        if not await self._can_open(interaction):
             return
 
         top = list(cats.items())
@@ -296,21 +299,50 @@ class KuhHilfe(commands.Cog):
                 color=COLOR_INFO),
             view=view, ephemeral=True)
 
-    async def _within_limit(self, interaction: discord.Interaction) -> bool:
-        settings = await self.store.get_settings(interaction.guild)
-        limit = settings.get("max_open_per_user", DEFAULT_MAX_OPEN) or 0
-        if limit <= 0:
-            return True
-        open_count = await self.store.count_open_for_user(interaction.guild, interaction.user.id)
-        if open_count >= limit:
+    @staticmethod
+    def _fmt_duration(seconds: int) -> str:
+        seconds = max(0, int(seconds))
+        if seconds < 60:
+            return f"{seconds} Sek."
+        minutes, sec = divmod(seconds, 60)
+        if minutes < 60:
+            return f"{minutes} Min." + (f" {sec} Sek." if sec else "")
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours} Std." + (f" {minutes} Min." if minutes else "")
+
+    async def _can_open(self, interaction: discord.Interaction) -> bool:
+        """Prüft Blacklist, offene-Tickets-Limit und Cooldown. Meldet ggf. ephemer."""
+        guild, user = interaction.guild, interaction.user
+        settings = await self.store.get_settings(guild)
+        cd_display = settings.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE)
+
+        async def reject(desc: str) -> bool:
             await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=(f"⚠️ Du hast bereits **{open_count}** offene(s) Ticket(s). "
-                                 f"Bitte schließe zuerst ein bestehendes (max. {limit})."),
-                    color=COLOR_ERROR),
-                ephemeral=True)
-            self._autodelete(interaction, settings.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE))
+                embed=discord.Embed(description=desc, color=COLOR_ERROR), ephemeral=True)
+            self._autodelete(interaction, cd_display)
             return False
+
+        # 1) Blacklist
+        if user.id in (settings.get("blacklist") or []):
+            return await reject("🚫 Du bist aktuell vom Support ausgeschlossen und kannst kein "
+                                "Ticket öffnen.")
+        # 2) Limit offener Tickets
+        limit = settings.get("max_open_per_user", DEFAULT_MAX_OPEN) or 0
+        if limit > 0:
+            open_count = await self.store.count_open_for_user(guild, user.id)
+            if open_count >= limit:
+                return await reject(
+                    f"⚠️ Du hast bereits **{open_count}** offene(s) Ticket(s). "
+                    f"Bitte schließe zuerst ein bestehendes (max. {limit}).")
+        # 3) Cooldown
+        cooldown = settings.get("cooldown_seconds") or 0
+        if cooldown > 0:
+            last = (settings.get("cooldowns") or {}).get(str(user.id), 0)
+            remaining = cooldown - (int(time.time()) - last)
+            if remaining > 0:
+                return await reject(
+                    f"⏳ Bitte warte noch **{self._fmt_duration(remaining)}**, bevor du ein "
+                    "neues Ticket öffnest.")
         return True
 
     async def finalize_ticket(self, interaction: discord.Interaction,
@@ -325,13 +357,10 @@ class KuhHilfe(commands.Cog):
                 "❌ Diese Kategorie existiert nicht mehr. Bitte starte erneut.", ephemeral=True)
             return
 
-        # Limit erneut prüfen (Zeit zwischen Panel-Klick und Absenden)
-        settings = await self.store.get_settings(guild)
-        limit = settings.get("max_open_per_user", DEFAULT_MAX_OPEN) or 0
-        if limit > 0 and await self.store.count_open_for_user(guild, opener.id) >= limit:
-            await interaction.response.send_message(
-                "⚠️ Du hast bereits zu viele offene Tickets.", ephemeral=True)
+        # Blacklist/Limit/Cooldown erneut prüfen (Zeit zwischen Panel-Klick und Absenden)
+        if not await self._can_open(interaction):
             return
+        settings = await self.store.get_settings(guild)
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
@@ -363,6 +392,7 @@ class KuhHilfe(commands.Cog):
         )
         await self.store.update_ticket(guild, channel.id, message_id=control_msg.id)
         self._ticket_channels.add(channel.id)
+        await self.store.record_creation(guild, opener.id, int(time.time()))
 
         confirm = await interaction.followup.send(
             embed=discord.Embed(
@@ -698,6 +728,37 @@ class KuhHilfe(commands.Cog):
         if ctx.invoked_subcommand is None:
             await ctx.send_help(ctx.command)
 
+    # ── Unter-Gruppen (bündeln verwandte Befehle; Discord-Limit: 25 Children/Gruppe)
+    @setup_group.group(name="gruppe", description="Oberkategorien (Gruppen) verwalten")
+    async def gruppe_group(self, ctx: commands.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(ctx.command)
+
+    @setup_group.group(name="kategorie", description="Finale Kategorien verwalten")
+    async def kategorie_group(self, ctx: commands.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(ctx.command)
+
+    @setup_group.group(name="rolle", description="Zuständige Rollen einer Kategorie verwalten")
+    async def rolle_group(self, ctx: commands.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(ctx.command)
+
+    @setup_group.group(name="user", description="Zuständige User einer Kategorie verwalten")
+    async def user_group(self, ctx: commands.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(ctx.command)
+
+    @setup_group.group(name="feld", description="Formular-Felder einer Kategorie verwalten")
+    async def feld_group(self, ctx: commands.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(ctx.command)
+
+    @setup_group.group(name="blacklist", description="Support-Sperren verwalten")
+    async def blacklist_group(self, ctx: commands.Context) -> None:
+        if ctx.invoked_subcommand is None:
+            await ctx.send_help(ctx.command)
+
     # ── Panel-Helfer (von Menü & Slash-Befehlen genutzt) ───────────────────────
     async def post_panel(self, guild: discord.Guild,
                          channel: discord.TextChannel) -> discord.Message:
@@ -791,6 +852,42 @@ class KuhHilfe(commands.Cog):
         txt = "unbegrenzt" if anzahl <= 0 else str(anzahl)
         await self._reply(ctx, f"✅ Offene Tickets pro Nutzer: **{txt}**.")
 
+    @setup_group.command(name="cooldown",
+                      description="Mindestabstand zwischen zwei neuen Tickets pro Nutzer (Sek., 0 = aus)")
+    @app_commands.describe(sekunden="Sekunden Wartezeit zwischen Tickets (0 = aus)")
+    async def set_cooldown(self, ctx: commands.Context, sekunden: int) -> None:
+        await self.store.set_cooldown(ctx.guild, max(0, sekunden))
+        if sekunden <= 0:
+            await self._reply(ctx, "✅ Cooldown ist **aus**.")
+        else:
+            await self._reply(ctx, f"✅ Zwischen zwei Tickets müssen Nutzer jetzt "
+                                   f"**{self._fmt_duration(sekunden)}** warten.")
+
+    @blacklist_group.command(name="add",
+                      description="Sperrt einen Nutzer vom Öffnen neuer Tickets")
+    @app_commands.describe(user="Zu sperrender Nutzer")
+    async def blacklist_add(self, ctx: commands.Context, user: discord.Member) -> None:
+        changed = await self.store.set_blacklisted(ctx.guild, user.id, add=True)
+        await self._reply(ctx, f"🚫 {user.mention} ist jetzt vom Support ausgeschlossen." if changed
+                          else f"ℹ️ {user.mention} war bereits gesperrt.")
+
+    @blacklist_group.command(name="remove", description="Hebt die Support-Sperre eines Nutzers auf")
+    @app_commands.describe(user="Nutzer, dessen Sperre aufgehoben wird")
+    async def blacklist_remove(self, ctx: commands.Context, user: discord.Member) -> None:
+        changed = await self.store.set_blacklisted(ctx.guild, user.id, add=False)
+        await self._reply(ctx, f"✅ Sperre für {user.mention} aufgehoben." if changed
+                          else f"ℹ️ {user.mention} war nicht gesperrt.")
+
+    @blacklist_group.command(name="liste", description="Zeigt die gesperrten Nutzer")
+    async def blacklist_list(self, ctx: commands.Context) -> None:
+        ids = await self.store.get_blacklist(ctx.guild)
+        if not ids:
+            await self._reply(ctx, "ℹ️ Es sind keine Nutzer gesperrt.")
+            return
+        mentions = ", ".join(f"<@{i}>" for i in ids)
+        await self._reply(ctx, embed=discord.Embed(
+            title="🚫 Gesperrte Nutzer", description=mentions[:4000], color=COLOR_ERROR))
+
     @setup_group.command(name="loeschzeit",
                       description="Minuten bis zum Löschen eines geschlossenen Channels (0 = sofort, negativ = nie)")
     @app_commands.describe(minuten="Minuten bis zum Löschen · 0 = sofort · negativ (z. B. -1) = nie löschen")
@@ -843,6 +940,10 @@ class KuhHilfe(commands.Cog):
         embed.add_field(name="Protokoll", value=_ch(s.get("modlog_channel_id")), inline=True)
         limit = s.get("max_open_per_user", DEFAULT_MAX_OPEN)
         embed.add_field(name="Limit/Nutzer", value=("unbegrenzt" if not limit else str(limit)), inline=True)
+        cooldown = s.get("cooldown_seconds") or 0
+        embed.add_field(name="Cooldown",
+                        value=("aus" if cooldown <= 0 else self._fmt_duration(cooldown)), inline=True)
+        embed.add_field(name="Gesperrt", value=str(len(s.get("blacklist") or [])), inline=True)
         dd = s.get("delete_delay_seconds", DEFAULT_DELETE_DELAY)
         delay_txt = "nie" if dd is None else ("sofort" if dd <= 0 else f"{round(dd / 60)} Min")
         embed.add_field(name="Löschzeit", value=delay_txt, inline=True)
@@ -898,7 +999,7 @@ class KuhHilfe(commands.Cog):
             "`/kuhhilfe-setup verwalten`.")
 
     # ── Gruppen (Oberkategorien) ───────────────────────────────────────────────
-    @setup_group.command(name="gruppe-add",
+    @gruppe_group.command(name="add",
                       description="Legt eine Oberkategorie an (bündelt Unterkategorien, z. B. 'Fragen zu einem Spiel')")
     @app_commands.describe(name="Name der Gruppe", emoji="Optionales Emoji",
                            beschreibung="Optionale Kurzbeschreibung")
@@ -913,9 +1014,9 @@ class KuhHilfe(commands.Cog):
         await self._reply(
             ctx,
             f"✅ Gruppe **{grp['name']}** (`{grp['key']}`) angelegt.{hint}\n"
-            f"Lege nun Unterkategorien an: `/kuhhilfe-setup kategorie-add name:… gruppe:{grp['key']}`.")
+            f"Lege nun Unterkategorien an: `/kuhhilfe-setup kategorie add name:… gruppe:{grp['key']}`.")
 
-    @setup_group.command(name="gruppe-remove", description="Löscht eine Gruppe inklusive ihrer Unterkategorien")
+    @gruppe_group.command(name="remove", description="Löscht eine Gruppe inklusive ihrer Unterkategorien")
     @app_commands.describe(gruppe="Key der Gruppe")
     async def gruppe_remove(self, ctx: commands.Context, gruppe: str) -> None:
         node = await self.store.get_node(ctx.guild, gruppe)
@@ -926,7 +1027,7 @@ class KuhHilfe(commands.Cog):
         await self._reply(ctx, f"✅ Gruppe `{gruppe}` inkl. Unterkategorien gelöscht.")
 
     # ── Kategorien (finale Ebene) ───────────────────────────────────────────────
-    @setup_group.command(name="kategorie-add",
+    @kategorie_group.command(name="add",
                       description="Legt eine finale Kategorie an – optional unter einer Gruppe")
     @app_commands.describe(name="Name der Kategorie", gruppe="Key der Gruppe (leer = Direkt-Kategorie)",
                            emoji="Optionales Emoji", beschreibung="Optionale Kurzbeschreibung")
@@ -942,21 +1043,21 @@ class KuhHilfe(commands.Cog):
             ctx,
             f"✅ Kategorie **{leaf['name']}** (`{result}`) angelegt – mit den Standard-Feldern "
             f"*Betreff* & *Beschreibung*.{hint}\nWeise Zuständige zu "
-            f"(`/kuhhilfe-setup rolle-add kategorie:{result} …`) und passe die Felder an "
-            f"(`/kuhhilfe-setup feld-add kategorie:{result} …`).")
+            f"(`/kuhhilfe-setup rolle add kategorie:{result} …`) und passe die Felder an "
+            f"(`/kuhhilfe-setup feld add kategorie:{result} …`).")
 
-    @setup_group.command(name="kategorie-remove", description="Löscht eine finale Kategorie")
+    @kategorie_group.command(name="remove", description="Löscht eine finale Kategorie")
     @app_commands.describe(kategorie="Pfad der Kategorie (z. B. 'spiel-fragen/wow' oder 'server')")
     async def cat_remove(self, ctx: commands.Context, kategorie: str) -> None:
         node = await self.store.get_node(ctx.guild, kategorie)
         if not node or self.store.is_group(node):
             await self._reply(ctx, f"❌ Keine finale Kategorie unter `{kategorie}`. "
-                                   "(Gruppen löschst du mit `/kuhhilfe-setup gruppe-remove`.)")
+                                   "(Gruppen löschst du mit `/kuhhilfe-setup gruppe remove`.)")
             return
         await self.store.remove_node(ctx.guild, kategorie)
         await self._reply(ctx, f"✅ Kategorie `{kategorie}` gelöscht.")
 
-    @setup_group.command(name="kategorie-liste", description="Zeigt den Kategorie-Baum")
+    @kategorie_group.command(name="liste", description="Zeigt den Kategorie-Baum")
     async def cat_list(self, ctx: commands.Context) -> None:
         cats = await self.store.list_categories(ctx.guild)
         if not cats:
@@ -988,7 +1089,7 @@ class KuhHilfe(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     # ── Rollen / User zuweisen (an finalen Kategorien) ──────────────────────────
-    @setup_group.command(name="rolle-add", description="Weist einer Kategorie eine zuständige Rolle zu")
+    @rolle_group.command(name="add", description="Weist einer Kategorie eine zuständige Rolle zu")
     @app_commands.describe(kategorie="Pfad der Kategorie (z. B. 'spiel-fragen/wow')", rolle="Zuständige Rolle")
     async def cat_rolle_add(self, ctx: commands.Context, kategorie: str, rolle: discord.Role) -> None:
         res = await self.store.toggle_role(ctx.guild, kategorie, rolle.id, add=True)
@@ -997,7 +1098,7 @@ class KuhHilfe(commands.Cog):
             return
         await self._reply(ctx, f"✅ {rolle.mention} ist jetzt für `{kategorie}` zuständig.")
 
-    @setup_group.command(name="rolle-remove", description="Entfernt eine Rolle aus einer Kategorie")
+    @rolle_group.command(name="remove", description="Entfernt eine Rolle aus einer Kategorie")
     @app_commands.describe(kategorie="Pfad der Kategorie", rolle="Rolle")
     async def cat_rolle_remove(self, ctx: commands.Context, kategorie: str, rolle: discord.Role) -> None:
         res = await self.store.toggle_role(ctx.guild, kategorie, rolle.id, add=False)
@@ -1006,7 +1107,7 @@ class KuhHilfe(commands.Cog):
             return
         await self._reply(ctx, f"✅ {rolle.mention} ist nicht mehr für `{kategorie}` zuständig.")
 
-    @setup_group.command(name="user-add", description="Weist einer Kategorie einen zuständigen User zu")
+    @user_group.command(name="add", description="Weist einer Kategorie einen zuständigen User zu")
     @app_commands.describe(kategorie="Pfad der Kategorie", user="Zuständiger User")
     async def cat_user_add(self, ctx: commands.Context, kategorie: str, user: discord.Member) -> None:
         res = await self.store.toggle_user(ctx.guild, kategorie, user.id, add=True)
@@ -1015,7 +1116,7 @@ class KuhHilfe(commands.Cog):
             return
         await self._reply(ctx, f"✅ {user.mention} ist jetzt für `{kategorie}` zuständig.")
 
-    @setup_group.command(name="user-remove", description="Entfernt einen User aus einer Kategorie")
+    @user_group.command(name="remove", description="Entfernt einen User aus einer Kategorie")
     @app_commands.describe(kategorie="Pfad der Kategorie", user="User")
     async def cat_user_remove(self, ctx: commands.Context, kategorie: str, user: discord.Member) -> None:
         res = await self.store.toggle_user(ctx.guild, kategorie, user.id, add=False)
@@ -1025,7 +1126,7 @@ class KuhHilfe(commands.Cog):
         await self._reply(ctx, f"✅ {user.mention} ist nicht mehr für `{kategorie}` zuständig.")
 
     # ── Modal-Felder ───────────────────────────────────────────────────────────
-    @setup_group.command(name="feld-add", description="Fügt einer Kategorie ein Wizard-Feld hinzu")
+    @feld_group.command(name="add", description="Fügt einer Kategorie ein Wizard-Feld hinzu")
     @app_commands.describe(kategorie="Pfad der Kategorie (z. B. 'spiel-fragen/wow')", label="Beschriftung des Feldes",
                            stil="Kurz oder Lang", pflicht="Muss ausgefüllt werden?",
                            max_laenge="Maximale Zeichenzahl", platzhalter="Optionaler Platzhaltertext")
@@ -1044,8 +1145,8 @@ class KuhHilfe(commands.Cog):
                                f"({FIELD_STYLE_LABELS.get(stil, stil)}, "
                                f"{'Pflicht' if pflicht else 'optional'}).")
 
-    @setup_group.command(name="feld-remove", description="Entfernt ein Feld einer Kategorie (Position)")
-    @app_commands.describe(kategorie="Pfad der Kategorie", position="Position laut /kuhhilfe-setup feld-liste (ab 1)")
+    @feld_group.command(name="remove", description="Entfernt ein Feld einer Kategorie (Position)")
+    @app_commands.describe(kategorie="Pfad der Kategorie", position="Position laut /kuhhilfe-setup feld liste (ab 1)")
     async def feld_remove(self, ctx: commands.Context, kategorie: str, position: int) -> None:
         removed = await self.store.remove_field(ctx.guild, kategorie, position)
         if not removed:
@@ -1053,7 +1154,7 @@ class KuhHilfe(commands.Cog):
             return
         await self._reply(ctx, f"✅ Feld **{removed['label']}** aus `{kategorie}` entfernt.")
 
-    @setup_group.command(name="feld-liste", description="Zeigt die Felder einer Kategorie")
+    @feld_group.command(name="liste", description="Zeigt die Felder einer Kategorie")
     @app_commands.describe(kategorie="Pfad der Kategorie")
     async def feld_liste(self, ctx: commands.Context, kategorie: str) -> None:
         leaf, label = await self.store.resolve_leaf(ctx.guild, kategorie)

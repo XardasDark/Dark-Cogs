@@ -85,6 +85,38 @@ class KuhHilfeStore:
     async def set_inactivity_warn_hours(self, guild: discord.Guild, hours: int) -> None:
         await self.config.guild(guild).inactivity_warn_hours.set(max(0, hours))
 
+    async def set_cooldown(self, guild: discord.Guild, seconds: int) -> None:
+        await self.config.guild(guild).cooldown_seconds.set(max(0, seconds))
+
+    # ── Blacklist (Support-Sperre) ────────────────────────────────────────────
+    async def get_blacklist(self, guild: discord.Guild) -> List[int]:
+        return list(await self.config.guild(guild).blacklist())
+
+    async def is_blacklisted(self, guild: discord.Guild, user_id: int) -> bool:
+        return user_id in await self.config.guild(guild).blacklist()
+
+    async def set_blacklisted(self, guild: discord.Guild, user_id: int, add: bool) -> bool:
+        """True=Änderung vorgenommen, False=war schon im gewünschten Zustand."""
+        async with self.config.guild(guild).blacklist() as bl:
+            if add:
+                if user_id not in bl:
+                    bl.append(user_id)
+                    return True
+                return False
+            if user_id in bl:
+                bl.remove(user_id)
+                return True
+            return False
+
+    # ── Cooldown ──────────────────────────────────────────────────────────────
+    async def record_creation(self, guild: discord.Guild, user_id: int, ts: int) -> None:
+        async with self.config.guild(guild).cooldowns() as cds:
+            cds[str(user_id)] = ts
+
+    async def get_last_creation(self, guild: discord.Guild, user_id: int) -> int:
+        cds = await self.config.guild(guild).cooldowns()
+        return cds.get(str(user_id), 0)
+
     # ─────────────────────────────────────────────────────────────────────────
     # KATEGORIE-BAUM – Helfer
     # ─────────────────────────────────────────────────────────────────────────

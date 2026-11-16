@@ -119,11 +119,14 @@ def _settings_summary(guild: discord.Guild, s: Dict[str, Any]) -> str:
     warn_h = s.get("inactivity_warn_hours") or 0
     inact_txt = ("aus" if inact <= 0
                  else f"{inact}h" + (f" (Warnung {warn_h}h vorher)" if 0 < warn_h < inact else ""))
+    cool = s.get("cooldown_seconds") or 0
+    cool_txt = "aus" if cool <= 0 else f"{cool}s"
+    bl = len(s.get("blacklist") or [])
     return (f"Panel: {ch(s.get('panel_channel_id'))} · Ablage: {ch(s.get('ticket_category_id'))} · "
             f"Archiv: {ch(s.get('transcript_channel_id'))} · Protokoll: {ch(s.get('modlog_channel_id'))}\n"
-            f"Limit/Nutzer: {'unbegrenzt' if not limit else limit} · Löschzeit: {delay_txt} · "
-            f"Bestätigungen: {'dauerhaft' if not cd else str(cd) + ' Sek.'} · "
-            f"Auto-Schließen: {inact_txt}")
+            f"Limit/Nutzer: {'unbegrenzt' if not limit else limit} · Cooldown: {cool_txt} · "
+            f"Löschzeit: {delay_txt} · Bestätigungen: {'dauerhaft' if not cd else str(cd) + ' Sek.'} · "
+            f"Auto-Schließen: {inact_txt} · Gesperrt: {bl}")
 
 
 class RootView(_BaseView):
@@ -585,9 +588,12 @@ class SettingsView(_BaseView):
         embed, view = await settings_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Limit", emoji="🔢", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="Limit & Cooldown", emoji="🔢", style=discord.ButtonStyle.secondary, row=3)
     async def limit_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.send_modal(LimitModal(self.cog, self.guild, self.author_id))
+        s = await self.cog.store.get_settings(self.guild)
+        await interaction.response.send_modal(LimitModal(
+            self.cog, self.guild, self.author_id,
+            s.get("max_open_per_user", DEFAULT_MAX_OPEN), s.get("cooldown_seconds") or 0))
 
     @discord.ui.button(label="Löschzeit", emoji="⏱️", style=discord.ButtonStyle.secondary, row=3)
     async def delay_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -834,23 +840,30 @@ class FieldModal(discord.ui.Modal):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
-class LimitModal(discord.ui.Modal, title="Offene Tickets pro Nutzer"):
-    def __init__(self, cog, guild, author_id):
+class LimitModal(discord.ui.Modal, title="Tickets pro Nutzer"):
+    def __init__(self, cog, guild, author_id, cur_limit: int = 2, cur_cooldown: int = 0):
         super().__init__(timeout=300)
         self.cog = cog
         self.guild = guild
         self.author_id = author_id
         self.f_value = discord.ui.TextInput(
-            label="Max. offene Tickets (0 = unbegrenzt)", required=True, max_length=4, default="2")
+            label="Max. offene Tickets (0 = unbegrenzt)", required=True, max_length=4,
+            default=str(cur_limit))
+        self.f_cooldown = discord.ui.TextInput(
+            label="Cooldown in Sekunden (0 = aus)", required=False, max_length=6,
+            default=str(cur_cooldown))
         self.add_item(self.f_value)
+        self.add_item(self.f_cooldown)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
             value = max(0, int(str(self.f_value.value).strip()))
+            cooldown = max(0, int(str(self.f_cooldown.value).strip() or "0"))
         except ValueError:
-            await interaction.response.send_message("❌ Bitte eine Zahl eingeben.", ephemeral=True)
+            await interaction.response.send_message("❌ Bitte Zahlen eingeben.", ephemeral=True)
             return
         await self.cog.store.set_max_open(self.guild, value)
+        await self.cog.store.set_cooldown(self.guild, cooldown)
         embed, view = await settings_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
 
