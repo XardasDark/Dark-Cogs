@@ -608,13 +608,13 @@ class KuhHilfe(commands.Cog):
             await interaction.response.send_message(
                 "❌ Nur zuständige Support-Mitglieder können ein Ticket übernehmen.", ephemeral=True)
             return
-        if ticket.get("claimed_by"):
+        current = ticket.get("claimed_by")
+        if current == interaction.user.id:
             await interaction.response.send_message(
-                f"ℹ️ Dieses Ticket wurde bereits von <@{ticket['claimed_by']}> übernommen.",
-                ephemeral=True)
+                "ℹ️ Du bearbeitest dieses Ticket bereits.", ephemeral=True)
             return
 
-        # Übernehmen setzt zugleich die Stufe auf „In Bearbeitung" (→ blau)
+        # Übernehmen (auch von einem anderen Bearbeiter) setzt die Stufe auf „In Bearbeitung" (→ blau)
         ticket = await self.store.update_ticket(
             interaction.guild, interaction.channel_id,
             claimed_by=interaction.user.id, stage=STAGE_IN_PROGRESS)
@@ -622,12 +622,24 @@ class KuhHilfe(commands.Cog):
         embed = views.build_ticket_embed(ticket, leaf, opener, interaction.guild, label)
         await interaction.response.edit_message(
             embed=embed, view=views.build_ticket_controls(ticket["status"]))
-        await self._notice(interaction.channel,
-                           f"🙋 {interaction.user.mention} kümmert sich jetzt um dieses Ticket.")
+        if current:
+            await self._notice(
+                interaction.channel,
+                f"🔁 {interaction.user.mention} hat dieses Ticket von <@{current}> übernommen.")
+            await self._modlog(
+                interaction.guild,
+                f"🔁 Ticket `{ticket['id']}` übernommen von {interaction.user.mention} "
+                f"(vorher <@{current}>).", color=COLOR_INFO)
+        else:
+            await self._notice(
+                interaction.channel,
+                f"🙋 {interaction.user.mention} kümmert sich jetzt um dieses Ticket.")
+            await self._modlog(
+                interaction.guild,
+                f"🙋 Ticket `{ticket['id']}` übernommen von {interaction.user.mention}.",
+                color=COLOR_INFO)
         await self.store.bump_claim(interaction.guild, interaction.user.id)
-        await self._modlog(
-            interaction.guild,
-            f"🙋 Ticket `{ticket['id']}` übernommen von {interaction.user.mention}.", color=COLOR_INFO)
+        await self._refresh_dashboard(interaction.guild)
 
     async def _handle_close(self, interaction: discord.Interaction) -> None:
         ticket, leaf, label = await self._load_ticket_ctx(interaction)
