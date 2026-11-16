@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import discord
 
 from . import views
+from .util import clean_emoji, resolve_emoji
 from .constants import (
     COLOR_INFO, COLOR_ERROR, COLOR_PANEL, COLOR_CLOSED,
     KIND_GROUP, CATEGORY_PATH_SEP, MAX_FIELDS, FIELD_STYLE_LABELS,
@@ -125,7 +126,7 @@ class RootView(_BaseView):
             options.append(discord.SelectOption(
                 label=node["name"][:100],
                 value=key,
-                emoji=node.get("emoji") or ("📦" if is_group else "🏷️"),
+                emoji=clean_emoji(node.get("emoji")) or ("📦" if is_group else "🏷️"),
                 description=("Gruppe" if is_group else "Kategorie")))
         if options:
             sel = discord.ui.Select(placeholder="📂 Element öffnen/bearbeiten …", options=options)
@@ -203,7 +204,7 @@ class GroupView(_BaseView):
         for ck, child in list(children.items())[:25]:
             options.append(discord.SelectOption(
                 label=child["name"][:100], value=f"{path}{CATEGORY_PATH_SEP}{ck}",
-                emoji=child.get("emoji") or "🏷️", description="Kategorie"))
+                emoji=clean_emoji(child.get("emoji")) or "🏷️", description="Kategorie"))
         if options:
             sel = discord.ui.Select(placeholder="🏷️ Unterkategorie öffnen …", options=options)
             sel.callback = self._open_child
@@ -581,8 +582,8 @@ class NodeModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         name = str(self.f_name.value).strip()
-        emoji = str(self.f_emoji.value).strip() or None
         desc = str(self.f_desc.value).strip() or None
+        emoji, emoji_err = resolve_emoji(self.guild, str(self.f_emoji.value))
 
         error: Optional[str] = None
         goto_path: Optional[str] = None
@@ -621,6 +622,8 @@ class NodeModal(discord.ui.Modal):
         else:
             embed, view = await root_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
+        if emoji_err:
+            await interaction.followup.send(f"⚠️ {emoji_err} (ohne Emoji gespeichert)", ephemeral=True)
 
 
 def _parse_bool(value: str) -> bool:

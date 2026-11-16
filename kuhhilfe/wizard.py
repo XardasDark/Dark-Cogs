@@ -18,6 +18,7 @@ from .constants import (
     WIZARD_CAT_SELECT, FIELD_STYLES, MAX_FIELDS, COLOR_ERROR, COLOR_INFO,
     CATEGORY_PATH_SEP,
 )
+from .util import clean_emoji
 
 
 def make_modal(cog, leaf: Dict[str, Any], path: str) -> "TicketModal":
@@ -43,7 +44,7 @@ class WizardSelectView(discord.ui.View):
                 label=node["name"][:100],
                 value=path,
                 description=(desc[:100] if desc else None),
-                emoji=node.get("emoji") or None,
+                emoji=clean_emoji(node.get("emoji")),
             ))
 
         self.select = discord.ui.Select(
@@ -113,7 +114,7 @@ class TicketModal(discord.ui.Modal):
         super().__init__(title=title, timeout=600)
         self.cog = cog
         self.path = path
-        self._inputs: List[discord.ui.TextInput] = []
+        self._inputs: List[Tuple[str, discord.ui.TextInput]] = []
 
         fields = (leaf.get("fields") or [])[:MAX_FIELDS]
         if not fields:
@@ -121,22 +122,23 @@ class TicketModal(discord.ui.Modal):
                        "required": True, "placeholder": None, "max_length": 1000}]
 
         for field in fields:
+            label = field["label"][:45]
             ti = discord.ui.TextInput(
-                label=field["label"][:45],
+                label=label,
                 style=FIELD_STYLES.get(field.get("style"), discord.TextStyle.short),
                 required=bool(field.get("required", True)),
                 placeholder=(field.get("placeholder") or None),
                 max_length=int(field.get("max_length") or 1000),
             )
-            self._inputs.append(ti)
+            self._inputs.append((label, ti))
             self.add_item(ti)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         answers: Dict[str, str] = {}
-        for ti in self._inputs:
+        for label, ti in self._inputs:
             value = (ti.value or "").strip()
             if value:
-                answers[ti.label] = value
+                answers[label] = value
         await self.cog.finalize_ticket(interaction, self.path, answers)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:

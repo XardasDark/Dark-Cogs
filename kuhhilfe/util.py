@@ -1,0 +1,60 @@
+"""
+util.py – kleine Helfer für KuhHilfe
+
+Emoji-Handling: Nutzer geben Emojis in Text-/Modalfeldern ein. Dort wird ein
+Custom-Emoji-Kürzel wie ``:wow:`` NICHT automatisch in ``<:wow:123…>`` umgewandelt.
+Discord lehnt rohe Kürzel als Komponenten-Emoji (Select/Button) mit Fehler 50035
+ab. Darum:
+
+* ``resolve_emoji`` – beim Speichern: löst ``:name:`` über die Server-Emojis auf,
+  akzeptiert Unicode und fertige ``<:name:id>``-Formen, meldet Ungültiges zurück.
+* ``clean_emoji`` – beim Rendern: gibt nur etwas zurück, das garantiert als
+  Komponenten-Emoji taugt (sonst ``None``), damit alte/kaputte Werte nichts crashen.
+"""
+
+import re
+from typing import Optional, Tuple
+
+import discord
+
+_CUSTOM_RE = re.compile(r"<a?:\w{2,32}:\d{15,25}>")
+
+
+def clean_emoji(raw: Optional[str]) -> Optional[str]:
+    """Render-sicher: nur gültige Komponenten-Emojis durchlassen, sonst None."""
+    if not raw:
+        return None
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    if _CUSTOM_RE.fullmatch(raw):
+        return raw
+    # Reiner ASCII-Text (z. B. ":wow:", "x") ist kein gültiges Emoji
+    if raw.isascii():
+        return None
+    # Nicht-ASCII → als Unicode-Emoji behandeln
+    return raw
+
+
+def resolve_emoji(guild: discord.Guild, raw: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Eingabe-seitig: wandelt eine Nutzereingabe in einen speicherbaren Emoji-Wert.
+    Rückgabe (wert, fehler): bei Erfolg (wert, None), sonst (None, fehlertext).
+    """
+    if not raw:
+        return None, None
+    raw = str(raw).strip()
+    if not raw:
+        return None, None
+    if _CUSTOM_RE.fullmatch(raw):
+        return raw, None
+    if raw.isascii():
+        name = raw.strip(":")
+        if name:
+            emoji = discord.utils.get(guild.emojis, name=name)
+            if emoji is not None:
+                return str(emoji), None
+        return None, (f"Emoji `{raw}` konnte ich nicht zuordnen. Nutze ein Standard-Emoji "
+                      "(z. B. ⚔️) oder ein Custom-Emoji **dieses** Servers.")
+    # Nicht-ASCII → Unicode-Emoji
+    return raw, None

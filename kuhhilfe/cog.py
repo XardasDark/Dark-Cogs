@@ -29,6 +29,7 @@ from redbot.core.bot import Red
 from . import views, tickets, admin_ui
 from .storage import KuhHilfeStore
 from .wizard import WizardSelectView, make_modal
+from .util import resolve_emoji
 from .constants import (
     PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM,
     COLOR_INFO, COLOR_ERROR, COLOR_CLOSED,
@@ -606,13 +607,15 @@ class KuhHilfe(commands.Cog):
                            beschreibung="Optionale Kurzbeschreibung")
     async def gruppe_add(self, ctx: commands.Context, name: str,
                         emoji: Optional[str] = None, beschreibung: Optional[str] = None) -> None:
-        grp = await self.store.add_group(ctx.guild, name, emoji, beschreibung)
+        emoji_value, emoji_err = resolve_emoji(ctx.guild, emoji)
+        grp = await self.store.add_group(ctx.guild, name, emoji_value, beschreibung)
         if not grp:
             await self._reply(ctx, "❌ Name ungültig oder ein Key mit diesem Namen existiert bereits.")
             return
+        hint = f"\n⚠️ {emoji_err} (ohne Emoji gespeichert)" if emoji_err else ""
         await self._reply(
             ctx,
-            f"✅ Gruppe **{grp['name']}** (`{grp['key']}`) angelegt.\n"
+            f"✅ Gruppe **{grp['name']}** (`{grp['key']}`) angelegt.{hint}\n"
             f"Lege nun Unterkategorien an: `/kuhhilfe-setup kategorie-add name:… gruppe:{grp['key']}`.")
 
     @setup_group.command(name="gruppe-remove", description="Löscht eine Gruppe inklusive ihrer Unterkategorien")
@@ -632,14 +635,16 @@ class KuhHilfe(commands.Cog):
                            emoji="Optionales Emoji", beschreibung="Optionale Kurzbeschreibung")
     async def cat_add(self, ctx: commands.Context, name: str, gruppe: Optional[str] = None,
                       emoji: Optional[str] = None, beschreibung: Optional[str] = None) -> None:
-        leaf, result = await self.store.add_leaf(ctx.guild, name, gruppe, emoji, beschreibung)
+        emoji_value, emoji_err = resolve_emoji(ctx.guild, emoji)
+        leaf, result = await self.store.add_leaf(ctx.guild, name, gruppe, emoji_value, beschreibung)
         if leaf is None:
             await self._reply(ctx, f"❌ {result}")
             return
+        hint = f"\n⚠️ {emoji_err} (ohne Emoji gespeichert)" if emoji_err else ""
         await self._reply(
             ctx,
             f"✅ Kategorie **{leaf['name']}** (`{result}`) angelegt – mit den Standard-Feldern "
-            "*Betreff* & *Beschreibung*.\nWeise Zuständige zu "
+            f"*Betreff* & *Beschreibung*.{hint}\nWeise Zuständige zu "
             f"(`/kuhhilfe-setup rolle-add kategorie:{result} …`) und passe die Felder an "
             f"(`/kuhhilfe-setup feld-add kategorie:{result} …`).")
 
