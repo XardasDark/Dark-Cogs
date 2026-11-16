@@ -15,6 +15,7 @@ TICKET_CLAIM        = "kuhhilfe:ticket:claim"
 TICKET_CLOSE        = "kuhhilfe:ticket:close"
 TICKET_CONFIRM      = "kuhhilfe:ticket:confirm_close"
 TICKET_REOPEN       = "kuhhilfe:ticket:reopen"
+TICKET_MANAGE       = "kuhhilfe:ticket:manage"
 
 # Präfixe der ephemeren Wizard-Komponenten (kurzlebig, eigene View-Callbacks)
 WIZARD_CAT_SELECT   = "kuhhilfe:wizard:cat"
@@ -47,6 +48,14 @@ STATUS_LABELS = {
     STATUS_OPEN:            "🟢 Offen",
     STATUS_CLOSE_REQUESTED: "🟡 Schließung angefragt",
     STATUS_CLOSED:          "⚪ Geschlossen",
+}
+
+# Bearbeitungs-Stufe (Unter-Status eines offenen Tickets, rein informativ)
+STAGE_IN_PROGRESS = "in_progress"
+STAGE_WAITING     = "waiting_user"
+STAGE_LABELS = {
+    STAGE_IN_PROGRESS: "🛠️ In Bearbeitung",
+    STAGE_WAITING:     "⏳ Wartet auf Nutzer",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

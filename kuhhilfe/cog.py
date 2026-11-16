@@ -26,14 +26,14 @@ from discord import app_commands
 from redbot.core import Config, commands
 from redbot.core.bot import Red
 
-from . import views, tickets, admin_ui, presets
+from . import views, tickets, admin_ui, presets, manage
 from .storage import KuhHilfeStore
 from .wizard import WizardSelectView, make_modal
 from .util import resolve_emoji
 from .constants import (
-    PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN,
+    PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN, TICKET_MANAGE,
     COLOR_INFO, COLOR_ERROR, COLOR_CLOSED, COLOR_TICKET, COLOR_PENDING,
-    STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED,
+    STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STAGE_LABELS,
     DEFAULT_MAX_OPEN, DEFAULT_DELETE_DELAY, DEFAULT_CONFIRM_DELETE,
     FIELD_STYLE_LABELS, MAX_FIELDS, CATEGORY_PATH_SEP,
 )
@@ -200,6 +200,8 @@ class KuhHilfe(commands.Cog):
                 await self._handle_confirm_close(interaction)
             elif custom_id == TICKET_REOPEN:
                 await self._handle_reopen(interaction)
+            elif custom_id == TICKET_MANAGE:
+                await self._handle_manage(interaction)
         except discord.DiscordException:
             log.exception("Fehler bei KuhHilfe-Interaktion (%s)", custom_id)
 
@@ -519,6 +521,155 @@ class KuhHilfe(commands.Cog):
             interaction.guild,
             f"♻️ Ticket `{ticket['id']}` wieder geöffnet von {interaction.user.mention}.",
             color=COLOR_TICKET)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # VERWALTEN-PANEL (Status · Nutzer +/- · Umleiten)
+    # ─────────────────────────────────────────────────────────────────────────
+    async def _refresh_ticket_message(self, guild: discord.Guild,
+                                      channel: discord.abc.GuildChannel,
+                                      ticket: Dict[str, Any]) -> None:
+        """Aktualisiert die Steuernachricht des Tickets (Embed + Controls)."""
+        leaf, label = await self.store.resolve_leaf(guild, ticket["category_key"])
+        if leaf is None:
+            label = ticket.get("category_label") or ticket["category_key"]
+            leaf = {"name": label, "role_ids": [], "user_ids": [], "fields": []}
+        opener = guild.get_member(ticket["opener_id"])
+        embed = views.build_ticket_embed(ticket, leaf, opener, guild, label)
+        mid = ticket.get("message_id")
+        if mid:
+            try:
+                await channel.get_partial_message(mid).edit(
+                    embed=embed, view=views.build_ticket_controls(ticket["status"]))
+            except discord.DiscordException:
+                pass
+
+    async def _handle_manage(self, interaction: discord.Interaction) -> None:
+        ticket, leaf, _ = await self._load_ticket_ctx(interaction)
+        if not ticket:
+            return
+        if not self.is_support_for(interaction.user, leaf):
+            await interaction.response.send_message(
+                "❌ Nur zuständige Support-Mitglieder können ein Ticket verwalten.", ephemeral=True)
+            return
+        embed, view = await manage.build_manage(
+            self, interaction.guild, interaction.channel_id, ticket, interaction.user.id)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def _mgmt_ticket(self, interaction: discord.Interaction):
+        """Lädt das Ticket zum aktuellen Channel oder meldet Fehler (für Panel-Aktionen)."""
+        ticket = await self.store.get_ticket(interaction.guild, interaction.channel_id)
+        if not ticket:
+            await interaction.response.send_message(
+                "❌ Zu diesem Channel gibt es kein aktives Ticket mehr.", ephemeral=True)
+        return ticket
+
+    async def _mgmt_refresh_panel(self, interaction: discord.Interaction,
+                                  ticket: Dict[str, Any]) -> None:
+        embed, view = await manage.build_manage(
+            self, interaction.guild, interaction.channel_id, ticket, interaction.user.id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def mgmt_set_stage(self, interaction: discord.Interaction, stage) -> None:
+        ticket = await self._mgmt_ticket(interaction)
+        if not ticket:
+            return
+        ticket = await self.store.update_ticket(interaction.guild, interaction.channel_id, stage=stage)
+        channel = interaction.channel
+        await self._refresh_ticket_message(interaction.guild, channel, ticket)
+        label = STAGE_LABELS.get(stage, "Offen")
+        await channel.send(f"🔧 {interaction.user.mention} setzt den Status auf **{label}**.")
+        await self._modlog(interaction.guild,
+                           f"🔧 Ticket `{ticket['id']}`: Status → {label} (von {interaction.user.mention}).",
+                           color=COLOR_INFO)
+        await self._mgmt_refresh_panel(interaction, ticket)
+
+    async def mgmt_add_members(self, interaction: discord.Interaction,
+                               member_ids: List[int]) -> None:
+        ticket = await self._mgmt_ticket(interaction)
+        if not ticket:
+            return
+        channel = interaction.channel
+        added = list(ticket.get("added_members") or [])
+        newly = []
+        for uid in member_ids:
+            member = interaction.guild.get_member(uid)
+            if member is None or member.id == ticket["opener_id"]:
+                continue
+            try:
+                await channel.set_permissions(member, overwrite=tickets.member_allow(),
+                                              reason="KuhHilfe: Nutzer zum Ticket hinzugefügt")
+            except discord.DiscordException:
+                continue
+            if uid not in added:
+                added.append(uid)
+            newly.append(member)
+        ticket = await self.store.update_ticket(interaction.guild, interaction.channel_id,
+                                                added_members=added)
+        await self._refresh_ticket_message(interaction.guild, channel, ticket)
+        if newly:
+            mentions = " ".join(m.mention for m in newly)
+            await channel.send(f"➕ {mentions} wurde(n) von {interaction.user.mention} zum Ticket hinzugefügt.",
+                               allowed_mentions=discord.AllowedMentions(users=True))
+            await self._modlog(interaction.guild,
+                               f"➕ Ticket `{ticket['id']}`: {mentions} hinzugefügt (von {interaction.user.mention}).",
+                               color=COLOR_INFO)
+        await self._mgmt_refresh_panel(interaction, ticket)
+
+    async def mgmt_remove_member(self, interaction: discord.Interaction, member_id: int) -> None:
+        ticket = await self._mgmt_ticket(interaction)
+        if not ticket:
+            return
+        channel = interaction.channel
+        added = [u for u in (ticket.get("added_members") or []) if u != member_id]
+        member = interaction.guild.get_member(member_id)
+        if member is not None:
+            try:
+                await channel.set_permissions(member, overwrite=None,
+                                              reason="KuhHilfe: Nutzer aus Ticket entfernt")
+            except discord.DiscordException:
+                pass
+        ticket = await self.store.update_ticket(interaction.guild, interaction.channel_id,
+                                                added_members=added)
+        await self._refresh_ticket_message(interaction.guild, channel, ticket)
+        await channel.send(f"➖ <@{member_id}> wurde aus dem Ticket entfernt.")
+        await self._modlog(interaction.guild,
+                           f"➖ Ticket `{ticket['id']}`: <@{member_id}> entfernt (von {interaction.user.mention}).",
+                           color=COLOR_INFO)
+        await self._mgmt_refresh_panel(interaction, ticket)
+
+    async def mgmt_reassign(self, interaction: discord.Interaction, new_path: str) -> None:
+        ticket = await self._mgmt_ticket(interaction)
+        if not ticket:
+            return
+        new_leaf, new_label = await self.store.resolve_leaf(interaction.guild, new_path)
+        if new_leaf is None:
+            await interaction.response.send_message("❌ Zielkategorie existiert nicht mehr.", ephemeral=True)
+            return
+        guild, channel = interaction.guild, interaction.channel
+        opener = guild.get_member(ticket["opener_id"])
+        added = ticket.get("added_members") or []
+        # Zugriff neu aufbauen (alte Kategorie-Rollen/User raus, neue rein; Ersteller + Zusatz bleiben)
+        if opener is not None:
+            try:
+                overwrites = tickets.build_overwrites(guild, opener, new_leaf, added)
+                await channel.edit(overwrites=overwrites,
+                                   reason=f"KuhHilfe: Ticket umgeleitet zu {new_label}")
+            except discord.DiscordException:
+                log.debug("Overwrites beim Umleiten nicht aktualisiert", exc_info=True)
+        ticket = await self.store.update_ticket(interaction.guild, interaction.channel_id,
+                                                category_key=new_path, category_label=new_label)
+        await self._refresh_ticket_message(guild, channel, ticket)
+        ping = views.build_ping_content(new_leaf, opener) if opener else ""
+        await channel.send(
+            content=ping or None,
+            embed=discord.Embed(
+                description=f"🔀 Ticket umgeleitet nach **{new_label}** (von {interaction.user.mention}).",
+                color=COLOR_INFO),
+            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False))
+        await self._modlog(guild,
+                           f"🔀 Ticket `{ticket['id']}` umgeleitet nach **{new_label}** "
+                           f"(von {interaction.user.mention}).", color=COLOR_INFO)
+        await self._mgmt_refresh_panel(interaction, ticket)
 
     async def _effective_close(self, interaction: discord.Interaction,
                                ticket: Dict[str, Any], leaf: Dict[str, Any],

@@ -8,18 +8,24 @@ Text-Transcript des Verlaufs.
 
 import datetime
 import io
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import discord
 
 
-def build_overwrites(guild: discord.Guild, opener: discord.Member,
-                     category: Dict[str, Any]) -> Dict[discord.abc.Snowflake, discord.PermissionOverwrite]:
-    """@everyone ausgesperrt; Ersteller + zugewiesene Rollen/User bekommen Zugriff."""
-    allow = discord.PermissionOverwrite(
+def member_allow() -> discord.PermissionOverwrite:
+    return discord.PermissionOverwrite(
         view_channel=True, send_messages=True, read_message_history=True,
         attach_files=True, embed_links=True,
     )
+
+
+def build_overwrites(guild: discord.Guild, opener: discord.Member,
+                     category: Dict[str, Any],
+                     added_member_ids: Optional[List[int]] = None
+                     ) -> Dict[discord.abc.Snowflake, discord.PermissionOverwrite]:
+    """@everyone ausgesperrt; Ersteller + zugewiesene Rollen/User (+ Zusatz-Mitglieder) bekommen Zugriff."""
+    allow = member_allow()
     overwrites: Dict[discord.abc.Snowflake, discord.PermissionOverwrite] = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
         opener: allow,
@@ -40,6 +46,11 @@ def build_overwrites(guild: discord.Guild, opener: discord.Member,
             overwrites[role] = allow
 
     for uid in category.get("user_ids", []):
+        member = guild.get_member(uid)
+        if member is not None:
+            overwrites[member] = allow
+
+    for uid in (added_member_ids or []):
         member = guild.get_member(uid)
         if member is not None:
             overwrites[member] = allow

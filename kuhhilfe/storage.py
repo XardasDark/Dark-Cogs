@@ -457,6 +457,8 @@ class KuhHilfeStore:
             "message_id": None,
             "last_activity": now,
             "inactivity_warned": False,
+            "stage": None,
+            "added_members": [],
         }
         async with self.config.guild(guild).tickets() as tickets:
             tickets[str(channel_id)] = ticket

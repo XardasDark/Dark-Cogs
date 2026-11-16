@@ -12,9 +12,9 @@ from typing import Any, Dict, List, Optional
 import discord
 
 from .constants import (
-    PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN,
+    PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN, TICKET_MANAGE,
     COLOR_PANEL, COLOR_TICKET, COLOR_PENDING, COLOR_CLOSED,
-    STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STATUS_LABELS,
+    STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STATUS_LABELS, STAGE_LABELS,
     KIND_GROUP,
 )
 
@@ -99,6 +99,14 @@ def build_ticket_embed(ticket: Dict[str, Any], category: Dict[str, Any],
     if claimed_by:
         embed.add_field(name="Übernommen von", value=f"<@{claimed_by}>", inline=True)
 
+    stage = ticket.get("stage")
+    if stage and stage in STAGE_LABELS:
+        embed.add_field(name="Bearbeitung", value=STAGE_LABELS[stage], inline=True)
+
+    added = ticket.get("added_members") or []
+    if added:
+        embed.add_field(name="Hinzugefügt", value=" ".join(f"<@{u}>" for u in added)[:1024], inline=False)
+
     for label, value in (ticket.get("answers") or {}).items():
         if value:
             embed.add_field(name=label, value=str(value)[:1024], inline=False)
@@ -133,6 +141,12 @@ def build_ticket_controls(status: str) -> discord.ui.View:
         emoji="🙋",
         style=discord.ButtonStyle.secondary,
         custom_id=TICKET_CLAIM,
+    ))
+    view.add_item(discord.ui.Button(
+        label="Verwalten",
+        emoji="⚙️",
+        style=discord.ButtonStyle.secondary,
+        custom_id=TICKET_MANAGE,
     ))
 
     if status == STATUS_CLOSE_REQUESTED:
