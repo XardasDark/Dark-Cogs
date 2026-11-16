@@ -21,6 +21,17 @@ def _f(label: str, style: str = "short", required: bool = True,
             "placeholder": placeholder, "max_length": max_length}
 
 
+def _game_fields(char_placeholder: str, loc_label: str, loc_placeholder: str) -> List[Dict[str, Any]]:
+    """Einheitliche Felder für eine Spiel-Unterkategorie (max. 5 Felder)."""
+    return [
+        _f("Betreff", placeholder="Worum geht es?", max_length=100),
+        _f("Charaktername", required=False, placeholder=char_placeholder, max_length=100),
+        _f(loc_label, required=False, placeholder=loc_placeholder, max_length=100),
+        _f("Dein Anliegen", style="paragraph",
+           placeholder="Beschreibe deine Frage / dein Problem so genau wie möglich.", max_length=1000),
+    ]
+
+
 # Reihenfolge = Anzeige-Reihenfolge im Panel/Wizard
 DEFAULT_PRESETS: List[Dict[str, Any]] = [
     {
@@ -79,10 +90,40 @@ DEFAULT_PRESETS: List[Dict[str, Any]] = [
         "description": "Spielbezogene Anliegen – wähle anschließend das passende Spiel.",
         "children": [
             {
+                "name": "WoW", "emoji": "⚔️",
+                "description": "Fragen & Hilfe zu World of Warcraft.",
+                "fields": _game_fields("Dein Charakter in WoW", "Realm & Region",
+                                        "z. B. Blackrock (EU)"),
+            },
+            {
+                "name": "Aion 2", "emoji": "🌀",
+                "description": "Fragen & Hilfe zu Aion 2.",
+                "fields": _game_fields("Dein Charakter in Aion 2", "Server & Region",
+                                        "z. B. Server (EU)"),
+            },
+            {
+                "name": "FFXIV", "emoji": "🐉",
+                "description": "Fragen & Hilfe zu Final Fantasy XIV.",
+                "fields": _game_fields("Vor- & Nachname deines Charakters", "Welt & Datacenter",
+                                        "z. B. Twintania (Light)"),
+            },
+            {
+                "name": "Ragnarok X", "emoji": "🏹",
+                "description": "Fragen & Hilfe zu Ragnarok X: Next Generation.",
+                "fields": _game_fields("Dein Charakter in Ragnarok X", "Server",
+                                        "z. B. dein Server"),
+            },
+            {
+                "name": "Ragnarok Zero", "emoji": "🗡️",
+                "description": "Fragen & Hilfe zu Ragnarok Zero.",
+                "fields": _game_fields("Dein Charakter in Ragnarok Zero", "Server",
+                                        "z. B. dein Server"),
+            },
+            {
                 "name": "Allgemein", "emoji": "🕹️",
-                "description": "Allgemeine Spielfragen – lege für einzelne Spiele eigene Unterkategorien an.",
+                "description": "Allgemeine Spielfragen oder ein hier nicht gelistetes Spiel.",
                 "fields": [
-                    _f("Um welches Spiel geht es?", placeholder="z. B. WoW, Aion 2 …", max_length=100),
+                    _f("Um welches Spiel geht es?", placeholder="Name des Spiels", max_length=100),
                     _f("Dein Anliegen", style="paragraph",
                        placeholder="Beschreibe deine Frage / dein Problem.", max_length=1000),
                 ],
