@@ -129,6 +129,13 @@ class KuhHilfeStore:
             claims = st.setdefault("claims", {})
             claims[str(user_id)] = claims.get(str(user_id), 0) + 1
 
+    async def reset_stats(self, guild: discord.Guild, include_feedback: bool = True) -> None:
+        """Setzt die Statistik-Zähler (und optional die Feedback-Bewertungen) zurück."""
+        await self.config.guild(guild).stats.set(
+            {"opened": 0, "closed": 0, "by_category": {}, "claims": {}})
+        if include_feedback:
+            await self.config.guild(guild).feedback.set([])
+
     # ── Export / Import ───────────────────────────────────────────────────────
     EXPORT_SETTING_KEYS = [
         "max_open_per_user", "cooldown_seconds", "delete_delay_seconds",

@@ -1289,6 +1289,21 @@ class KuhHilfe(commands.Cog):
                             inline=False)
         await self._reply(ctx, embed=embed)
 
+    @setup_group.command(name="statistik-reset",
+                      description="Setzt die Statistik-Zähler & gespeicherten Feedback-Bewertungen zurück")
+    async def statistik_reset(self, ctx: commands.Context) -> None:
+        embed = discord.Embed(
+            title="⚠️ Statistik zurücksetzen?",
+            description=("Dadurch werden **alle Zähler** (erstellt / geschlossen / pro Kategorie / "
+                         "Bearbeiter) **und die gespeicherten Feedback-Bewertungen** unwiderruflich "
+                         "gelöscht. Offene Tickets bleiben unberührt."),
+            color=COLOR_ERROR)
+        view = _StatsResetView(self, ctx.author.id)
+        if ctx.interaction:
+            await ctx.interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        else:
+            await ctx.send(embed=embed, view=view)
+
     @setup_group.command(name="export",
                       description="Exportiert Kategorien & übertragbare Einstellungen als JSON")
     async def export_cfg(self, ctx: commands.Context) -> None:
@@ -1681,3 +1696,39 @@ class KuhHilfe(commands.Cog):
             await self._reply(ctx, "❌ Ein unerwarteter Fehler ist aufgetreten.")
         except discord.DiscordException:
             pass
+
+
+class _StatsResetView(discord.ui.View):
+    """Bestätigung für das Zurücksetzen der Statistik (ephemer, kurzlebig)."""
+
+    def __init__(self, cog: "KuhHilfe", author_id: int):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.author_id = author_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "Diese Abfrage gehört zu einer anderen Person.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Ja, zurücksetzen", emoji="🗑️", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self.cog.store.reset_stats(interaction.guild)
+        await self.cog._refresh_dashboard(interaction.guild)
+        self.clear_items()
+        self.stop()
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                description="✅ Statistik-Zähler und Feedback-Bewertungen wurden zurückgesetzt.",
+                color=COLOR_INFO),
+            view=None)
+
+    @discord.ui.button(label="Abbrechen", emoji="✖️", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.clear_items()
+        self.stop()
+        await interaction.response.edit_message(
+            embed=discord.Embed(description="Abgebrochen – nichts geändert.", color=COLOR_INFO),
+            view=None)
