@@ -8,7 +8,9 @@
         "XardasDark"
     ],
     "required_cogs": {},
-    "requirements": [],
+    "requirements": [
+        "emoji"
+    ],
     "tags": [
         "support",
         "ticket",

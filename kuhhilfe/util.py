@@ -20,6 +20,27 @@ import discord
 _CUSTOM_RE = re.compile(r"<a?:\w{2,32}:\d{15,25}>")
 
 
+def _shortcode_to_unicode(shortcode: str) -> Optional[str]:
+    """Löst ein Standard-Emoji-Kürzel (z. B. ':video_game:') in Unicode auf.
+
+    Nutzt die optionale ``emoji``-Bibliothek; fehlt sie, wird None zurückgegeben
+    (dann greift der Hinweis, das Emoji direkt einzufügen).
+    """
+    try:
+        import emoji as _emoji
+    except Exception:
+        return None
+    try:
+        out = _emoji.emojize(shortcode, language="alias")
+    except TypeError:  # ältere emoji-API ohne language-Parameter
+        out = _emoji.emojize(shortcode, use_aliases=True)
+    except Exception:
+        return None
+    if out and out != shortcode and not out.isascii():
+        return out
+    return None
+
+
 def clean_emoji(raw: Optional[str]) -> Optional[str]:
     """Render-sicher: nur gültige Komponenten-Emojis durchlassen, sonst None."""
     if not raw:
@@ -61,10 +82,15 @@ def resolve_emoji(guild: discord.Guild, raw: Optional[str]) -> Tuple[Optional[st
     if raw.isascii():
         name = raw.strip(":")
         if name:
+            # 1) Custom-Emoji dieses Servers
             emoji = discord.utils.get(guild.emojis, name=name)
             if emoji is not None:
                 return str(emoji), None
-        return None, (f"Emoji `{raw}` konnte ich nicht zuordnen. Nutze ein Standard-Emoji "
-                      "(z. B. ⚔️) oder ein Custom-Emoji **dieses** Servers.")
+            # 2) Standard-Emoji-Kürzel (z. B. :video_game: → 🎮)
+            uni = _shortcode_to_unicode(f":{name}:")
+            if uni is not None:
+                return uni, None
+        return None, (f"Emoji `{raw}` konnte ich nicht zuordnen. Füge das Emoji direkt ein "
+                      "(z. B. 🎮) oder nutze ein Custom-Emoji **dieses** Servers.")
     # Nicht-ASCII → Unicode-Emoji
     return raw, None
