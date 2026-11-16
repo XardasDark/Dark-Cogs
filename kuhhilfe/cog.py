@@ -33,7 +33,7 @@ from .util import resolve_emoji
 from .constants import (
     PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN, TICKET_MANAGE,
     COLOR_INFO, COLOR_ERROR, COLOR_CLOSED, COLOR_TICKET, COLOR_PENDING,
-    STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STAGE_LABELS,
+    STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STAGE_LABELS, STAGE_IN_PROGRESS,
     DEFAULT_MAX_OPEN, DEFAULT_DELETE_DELAY, DEFAULT_CONFIRM_DELETE,
     FIELD_STYLE_LABELS, MAX_FIELDS, CATEGORY_PATH_SEP,
 )
@@ -418,6 +418,12 @@ class KuhHilfe(commands.Cog):
             await interaction.response.send_message(
                 "❌ Zu diesem Channel gibt es kein aktives Ticket.", ephemeral=True)
             return None, None, None
+        # message_id nachtragen (Tickets von vor dem Einbau dieser ID), damit das
+        # Aktualisieren der Steuernachricht aus dem Verwalten-Panel funktioniert.
+        if not ticket.get("message_id") and interaction.message is not None:
+            updated = await self.store.update_ticket(
+                interaction.guild, interaction.channel_id, message_id=interaction.message.id)
+            ticket = updated or ticket
         leaf, label = await self.store.resolve_leaf(interaction.guild, ticket["category_key"])
         if leaf is None:
             # Kategorie gelöscht – minimaler Ersatz, damit Schließen weiter funktioniert
@@ -440,8 +446,10 @@ class KuhHilfe(commands.Cog):
                 ephemeral=True)
             return
 
+        # Übernehmen setzt zugleich die Stufe auf „In Bearbeitung" (→ blau)
         ticket = await self.store.update_ticket(
-            interaction.guild, interaction.channel_id, claimed_by=interaction.user.id)
+            interaction.guild, interaction.channel_id,
+            claimed_by=interaction.user.id, stage=STAGE_IN_PROGRESS)
         opener = interaction.guild.get_member(ticket["opener_id"])
         embed = views.build_ticket_embed(ticket, leaf, opener, interaction.guild, label)
         await interaction.response.edit_message(
