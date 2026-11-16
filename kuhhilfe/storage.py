@@ -76,6 +76,15 @@ class KuhHilfeStore:
     async def set_confirm_delete(self, guild: discord.Guild, seconds: int) -> None:
         await self.config.guild(guild).confirm_delete_seconds.set(max(0, seconds))
 
+    async def set_modlog_channel(self, guild: discord.Guild, channel_id: Optional[int]) -> None:
+        await self.config.guild(guild).modlog_channel_id.set(channel_id)
+
+    async def set_inactivity_hours(self, guild: discord.Guild, hours: int) -> None:
+        await self.config.guild(guild).inactivity_hours.set(max(0, hours))
+
+    async def set_inactivity_warn_hours(self, guild: discord.Guild, hours: int) -> None:
+        await self.config.guild(guild).inactivity_warn_hours.set(max(0, hours))
+
     # ─────────────────────────────────────────────────────────────────────────
     # KATEGORIE-BAUM – Helfer
     # ─────────────────────────────────────────────────────────────────────────
@@ -340,6 +349,47 @@ class KuhHilfeStore:
                 return fields.pop(index - 1)
             return None
 
+    async def update_field(self, guild: discord.Guild, path: str, index: int,
+                          label: Optional[str] = None, style: Optional[str] = None,
+                          required: Optional[bool] = None, placeholder: Optional[str] = None,
+                          max_length: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Ändert ein Feld an 1-basierter Position (nur übergebene Werte)."""
+        async with self.config.guild(guild).categories() as cats:
+            leaf = self._resolve(cats, path)
+            if leaf is None or self.is_group(leaf):
+                return None
+            fields = leaf.setdefault("fields", [])
+            if not (1 <= index <= len(fields)):
+                return None
+            field = fields[index - 1]
+            if label is not None and label.strip():
+                field["label"] = label.strip()[:45]
+            if style in ("short", "paragraph"):
+                field["style"] = style
+            if required is not None:
+                field["required"] = bool(required)
+            if placeholder is not None:
+                field["placeholder"] = placeholder.strip()[:100] or None
+            if max_length is not None:
+                field["max_length"] = max(1, min(int(max_length), 4000))
+            return field
+
+    async def move_field(self, guild: discord.Guild, path: str, index: int,
+                        direction: int) -> Optional[int]:
+        """Verschiebt ein Feld um eine Position (direction -1=hoch, +1=runter).
+        Gibt die neue 1-basierte Position zurück oder None."""
+        async with self.config.guild(guild).categories() as cats:
+            leaf = self._resolve(cats, path)
+            if leaf is None or self.is_group(leaf):
+                return None
+            fields = leaf.setdefault("fields", [])
+            i = index - 1
+            j = i + direction
+            if not (0 <= i < len(fields)) or not (0 <= j < len(fields)):
+                return None
+            fields[i], fields[j] = fields[j], fields[i]
+            return j + 1
+
     # ─────────────────────────────────────────────────────────────────────────
     # TICKETS
     # ─────────────────────────────────────────────────────────────────────────
@@ -359,6 +409,7 @@ class KuhHilfeStore:
     async def create_ticket(self, guild: discord.Guild, ticket_id: str, channel_id: int,
                            opener_id: int, category_path: str, category_label: str,
                            answers: Dict[str, str]) -> Dict[str, Any]:
+        now = int(time.time())
         ticket = {
             "id": ticket_id,
             "channel_id": channel_id,
@@ -367,10 +418,13 @@ class KuhHilfeStore:
             "category_label": category_label,
             "status": "open",
             "claimed_by": None,
-            "created_at": int(time.time()),
+            "created_at": now,
             "closed_at": None,
             "closed_by": None,
             "answers": answers,
+            "message_id": None,
+            "last_activity": now,
+            "inactivity_warned": False,
         }
         async with self.config.guild(guild).tickets() as tickets:
             tickets[str(channel_id)] = ticket

@@ -115,10 +115,15 @@ def _settings_summary(guild: discord.Guild, s: Dict[str, Any]) -> str:
     dd = s.get("delete_delay_seconds", DEFAULT_DELETE_DELAY)
     delay_txt = "nie" if dd is None else ("sofort" if dd <= 0 else f"{round(dd / 60)} Min")
     cd = s.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE)
+    inact = s.get("inactivity_hours") or 0
+    warn_h = s.get("inactivity_warn_hours") or 0
+    inact_txt = ("aus" if inact <= 0
+                 else f"{inact}h" + (f" (Warnung {warn_h}h vorher)" if 0 < warn_h < inact else ""))
     return (f"Panel: {ch(s.get('panel_channel_id'))} · Ablage: {ch(s.get('ticket_category_id'))} · "
-            f"Archiv: {ch(s.get('transcript_channel_id'))}\n"
+            f"Archiv: {ch(s.get('transcript_channel_id'))} · Protokoll: {ch(s.get('modlog_channel_id'))}\n"
             f"Limit/Nutzer: {'unbegrenzt' if not limit else limit} · Löschzeit: {delay_txt} · "
-            f"Bestätigungen: {'dauerhaft' if not cd else str(cd) + ' Sek.'}")
+            f"Bestätigungen: {'dauerhaft' if not cd else str(cd) + ' Sek.'} · "
+            f"Auto-Schließen: {inact_txt}")
 
 
 class RootView(_BaseView):
@@ -378,18 +383,18 @@ class FieldsView(_BaseView):
         self.path = path
 
         if fields:
-            options = [discord.SelectOption(label=f"{i}. {f['label']}"[:100], value=str(i))
+            options = [discord.SelectOption(label=f"{i}. {f['label']}"[:100], value=str(i),
+                                            description=FIELD_STYLE_LABELS.get(f.get("style")))
                        for i, f in enumerate(fields, start=1)]
-            sel = discord.ui.Select(placeholder="🗑️ Feld entfernen …", options=options[:25])
-            sel.callback = self._remove
+            sel = discord.ui.Select(placeholder="✏️ Feld bearbeiten / verschieben …", options=options[:25])
+            sel.callback = self._open_field
             self.add_item(sel)
 
         self._full = len(fields) >= MAX_FIELDS
 
-    async def _remove(self, interaction: discord.Interaction) -> None:
+    async def _open_field(self, interaction: discord.Interaction) -> None:
         index = int(interaction.data["values"][0])
-        await self.cog.store.remove_field(self.guild, self.path, index)
-        embed, view = await fields_screen(self.cog, self.guild, self.author_id, self.path)
+        embed, view = await field_detail_screen(self.cog, self.guild, self.author_id, self.path, index)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Feld hinzufügen", emoji="➕", style=discord.ButtonStyle.success, row=1)
@@ -403,6 +408,112 @@ class FieldsView(_BaseView):
     @discord.ui.button(label="Zurück", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         embed, view = await leaf_screen(self.cog, self.guild, self.author_id, self.path)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+async def field_detail_screen(cog, guild, author_id, path: str, index: int
+                              ) -> Tuple[discord.Embed, discord.ui.View]:
+    leaf, label = await cog.store.resolve_leaf(guild, path)
+    if leaf is None:
+        return await root_screen(cog, guild, author_id)
+    fields = leaf.get("fields", [])
+    if not (1 <= index <= len(fields)):
+        return await fields_screen(cog, guild, author_id, path)
+    f = fields[index - 1]
+    embed = discord.Embed(title=f"📝 Feld {index}: {f['label']}", color=COLOR_INFO)
+    embed.add_field(name="Typ", value=FIELD_STYLE_LABELS.get(f.get("style"), f.get("style")), inline=True)
+    embed.add_field(name="Pflicht", value="Ja" if f.get("required") else "Nein", inline=True)
+    embed.add_field(name="Max. Zeichen", value=str(f.get("max_length")), inline=True)
+    embed.add_field(name="Platzhalter", value=f.get("placeholder") or "_keiner_", inline=False)
+    embed.set_footer(text=f"Feld {index} von {len(fields)} · {label}")
+    return embed, FieldDetailView(cog, guild, author_id, path, index, len(fields))
+
+
+class FieldDetailView(_BaseView):
+    def __init__(self, cog, guild, author_id, path: str, index: int, total: int):
+        super().__init__(cog, guild, author_id)
+        self.path = path
+        self.index = index
+        self.total = total
+
+    @discord.ui.button(label="Bearbeiten", emoji="✏️", style=discord.ButtonStyle.primary, row=0)
+    async def edit(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        leaf, _ = await self.cog.store.resolve_leaf(self.guild, self.path)
+        fields = (leaf or {}).get("fields", [])
+        if not (1 <= self.index <= len(fields)):
+            embed, view = await fields_screen(self.cog, self.guild, self.author_id, self.path)
+            await interaction.response.edit_message(embed=embed, view=view)
+            return
+        await interaction.response.send_modal(
+            FieldEditModal(self.cog, self.guild, self.author_id, self.path, self.index,
+                           fields[self.index - 1]))
+
+    @discord.ui.button(label="Hoch", emoji="⬆️", style=discord.ButtonStyle.secondary, row=0)
+    async def up(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        new = await self.cog.store.move_field(self.guild, self.path, self.index, -1)
+        embed, view = await field_detail_screen(
+            self.cog, self.guild, self.author_id, self.path, new or self.index)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Runter", emoji="⬇️", style=discord.ButtonStyle.secondary, row=0)
+    async def down(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        new = await self.cog.store.move_field(self.guild, self.path, self.index, +1)
+        embed, view = await field_detail_screen(
+            self.cog, self.guild, self.author_id, self.path, new or self.index)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Löschen", emoji="🗑️", style=discord.ButtonStyle.danger, row=1)
+    async def delete(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self.cog.store.remove_field(self.guild, self.path, self.index)
+        embed, view = await fields_screen(self.cog, self.guild, self.author_id, self.path)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Zurück", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        embed, view = await fields_screen(self.cog, self.guild, self.author_id, self.path)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class FieldEditModal(discord.ui.Modal):
+    """Bearbeitet ein bestehendes Formular-Feld (vorbefüllt)."""
+
+    def __init__(self, cog, guild, author_id, path: str, index: int, field: Dict[str, Any]):
+        super().__init__(title=f"Feld {index} bearbeiten", timeout=300)
+        self.cog = cog
+        self.guild = guild
+        self.author_id = author_id
+        self.path = path
+        self.index = index
+
+        self.f_label = discord.ui.TextInput(
+            label="Beschriftung", required=True, max_length=45, default=field.get("label"))
+        self.f_type = discord.ui.TextInput(
+            label="Typ: kurz / lang", required=False, max_length=10,
+            default="lang" if field.get("style") == "paragraph" else "kurz")
+        self.f_required = discord.ui.TextInput(
+            label="Pflichtfeld? ja / nein", required=False, max_length=5,
+            default="ja" if field.get("required", True) else "nein")
+        self.f_maxlen = discord.ui.TextInput(
+            label="Max. Zeichen", required=False, max_length=4,
+            default=str(field.get("max_length") or 200))
+        self.f_placeholder = discord.ui.TextInput(
+            label="Platzhalter (optional)", required=False, max_length=100,
+            default=field.get("placeholder") or None)
+        for item in (self.f_label, self.f_type, self.f_required, self.f_maxlen, self.f_placeholder):
+            self.add_item(item)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            maxlen = int(str(self.f_maxlen.value).strip() or "200")
+        except ValueError:
+            maxlen = 200
+        await self.cog.store.update_field(
+            self.guild, self.path, self.index,
+            label=str(self.f_label.value), style=_parse_style(self.f_type.value),
+            required=_parse_bool(self.f_required.value),
+            placeholder=str(self.f_placeholder.value), max_length=maxlen)
+        embed, view = await field_detail_screen(
+            self.cog, self.guild, self.author_id, self.path, self.index)
         await interaction.response.edit_message(embed=embed, view=view)
 
 
@@ -420,6 +531,8 @@ async def settings_screen(cog, guild, author_id
         name="Hinweise",
         value=("**Ablage** = Discord-Kanalkategorie, unter der die Ticket-Channels einsortiert "
                "werden (optional).\n**Archiv** = Channel für Transcripts beim Schließen (optional).\n"
+               "**Protokoll** = Channel, in dem Ticket-Ereignisse (geöffnet/übernommen/geschlossen …) "
+               "geloggt werden (optional).\n"
                "**Limit/Löschzeit/Bestätigungen** per Button. *Bestätigungen* = Sekunden, bis die "
                "nur für den Nutzer sichtbaren »blauen« Hinweise automatisch verschwinden."),
         inline=False)
@@ -446,6 +559,14 @@ class SettingsView(_BaseView):
         arch_sel.callback = self._on_archive
         self.add_item(arch_sel)
 
+        cur_log = guild.get_channel(s.get("modlog_channel_id")) if s.get("modlog_channel_id") else None
+        log_sel = discord.ui.ChannelSelect(
+            placeholder="📋 Protokoll-Channel für Ticket-Ereignisse …",
+            channel_types=[discord.ChannelType.text], min_values=0, max_values=1,
+            default_values=[cur_log] if cur_log else [], row=2)
+        log_sel.callback = self._on_modlog
+        self.add_item(log_sel)
+
     async def _on_ablage(self, interaction: discord.Interaction) -> None:
         vals = interaction.data.get("values", [])
         await self.cog.store.set_ticket_category(self.guild, int(vals[0]) if vals else None)
@@ -458,19 +579,32 @@ class SettingsView(_BaseView):
         embed, view = await settings_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Limit", emoji="🔢", style=discord.ButtonStyle.secondary, row=2)
+    async def _on_modlog(self, interaction: discord.Interaction) -> None:
+        vals = interaction.data.get("values", [])
+        await self.cog.store.set_modlog_channel(self.guild, int(vals[0]) if vals else None)
+        embed, view = await settings_screen(self.cog, self.guild, self.author_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Limit", emoji="🔢", style=discord.ButtonStyle.secondary, row=3)
     async def limit_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(LimitModal(self.cog, self.guild, self.author_id))
 
-    @discord.ui.button(label="Löschzeit", emoji="⏱️", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Löschzeit", emoji="⏱️", style=discord.ButtonStyle.secondary, row=3)
     async def delay_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(DelayModal(self.cog, self.guild, self.author_id))
 
-    @discord.ui.button(label="Bestätigungen", emoji="💬", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Bestätigungen", emoji="💬", style=discord.ButtonStyle.secondary, row=3)
     async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(ConfirmDeleteModal(self.cog, self.guild, self.author_id))
 
-    @discord.ui.button(label="Zurück", emoji="⬅️", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Auto-Schließen", emoji="⏰", style=discord.ButtonStyle.secondary, row=3)
+    async def inactivity_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        s = await self.cog.store.get_settings(self.guild)
+        await interaction.response.send_modal(InactivityModal(
+            self.cog, self.guild, self.author_id,
+            s.get("inactivity_hours") or 0, s.get("inactivity_warn_hours") or 0))
+
+    @discord.ui.button(label="Zurück", emoji="⬅️", style=discord.ButtonStyle.secondary, row=3)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await _reopen_root(self, interaction)
 
@@ -765,5 +899,33 @@ class ConfirmDeleteModal(discord.ui.Modal, title="Bestätigungen automatisch aus
             await interaction.response.send_message("❌ Bitte eine Zahl eingeben.", ephemeral=True)
             return
         await self.cog.store.set_confirm_delete(self.guild, seconds)
+        embed, view = await settings_screen(self.cog, self.guild, self.author_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class InactivityModal(discord.ui.Modal, title="Auto-Schließen bei Inaktivität"):
+    def __init__(self, cog, guild, author_id, cur_hours: int, cur_warn: int):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.guild = guild
+        self.author_id = author_id
+        self.f_hours = discord.ui.TextInput(
+            label="Stunden bis Schließen (0 = aus)", required=True, max_length=5,
+            default=str(cur_hours))
+        self.f_warn = discord.ui.TextInput(
+            label="Vorwarnung X Std. vorher (0 = keine)", required=False, max_length=5,
+            default=str(cur_warn))
+        self.add_item(self.f_hours)
+        self.add_item(self.f_warn)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            hours = max(0, int(str(self.f_hours.value).strip() or "0"))
+            warn = max(0, int(str(self.f_warn.value).strip() or "0"))
+        except ValueError:
+            await interaction.response.send_message("❌ Bitte Zahlen eingeben.", ephemeral=True)
+            return
+        await self.cog.store.set_inactivity_hours(self.guild, hours)
+        await self.cog.store.set_inactivity_warn_hours(self.guild, warn)
         embed, view = await settings_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)

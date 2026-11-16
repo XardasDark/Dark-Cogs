@@ -32,7 +32,7 @@ from .wizard import WizardSelectView, make_modal
 from .util import resolve_emoji
 from .constants import (
     PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN,
-    COLOR_INFO, COLOR_ERROR, COLOR_CLOSED,
+    COLOR_INFO, COLOR_ERROR, COLOR_CLOSED, COLOR_TICKET, COLOR_PENDING,
     STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED,
     DEFAULT_MAX_OPEN, DEFAULT_DELETE_DELAY, DEFAULT_CONFIRM_DELETE,
     FIELD_STYLE_LABELS, MAX_FIELDS, CATEGORY_PATH_SEP,
@@ -57,11 +57,15 @@ class KuhHilfe(commands.Cog):
             max_open_per_user=DEFAULT_MAX_OPEN,
             delete_delay_seconds=DEFAULT_DELETE_DELAY,
             confirm_delete_seconds=DEFAULT_CONFIRM_DELETE,
+            modlog_channel_id=None,
+            inactivity_hours=0,
+            inactivity_warn_hours=0,
             categories={},
             tickets={},
         )
         self.store = KuhHilfeStore(self.config)
         self._delete_task: Optional[asyncio.Task] = None
+        self._ticket_channels: set = set()  # Channel-IDs aktiver Tickets (für on_message)
 
     async def cog_load(self) -> None:
         # Autocomplete für die Pfad-/Gruppen-Parameter registrieren
@@ -116,6 +120,22 @@ class KuhHilfe(commands.Cog):
                 pass  # Nachricht schon weg oder Interaktions-Token abgelaufen
 
         self.bot.loop.create_task(_run())
+
+    async def _modlog(self, guild: discord.Guild, description: str,
+                      color: int = COLOR_INFO) -> None:
+        """Postet ein Ereignis in den konfigurierten Protokoll-Channel (falls gesetzt)."""
+        settings = await self.store.get_settings(guild)
+        cid = settings.get("modlog_channel_id")
+        if not cid:
+            return
+        channel = guild.get_channel(cid)
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            return
+        try:
+            await channel.send(embed=discord.Embed(
+                description=description, color=color, timestamp=discord.utils.utcnow()))
+        except discord.DiscordException:
+            log.debug("Mod-Log konnte nicht geschrieben werden", exc_info=True)
 
     async def _ac_leaf(self, interaction: discord.Interaction,
                        current: str) -> List[app_commands.Choice]:
@@ -179,6 +199,39 @@ class KuhHilfe(commands.Cog):
                 await self._handle_reopen(interaction)
         except discord.DiscordException:
             log.exception("Fehler bei KuhHilfe-Interaktion (%s)", custom_id)
+
+    @commands.Cog.listener("on_guild_channel_delete")
+    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
+        """Räumt den Ticket-Datensatz auf, wenn ein Ticket-Channel (manuell) gelöscht wird."""
+        guild = getattr(channel, "guild", None)
+        if guild is None:
+            return
+        ticket = await self.store.get_ticket(guild, channel.id)
+        if not ticket:
+            return
+        await self.store.delete_ticket(guild, channel.id)
+        self._ticket_channels.discard(channel.id)
+        # Nur loggen, wenn der Channel noch offen/aktiv war (geschlossene werden ohnehin gelöscht)
+        if ticket.get("status") != STATUS_CLOSED:
+            await self._modlog(
+                guild,
+                f"🗑️ Ticket `{ticket['id']}` entfernt – Channel **#{channel.name}** wurde gelöscht.",
+                color=COLOR_CLOSED)
+
+    @commands.Cog.listener("on_message")
+    async def on_message(self, message: discord.Message) -> None:
+        """Hält die Inaktivitäts-Uhr aktuell: jede menschliche Nachricht im Ticket zählt als Aktivität."""
+        if message.guild is None or message.author.bot:
+            return
+        if message.channel.id not in self._ticket_channels:
+            return
+        ticket = await self.store.get_ticket(message.guild, message.channel.id)
+        if not ticket:
+            self._ticket_channels.discard(message.channel.id)
+            return
+        await self.store.update_ticket(
+            message.guild, message.channel.id,
+            last_activity=int(time.time()), inactivity_warned=False)
 
     # ─────────────────────────────────────────────────────────────────────────
     # WIZARD
@@ -302,12 +355,14 @@ class KuhHilfe(commands.Cog):
 
         embed = views.build_ticket_embed(ticket, leaf, opener, guild, label)
         content = views.build_ping_content(leaf, opener)
-        await channel.send(
+        control_msg = await channel.send(
             content=content,
             embed=embed,
             view=views.build_ticket_controls(STATUS_OPEN),
             allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
         )
+        await self.store.update_ticket(guild, channel.id, message_id=control_msg.id)
+        self._ticket_channels.add(channel.id)
 
         confirm = await interaction.followup.send(
             embed=discord.Embed(
@@ -317,6 +372,9 @@ class KuhHilfe(commands.Cog):
             ephemeral=True, wait=True)
         self._autodelete(interaction, settings.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE),
                          confirm)
+        await self._modlog(
+            guild, f"🎫 Ticket `{ticket_id}` geöffnet von {opener.mention} · "
+                   f"**{label}** · {channel.mention}", color=COLOR_TICKET)
 
     # ─────────────────────────────────────────────────────────────────────────
     # TICKET-AKTIONEN
@@ -357,6 +415,9 @@ class KuhHilfe(commands.Cog):
         await interaction.response.edit_message(
             embed=embed, view=views.build_ticket_controls(ticket["status"]))
         await interaction.channel.send(f"🙋 {interaction.user.mention} kümmert sich jetzt um dieses Ticket.")
+        await self._modlog(
+            interaction.guild,
+            f"🙋 Ticket `{ticket['id']}` übernommen von {interaction.user.mention}.", color=COLOR_INFO)
 
     async def _handle_close(self, interaction: discord.Interaction) -> None:
         ticket, leaf, label = await self._load_ticket_ctx(interaction)
@@ -386,6 +447,10 @@ class KuhHilfe(commands.Cog):
                 color=COLOR_INFO),
             allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
         )
+        await self._modlog(
+            interaction.guild,
+            f"🟡 Ticket `{ticket['id']}`: Schließung angefragt von {interaction.user.mention}.",
+            color=COLOR_PENDING)
 
     async def _handle_confirm_close(self, interaction: discord.Interaction) -> None:
         ticket, leaf, label = await self._load_ticket_ctx(interaction)
@@ -420,6 +485,10 @@ class KuhHilfe(commands.Cog):
         await interaction.channel.send(
             f"♻️ {interaction.user.mention} hat dieses Ticket wieder geöffnet – "
             "die geplante Löschung wurde abgebrochen.")
+        await self._modlog(
+            interaction.guild,
+            f"♻️ Ticket `{ticket['id']}` wieder geöffnet von {interaction.user.mention}.",
+            color=COLOR_TICKET)
 
     async def _effective_close(self, interaction: discord.Interaction,
                                ticket: Dict[str, Any], leaf: Dict[str, Any],
@@ -435,14 +504,49 @@ class KuhHilfe(commands.Cog):
         embed = views.build_ticket_embed(ticket, leaf, opener, guild, label)
         await interaction.response.edit_message(
             embed=embed, view=views.build_ticket_controls(STATUS_CLOSED))
+        await self._modlog(
+            guild, f"⚪ Ticket `{ticket['id']}` geschlossen von {interaction.user.mention} · "
+                   f"**{label}**", color=COLOR_CLOSED)
+        await self._post_close_outcome(guild, channel, ticket, f"von {interaction.user.mention}")
 
-        # Hinweis + Zeitplan – das Transcript entsteht erst KURZ VOR dem Löschen
-        # (nicht hier), damit Schließen/Wieder-Öffnen keine Transcript-Dubletten erzeugt.
+    async def _auto_close(self, guild: discord.Guild, channel: discord.abc.GuildChannel,
+                          ticket: Dict[str, Any]) -> None:
+        """Schließt ein Ticket automatisch (Inaktivität) – ohne Interaktion."""
+        leaf, label = await self.store.resolve_leaf(guild, ticket["category_key"])
+        if leaf is None:
+            label = ticket.get("category_label") or ticket["category_key"]
+            leaf = {"name": label, "role_ids": [], "user_ids": [], "fields": []}
+
+        ticket = await self.store.update_ticket(
+            guild, channel.id, status=STATUS_CLOSED,
+            closed_at=int(time.time()), closed_by=None)
+        opener = guild.get_member(ticket["opener_id"])
+        embed = views.build_ticket_embed(ticket, leaf, opener, guild, label)
+        mid = ticket.get("message_id")
+        if mid:
+            try:
+                await channel.get_partial_message(mid).edit(
+                    embed=embed, view=views.build_ticket_controls(STATUS_CLOSED))
+            except discord.DiscordException:
+                pass
+        await self._modlog(
+            guild, f"⏰ Ticket `{ticket['id']}` automatisch wegen Inaktivität geschlossen · "
+                   f"**{label}**", color=COLOR_CLOSED)
+        await self._post_close_outcome(guild, channel, ticket, "automatisch wegen Inaktivität")
+
+    async def _post_close_outcome(self, guild: discord.Guild,
+                                  channel: discord.abc.GuildChannel,
+                                  ticket: Dict[str, Any], closer_text: str) -> None:
+        """Postet den Schließ-Hinweis und löst je nach Löschzeit das Löschen aus.
+
+        Das Transcript entsteht erst KURZ VOR dem Löschen (in _delete_ticket_channel),
+        damit Schließen/Wieder-Öffnen keine Transcript-Dubletten erzeugt.
+        """
         settings = await self.store.get_settings(guild)
         delay = settings.get("delete_delay_seconds", DEFAULT_DELETE_DELAY)
         if delay is None:
             await channel.send(embed=discord.Embed(
-                description=(f"✅ Ticket von {interaction.user.mention} geschlossen. "
+                description=(f"✅ Ticket {closer_text} geschlossen. "
                              "Dieser Channel bleibt bestehen (keine automatische Löschung) – "
                              "mit **♻️ Wieder öffnen** reaktivieren oder manuell löschen."),
                 color=COLOR_CLOSED))
@@ -451,7 +555,7 @@ class KuhHilfe(commands.Cog):
         else:
             minutes = max(1, round(delay / 60))
             await channel.send(embed=discord.Embed(
-                description=(f"✅ Ticket von {interaction.user.mention} geschlossen. "
+                description=(f"✅ Ticket {closer_text} geschlossen. "
                              f"Dieser Channel wird in **{minutes} Min** automatisch gelöscht "
                              "(das Transcript wird dann erstellt)."),
                 color=COLOR_CLOSED))
@@ -494,6 +598,7 @@ class KuhHilfe(commands.Cog):
         if channel is not None:
             await self._write_transcript(guild, channel, ticket)
         await self.store.delete_ticket(guild, ticket["channel_id"])
+        self._ticket_channels.discard(ticket["channel_id"])
         if channel is not None:
             try:
                 await channel.delete(reason=f"KuhHilfe-Ticket {ticket['id']} geschlossen")
@@ -505,14 +610,64 @@ class KuhHilfe(commands.Cog):
     # ─────────────────────────────────────────────────────────────────────────
     async def _delete_loop(self) -> None:
         await self.bot.wait_until_red_ready()
+        await self._populate_ticket_channels()
         while True:
             try:
                 await self._sweep_closed()
+                await self._sweep_inactive()
             except asyncio.CancelledError:
                 raise
             except Exception:  # pragma: no cover
                 log.exception("Fehler im KuhHilfe-Lösch-Loop")
             await asyncio.sleep(_DELETE_LOOP_INTERVAL)
+
+    async def _populate_ticket_channels(self) -> None:
+        """Baut das In-Memory-Set aktiver Ticket-Channel-IDs beim Start auf."""
+        for guild in self.bot.guilds:
+            try:
+                tickets_map = await self.store.all_tickets(guild)
+            except Exception:  # pragma: no cover
+                continue
+            for ticket in tickets_map.values():
+                self._ticket_channels.add(ticket["channel_id"])
+
+    async def _sweep_inactive(self) -> None:
+        now = int(time.time())
+        for guild in self.bot.guilds:
+            settings = await self.store.get_settings(guild)
+            inact_h = settings.get("inactivity_hours") or 0
+            if inact_h <= 0:
+                continue
+            warn_h = settings.get("inactivity_warn_hours") or 0
+            close_after = inact_h * 3600
+            warn_after = (inact_h - warn_h) * 3600 if 0 < warn_h < inact_h else None
+            tickets_map = await self.store.all_tickets(guild)
+            for ticket in list(tickets_map.values()):
+                if ticket.get("status") not in (STATUS_OPEN, STATUS_CLOSE_REQUESTED):
+                    continue
+                last = ticket.get("last_activity") or ticket.get("created_at") or now
+                idle = now - last
+                channel = guild.get_channel(ticket["channel_id"])
+                if channel is None:
+                    continue
+                if idle >= close_after:
+                    await self._auto_close(guild, channel, ticket)
+                elif warn_after is not None and idle >= warn_after and not ticket.get("inactivity_warned"):
+                    remaining_h = max(1, round((close_after - idle) / 3600))
+                    opener = guild.get_member(ticket["opener_id"])
+                    mention = opener.mention if opener else f"<@{ticket['opener_id']}>"
+                    try:
+                        await channel.send(
+                            content=mention,
+                            embed=discord.Embed(
+                                description=(f"⏰ Hier war länger nichts los. Dieses Ticket wird in "
+                                             f"ca. **{remaining_h} Std.** automatisch geschlossen, wenn keine "
+                                             "Antwort kommt. Schreib einfach etwas, um es offen zu halten."),
+                                color=COLOR_PENDING),
+                            allowed_mentions=discord.AllowedMentions(users=True))
+                        await self.store.update_ticket(guild, channel.id, inactivity_warned=True)
+                    except discord.DiscordException:
+                        log.debug("Inaktivitäts-Warnung fehlgeschlagen", exc_info=True)
 
     async def _sweep_closed(self) -> None:
         now = int(time.time())
@@ -617,6 +772,17 @@ class KuhHilfe(commands.Cog):
         else:
             await self._reply(ctx, "✅ Transcript-Archiv deaktiviert.")
 
+    @setup_group.command(name="modlog",
+                      description="Protokoll-Channel für Ticket-Ereignisse (ohne Angabe: deaktivieren)")
+    @app_commands.describe(channel="Channel für das Ticket-Protokoll (leer = aus)")
+    async def set_modlog(self, ctx: commands.Context,
+                         channel: Optional[discord.TextChannel] = None) -> None:
+        await self.store.set_modlog_channel(ctx.guild, channel.id if channel else None)
+        if channel:
+            await self._reply(ctx, f"✅ Ticket-Ereignisse werden in {channel.mention} protokolliert.")
+        else:
+            await self._reply(ctx, "✅ Protokoll deaktiviert.")
+
     @setup_group.command(name="limit",
                       description="Max. gleichzeitig offene Tickets pro Nutzer (0 = unbegrenzt)")
     @app_commands.describe(anzahl="Anzahl (0 = unbegrenzt)")
@@ -646,6 +812,21 @@ class KuhHilfe(commands.Cog):
         txt = "dauerhaft sichtbar" if sekunden <= 0 else f"nach {sekunden} Sek. ausgeblendet"
         await self._reply(ctx, f"✅ Nutzer-Bestätigungen (nur für den Nutzer sichtbar) werden **{txt}**.")
 
+    @setup_group.command(name="inaktivitaet",
+                      description="Offene Tickets bei Inaktivität automatisch schließen (0 = aus)")
+    @app_commands.describe(stunden="Stunden ohne Aktivität bis zum automatischen Schließen (0 = aus)",
+                           vorwarnung="Stunden vor dem Schließen warnen (0 = keine Vorwarnung)")
+    async def set_inactivity(self, ctx: commands.Context, stunden: int, vorwarnung: int = 0) -> None:
+        await self.store.set_inactivity_hours(ctx.guild, max(0, stunden))
+        await self.store.set_inactivity_warn_hours(ctx.guild, max(0, vorwarnung))
+        if stunden <= 0:
+            await self._reply(ctx, "✅ Auto-Schließen bei Inaktivität ist **aus**.")
+            return
+        warn = (f", Vorwarnung **{vorwarnung} Std.** vorher"
+                if 0 < vorwarnung < stunden else " (ohne Vorwarnung)")
+        await self._reply(ctx, f"✅ Offene Tickets werden nach **{stunden} Std.** ohne Aktivität "
+                               f"automatisch geschlossen{warn}.")
+
     @setup_group.command(name="status", description="Zeigt die aktuelle KuhHilfe-Konfiguration")
     async def status_cmd(self, ctx: commands.Context) -> None:
         s = await self.store.get_settings(ctx.guild)
@@ -659,6 +840,7 @@ class KuhHilfe(commands.Cog):
         embed.add_field(name="Panel-Channel", value=_ch(s.get("panel_channel_id")), inline=True)
         embed.add_field(name="Ticket-Ablage", value=_ch(s.get("ticket_category_id")), inline=True)
         embed.add_field(name="Archiv", value=_ch(s.get("transcript_channel_id")), inline=True)
+        embed.add_field(name="Protokoll", value=_ch(s.get("modlog_channel_id")), inline=True)
         limit = s.get("max_open_per_user", DEFAULT_MAX_OPEN)
         embed.add_field(name="Limit/Nutzer", value=("unbegrenzt" if not limit else str(limit)), inline=True)
         dd = s.get("delete_delay_seconds", DEFAULT_DELETE_DELAY)
@@ -667,6 +849,13 @@ class KuhHilfe(commands.Cog):
         cd = s.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE)
         embed.add_field(name="Bestätigungen",
                         value=("dauerhaft" if not cd else f"{cd} Sek."), inline=True)
+        inact = s.get("inactivity_hours") or 0
+        warn_h = s.get("inactivity_warn_hours") or 0
+        if inact <= 0:
+            inact_txt = "aus"
+        else:
+            inact_txt = f"{inact} Std." + (f" (Warnung {warn_h}h vorher)" if 0 < warn_h < inact else "")
+        embed.add_field(name="Auto-Schließen (Inaktiv.)", value=inact_txt, inline=True)
         leaves = await self.store.iter_leaves(ctx.guild)
         groups = await self.store.iter_groups(ctx.guild)
         embed.add_field(name="Struktur",
