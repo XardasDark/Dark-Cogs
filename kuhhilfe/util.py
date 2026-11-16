@@ -36,6 +36,16 @@ def clean_emoji(raw: Optional[str]) -> Optional[str]:
     return raw
 
 
+def emoji_for_input(raw: Optional[str]) -> Optional[str]:
+    """Für Modal-Vorbelegung: Custom-Emoji ``<:name:id>`` als kurzes ``:name:`` zeigen."""
+    if not raw:
+        return None
+    m = re.fullmatch(r"<a?:(\w{2,32}):\d{15,25}>", str(raw).strip())
+    if m:
+        return f":{m.group(1)}:"
+    return str(raw).strip() or None
+
+
 def resolve_emoji(guild: discord.Guild, raw: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
     """
     Eingabe-seitig: wandelt eine Nutzereingabe in einen speicherbaren Emoji-Wert.

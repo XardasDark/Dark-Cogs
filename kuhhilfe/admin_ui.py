@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import discord
 
 from . import views
-from .util import clean_emoji, resolve_emoji
+from .util import clean_emoji, resolve_emoji, emoji_for_input
 from .constants import (
     COLOR_INFO, COLOR_ERROR, COLOR_PANEL, COLOR_CLOSED,
     KIND_GROUP, CATEGORY_PATH_SEP, MAX_FIELDS, FIELD_STYLE_LABELS,
@@ -569,9 +569,9 @@ class NodeModal(discord.ui.Modal):
             label="Name", required=True, max_length=80,
             default=(node or {}).get("name") if node else None)
         self.f_emoji = discord.ui.TextInput(
-            label="Emoji (optional)", required=False, max_length=8,
-            default=(node or {}).get("emoji") if node else None,
-            placeholder="z. B. ⚔️")
+            label="Emoji (optional)", required=False, max_length=64,
+            default=emoji_for_input((node or {}).get("emoji")) if node else None,
+            placeholder="z. B. ⚔️ oder :wow:")
         self.f_desc = discord.ui.TextInput(
             label="Kurzbeschreibung (optional)", required=False, max_length=200,
             style=discord.TextStyle.paragraph,
