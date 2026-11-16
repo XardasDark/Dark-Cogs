@@ -34,6 +34,15 @@ def _ticket_color(status: str, stage=None) -> int:
     return COLOR_TICKET         # 🟢 grün
 
 
+def _status_label(status: str, stage=None) -> str:
+    """Ein einziger Status-Indikator: Lebenszyklus hat Vorrang, sonst die Stufe."""
+    if status in (STATUS_CLOSED, STATUS_CLOSE_REQUESTED):
+        return STATUS_LABELS[status]
+    if stage and stage in STAGE_LABELS:
+        return STAGE_LABELS[stage]
+    return STATUS_LABELS[STATUS_OPEN]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SUPPORT-PANEL (öffentliche Nachricht mit persistentem Button)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -100,15 +109,12 @@ def build_ticket_embed(ticket: Dict[str, Any], category: Dict[str, Any],
     opener_mention = opener.mention if opener else f"<@{ticket['opener_id']}>"
     embed.add_field(name="Ticket", value=f"`{ticket['id']}`", inline=True)
     embed.add_field(name="Ersteller", value=opener_mention, inline=True)
-    embed.add_field(name="Status", value=STATUS_LABELS.get(ticket["status"], ticket["status"]), inline=True)
+    embed.add_field(name="Status",
+                    value=_status_label(ticket["status"], ticket.get("stage")), inline=True)
 
     claimed_by = ticket.get("claimed_by")
     if claimed_by:
         embed.add_field(name="Übernommen von", value=f"<@{claimed_by}>", inline=True)
-
-    stage = ticket.get("stage")
-    if stage and stage in STAGE_LABELS:
-        embed.add_field(name="Bearbeitung", value=STAGE_LABELS[stage], inline=True)
 
     added = ticket.get("added_members") or []
     if added:
