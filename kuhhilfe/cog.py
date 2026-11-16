@@ -28,13 +28,13 @@ from redbot.core.bot import Red
 
 from . import views, tickets
 from .storage import KuhHilfeStore
-from .wizard import CategorySelectView, TicketModal
+from .wizard import WizardSelectView, make_modal
 from .constants import (
     PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM,
     COLOR_INFO, COLOR_ERROR, COLOR_CLOSED,
     STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED,
     DEFAULT_MAX_OPEN, DEFAULT_DELETE_DELAY,
-    FIELD_STYLE_LABELS, MAX_FIELDS,
+    FIELD_STYLE_LABELS, MAX_FIELDS, CATEGORY_PATH_SEP,
 )
 
 log = logging.getLogger("red.kuhhilfe")
@@ -62,12 +62,14 @@ class KuhHilfe(commands.Cog):
         self._delete_task: Optional[asyncio.Task] = None
 
     async def cog_load(self) -> None:
-        # Autocomplete für die Kategorie-Key-Parameter registrieren
+        # Autocomplete für die Pfad-/Gruppen-Parameter registrieren
         try:
             for cmd in (self.cat_remove, self.cat_rolle_add, self.cat_rolle_remove,
                         self.cat_user_add, self.cat_user_remove,
                         self.feld_add, self.feld_remove, self.feld_liste):
-                cmd.autocomplete("key")(self._ac_cat)
+                cmd.autocomplete("kategorie")(self._ac_leaf)
+            for cmd in (self.cat_add, self.gruppe_remove):
+                cmd.autocomplete("gruppe")(self._ac_group)
         except Exception:  # pragma: no cover – Komfort
             log.debug("Autocomplete konnte nicht registriert werden", exc_info=True)
         self._delete_task = self.bot.loop.create_task(self._delete_loop())
@@ -95,16 +97,31 @@ class KuhHilfe(commands.Cog):
         else:
             await ctx.send(**kwargs)
 
-    async def _ac_cat(self, interaction: discord.Interaction,
-                      current: str) -> List[app_commands.Choice]:
+    async def _ac_leaf(self, interaction: discord.Interaction,
+                       current: str) -> List[app_commands.Choice]:
+        """Autocomplete über alle finalen Kategorien (als Pfad)."""
         out: List[app_commands.Choice] = []
         if interaction.guild is None:
             return out
-        cats = await self.store.list_categories(interaction.guild)
         cur = current.lower()
-        for key, cat in cats.items():
-            if cur in key.lower() or cur in cat.get("name", "").lower():
-                out.append(app_commands.Choice(name=f"{cat.get('name', key)} ({key})", value=key))
+        for path, leaf, parent in await self.store.iter_leaves(interaction.guild):
+            label = (f"{parent['name']} › {leaf['name']}" if parent else leaf["name"])
+            if cur in path.lower() or cur in label.lower():
+                out.append(app_commands.Choice(name=f"{label} ({path})"[:100], value=path))
+            if len(out) >= 25:
+                break
+        return out
+
+    async def _ac_group(self, interaction: discord.Interaction,
+                        current: str) -> List[app_commands.Choice]:
+        """Autocomplete über alle Gruppen (Oberkategorien)."""
+        out: List[app_commands.Choice] = []
+        if interaction.guild is None:
+            return out
+        cur = current.lower()
+        for key, grp in await self.store.iter_groups(interaction.guild):
+            if cur in key.lower() or cur in grp.get("name", "").lower():
+                out.append(app_commands.Choice(name=f"{grp.get('name', key)} ({key})"[:100], value=key))
             if len(out) >= 25:
                 break
         return out
@@ -158,16 +175,49 @@ class KuhHilfe(commands.Cog):
         if not await self._within_limit(interaction):
             return
 
-        if len(cats) == 1:
-            category = next(iter(cats.values()))
-            await interaction.response.send_modal(TicketModal(self, category))
+        top = list(cats.items())
+        if len(top) == 1:
+            key, node = top[0]
+            await self._descend_single(interaction, key, node)
         else:
-            view = CategorySelectView(self, cats, interaction.user.id)
+            entries = [(key, node) for key, node in top]
+            view = WizardSelectView(self, entries, interaction.user.id,
+                                    "Wähle die passende Kategorie für dein Anliegen …")
             await interaction.response.send_message(
                 embed=discord.Embed(
                     description="Wähle die passende Kategorie für dein Anliegen:",
                     color=COLOR_INFO),
                 view=view, ephemeral=True)
+
+    async def _descend_single(self, interaction: discord.Interaction,
+                              path: str, node: Dict[str, Any]) -> None:
+        """Nur eine oberste Ebene vorhanden → direkt passend weiterleiten."""
+        if not self.store.is_group(node):
+            await interaction.response.send_modal(make_modal(self, node, path))
+            return
+        children = [
+            (f"{path}{CATEGORY_PATH_SEP}{ck}", child)
+            for ck, child in (node.get("children") or {}).items()
+        ]
+        if not children:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description="⚠️ Der Support ist noch nicht vollständig eingerichtet.",
+                    color=COLOR_ERROR),
+                ephemeral=True)
+            return
+        if len(children) == 1:
+            child_path, leaf = children[0]
+            await interaction.response.send_modal(make_modal(self, leaf, child_path))
+            return
+        view = WizardSelectView(self, children, interaction.user.id,
+                                "Wähle die passende Unterkategorie …")
+        emoji = (node.get("emoji") + " ") if node.get("emoji") else ""
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description=f"{emoji}**{node['name']}** – wähle die passende Unterkategorie:",
+                color=COLOR_INFO),
+            view=view, ephemeral=True)
 
     async def _within_limit(self, interaction: discord.Interaction) -> bool:
         settings = await self.store.get_settings(interaction.guild)
@@ -186,10 +236,16 @@ class KuhHilfe(commands.Cog):
         return True
 
     async def finalize_ticket(self, interaction: discord.Interaction,
-                              category: Dict[str, Any], answers: Dict[str, str]) -> None:
+                              path: str, answers: Dict[str, str]) -> None:
         """Wird vom Modal aufgerufen: erstellt Channel + Ticket + pingt Zuständige."""
         guild = interaction.guild
         opener = interaction.user
+
+        leaf, label = await self.store.resolve_leaf(guild, path)
+        if leaf is None:
+            await interaction.response.send_message(
+                "❌ Diese Kategorie existiert nicht mehr. Bitte starte erneut.", ephemeral=True)
+            return
 
         # Limit erneut prüfen (Zeit zwischen Panel-Klick und Absenden)
         settings = await self.store.get_settings(guild)
@@ -204,7 +260,7 @@ class KuhHilfe(commands.Cog):
         ticket_id = await self.store.generate_ticket_id(guild)
         try:
             channel = await tickets.create_ticket_channel(
-                guild, opener, category, ticket_id, settings.get("ticket_category_id"))
+                guild, opener, leaf, ticket_id, settings.get("ticket_category_id"))
         except discord.Forbidden:
             await interaction.followup.send(
                 "❌ Mir fehlen die Rechte, einen Ticket-Channel zu erstellen "
@@ -217,10 +273,10 @@ class KuhHilfe(commands.Cog):
             return
 
         ticket = await self.store.create_ticket(
-            guild, ticket_id, channel.id, opener.id, category["key"], answers)
+            guild, ticket_id, channel.id, opener.id, path, label, answers)
 
-        embed = views.build_ticket_embed(ticket, category, opener, guild)
-        content = views.build_ping_content(category, opener)
+        embed = views.build_ticket_embed(ticket, leaf, opener, guild, label)
+        content = views.build_ping_content(leaf, opener)
         await channel.send(
             content=content,
             embed=embed,
@@ -239,24 +295,25 @@ class KuhHilfe(commands.Cog):
     # TICKET-AKTIONEN
     # ─────────────────────────────────────────────────────────────────────────
     async def _load_ticket_ctx(self, interaction: discord.Interaction):
-        """Lädt (ticket, category) zum Channel der Interaktion oder meldet Fehler."""
+        """Lädt (ticket, leaf, label) zum Channel der Interaktion oder meldet Fehler."""
         ticket = await self.store.get_ticket(interaction.guild, interaction.channel_id)
         if not ticket:
             await interaction.response.send_message(
                 "❌ Zu diesem Channel gibt es kein aktives Ticket.", ephemeral=True)
-            return None, None
-        category = await self.store.get_category(interaction.guild, ticket["category_key"])
-        if not category:
+            return None, None, None
+        leaf, label = await self.store.resolve_leaf(interaction.guild, ticket["category_key"])
+        if leaf is None:
             # Kategorie gelöscht – minimaler Ersatz, damit Schließen weiter funktioniert
-            category = {"key": ticket["category_key"], "name": ticket["category_key"],
-                        "role_ids": [], "user_ids": [], "fields": []}
-        return ticket, category
+            label = ticket.get("category_label") or ticket["category_key"]
+            leaf = {"key": ticket["category_key"], "name": label,
+                    "role_ids": [], "user_ids": [], "fields": []}
+        return ticket, leaf, label
 
     async def _handle_claim(self, interaction: discord.Interaction) -> None:
-        ticket, category = await self._load_ticket_ctx(interaction)
+        ticket, leaf, label = await self._load_ticket_ctx(interaction)
         if not ticket:
             return
-        if not self.is_support_for(interaction.user, category):
+        if not self.is_support_for(interaction.user, leaf):
             await interaction.response.send_message(
                 "❌ Nur zuständige Support-Mitglieder können ein Ticket übernehmen.", ephemeral=True)
             return
@@ -269,31 +326,31 @@ class KuhHilfe(commands.Cog):
         ticket = await self.store.update_ticket(
             interaction.guild, interaction.channel_id, claimed_by=interaction.user.id)
         opener = interaction.guild.get_member(ticket["opener_id"])
-        embed = views.build_ticket_embed(ticket, category, opener, interaction.guild)
+        embed = views.build_ticket_embed(ticket, leaf, opener, interaction.guild, label)
         await interaction.response.edit_message(
             embed=embed, view=views.build_ticket_controls(ticket["status"]))
         await interaction.channel.send(f"🙋 {interaction.user.mention} kümmert sich jetzt um dieses Ticket.")
 
     async def _handle_close(self, interaction: discord.Interaction) -> None:
-        ticket, category = await self._load_ticket_ctx(interaction)
+        ticket, leaf, label = await self._load_ticket_ctx(interaction)
         if not ticket:
             return
         if ticket["status"] == STATUS_CLOSED:
             await interaction.response.send_message("ℹ️ Dieses Ticket ist bereits geschlossen.", ephemeral=True)
             return
 
-        if self.is_support_for(interaction.user, category):
-            await self._effective_close(interaction, ticket, category)
+        if self.is_support_for(interaction.user, leaf):
+            await self._effective_close(interaction, ticket, leaf, label)
             return
 
         # Nicht-Support (z. B. Ersteller): nur Schließung anfragen
         ticket = await self.store.update_ticket(
             interaction.guild, interaction.channel_id, status=STATUS_CLOSE_REQUESTED)
         opener = interaction.guild.get_member(ticket["opener_id"])
-        embed = views.build_ticket_embed(ticket, category, opener, interaction.guild)
+        embed = views.build_ticket_embed(ticket, leaf, opener, interaction.guild, label)
         await interaction.response.edit_message(
             embed=embed, view=views.build_ticket_controls(STATUS_CLOSE_REQUESTED))
-        ping = views.build_ping_content(category, interaction.user)
+        ping = views.build_ping_content(leaf, interaction.user)
         await interaction.channel.send(
             content=ping,
             embed=discord.Embed(
@@ -304,17 +361,18 @@ class KuhHilfe(commands.Cog):
         )
 
     async def _handle_confirm_close(self, interaction: discord.Interaction) -> None:
-        ticket, category = await self._load_ticket_ctx(interaction)
+        ticket, leaf, label = await self._load_ticket_ctx(interaction)
         if not ticket:
             return
-        if not self.is_support_for(interaction.user, category):
+        if not self.is_support_for(interaction.user, leaf):
             await interaction.response.send_message(
                 "❌ Nur zuständige Support-Mitglieder können die Schließung bestätigen.", ephemeral=True)
             return
-        await self._effective_close(interaction, ticket, category)
+        await self._effective_close(interaction, ticket, leaf, label)
 
     async def _effective_close(self, interaction: discord.Interaction,
-                               ticket: Dict[str, Any], category: Dict[str, Any]) -> None:
+                               ticket: Dict[str, Any], leaf: Dict[str, Any],
+                               label: Optional[str]) -> None:
         guild = interaction.guild
         channel = interaction.channel
 
@@ -323,7 +381,7 @@ class KuhHilfe(commands.Cog):
             closed_at=int(time.time()), closed_by=interaction.user.id)
 
         opener = guild.get_member(ticket["opener_id"])
-        embed = views.build_ticket_embed(ticket, category, opener, guild)
+        embed = views.build_ticket_embed(ticket, leaf, opener, guild, label)
         await interaction.response.edit_message(
             embed=embed, view=views.build_ticket_controls(STATUS_CLOSED))
 
@@ -338,7 +396,10 @@ class KuhHilfe(commands.Cog):
                     summary = discord.Embed(
                         title=f"📄 Transcript · Ticket {ticket['id']}",
                         color=COLOR_CLOSED, timestamp=discord.utils.utcnow())
-                    summary.add_field(name="Kategorie", value=category.get("name", ticket["category_key"]), inline=True)
+                    summary.add_field(
+                        name="Kategorie",
+                        value=(label or ticket.get("category_label") or ticket["category_key"]),
+                        inline=True)
                     summary.add_field(
                         name="Ersteller",
                         value=(opener.mention if opener else f"<@{ticket['opener_id']}>"), inline=True)
@@ -439,13 +500,16 @@ class KuhHilfe(commands.Cog):
             await self.store.set_panel(ctx.guild, channel.id, msg.id)
         await self._reply(ctx, "✅ Panel aktualisiert.")
 
-    @setup_group.command(name="ticketkategorie",
-                      description="Discord-Kategorie, unter der Ticket-Channels erstellt werden")
-    @app_commands.describe(kategorie="Channel-Kategorie für neue Ticket-Channels")
+    @setup_group.command(name="ticket-ablage",
+                      description="Discord-Kanalkategorie, UNTER der die Ticket-Channels einsortiert werden")
+    @app_commands.describe(ablage="Discord-Kanalkategorie (leer = ohne, Channels landen oben in der Liste)")
     async def set_ticket_category(self, ctx: commands.Context,
-                                  kategorie: discord.CategoryChannel) -> None:
-        await self.store.set_ticket_category(ctx.guild, kategorie.id)
-        await self._reply(ctx, f"✅ Neue Tickets werden unter **{kategorie.name}** erstellt.")
+                                  ablage: Optional[discord.CategoryChannel] = None) -> None:
+        await self.store.set_ticket_category(ctx.guild, ablage.id if ablage else None)
+        if ablage:
+            await self._reply(ctx, f"✅ Neue Ticket-Channels werden unter **{ablage.name}** einsortiert.")
+        else:
+            await self._reply(ctx, "✅ Ablage entfernt – neue Ticket-Channels landen ohne Kanalkategorie.")
 
     @setup_group.command(name="archiv",
                       description="Channel für Transcripts beim Schließen (ohne Angabe: deaktivieren)")
@@ -485,141 +549,198 @@ class KuhHilfe(commands.Cog):
 
         embed = discord.Embed(title="⚙️ KuhHilfe – Einstellungen", color=COLOR_INFO)
         embed.add_field(name="Panel-Channel", value=_ch(s.get("panel_channel_id")), inline=True)
-        embed.add_field(name="Ticket-Kategorie", value=_ch(s.get("ticket_category_id")), inline=True)
+        embed.add_field(name="Ticket-Ablage", value=_ch(s.get("ticket_category_id")), inline=True)
         embed.add_field(name="Archiv", value=_ch(s.get("transcript_channel_id")), inline=True)
         limit = s.get("max_open_per_user", DEFAULT_MAX_OPEN)
         embed.add_field(name="Limit/Nutzer", value=("unbegrenzt" if not limit else str(limit)), inline=True)
         embed.add_field(name="Löschzeit",
                         value=f"{round((s.get('delete_delay_seconds') or 0) / 60)} Min", inline=True)
-        embed.add_field(name="Kategorien", value=str(len(cats)), inline=True)
+        leaves = await self.store.iter_leaves(ctx.guild)
+        groups = await self.store.iter_groups(ctx.guild)
+        embed.add_field(name="Struktur",
+                        value=f"{len(groups)} Gruppe(n), {len(leaves)} Kategorie(n)", inline=True)
         if cats:
             lines = []
-            for cat in cats.values():
-                roles = len(cat.get("role_ids", []))
-                users = len(cat.get("user_ids", []))
-                fields = len(cat.get("fields", []))
-                lines.append(f"`{cat['key']}` · {cat['name']} – {roles} Rolle(n), "
-                             f"{users} User, {fields} Feld(er)")
-            embed.add_field(name="Details", value="\n".join(lines)[:1024], inline=False)
+            for key, node in cats.items():
+                if self.store.is_group(node):
+                    children = node.get("children") or {}
+                    lines.append(f"📦 `{key}` · {node['name']} – {len(children)} Unterkategorie(n)")
+                    for ck, child in children.items():
+                        lines.append(f"　└ `{key}/{ck}` · {child['name']} – "
+                                     f"{len(child.get('role_ids', []))}R/"
+                                     f"{len(child.get('user_ids', []))}U/"
+                                     f"{len(child.get('fields', []))}F")
+                else:
+                    lines.append(f"🏷️ `{key}` · {node['name']} – "
+                                 f"{len(node.get('role_ids', []))}R/"
+                                 f"{len(node.get('user_ids', []))}U/"
+                                 f"{len(node.get('fields', []))}F")
+            embed.add_field(name="Details (R=Rollen, U=User, F=Felder)",
+                            value="\n".join(lines)[:1024], inline=False)
         await self._reply(ctx, embed=embed)
 
-    # ── Kategorien ─────────────────────────────────────────────────────────────
-    @setup_group.command(name="kategorie-add", description="Legt eine neue Support-Kategorie an")
-    @app_commands.describe(name="Name der Kategorie", emoji="Optionales Emoji",
+    # ── Gruppen (Oberkategorien) ───────────────────────────────────────────────
+    @setup_group.command(name="gruppe-add",
+                      description="Legt eine Oberkategorie an (bündelt Unterkategorien, z. B. 'Fragen zu einem Spiel')")
+    @app_commands.describe(name="Name der Gruppe", emoji="Optionales Emoji",
                            beschreibung="Optionale Kurzbeschreibung")
-    async def cat_add(self, ctx: commands.Context, name: str,
-                      emoji: Optional[str] = None, beschreibung: Optional[str] = None) -> None:
-        cat = await self.store.add_category(ctx.guild, name, emoji, beschreibung)
-        if not cat:
-            await self._reply(ctx, "❌ Name ungültig oder eine Kategorie mit diesem Key existiert bereits.")
+    async def gruppe_add(self, ctx: commands.Context, name: str,
+                        emoji: Optional[str] = None, beschreibung: Optional[str] = None) -> None:
+        grp = await self.store.add_group(ctx.guild, name, emoji, beschreibung)
+        if not grp:
+            await self._reply(ctx, "❌ Name ungültig oder ein Key mit diesem Namen existiert bereits.")
             return
         await self._reply(
             ctx,
-            f"✅ Kategorie **{cat['name']}** (`{cat['key']}`) angelegt – mit den Standard-Feldern "
-            "*Betreff* & *Beschreibung*.\nWeise nun Rollen/User zu (`/kuhhilfe-setup rolle-add`) und "
-            "passe die Felder an (`/kuhhilfe-setup feld-add`).")
+            f"✅ Gruppe **{grp['name']}** (`{grp['key']}`) angelegt.\n"
+            f"Lege nun Unterkategorien an: `/kuhhilfe-setup kategorie-add name:… gruppe:{grp['key']}`.")
 
-    @setup_group.command(name="kategorie-remove", description="Löscht eine Support-Kategorie")
-    @app_commands.describe(key="Key der Kategorie")
-    async def cat_remove(self, ctx: commands.Context, key: str) -> None:
-        ok = await self.store.remove_category(ctx.guild, key)
-        await self._reply(ctx, f"✅ Kategorie `{key}` gelöscht." if ok
-                          else f"❌ Keine Kategorie mit Key `{key}`.")
+    @setup_group.command(name="gruppe-remove", description="Löscht eine Gruppe inklusive ihrer Unterkategorien")
+    @app_commands.describe(gruppe="Key der Gruppe")
+    async def gruppe_remove(self, ctx: commands.Context, gruppe: str) -> None:
+        node = await self.store.get_node(ctx.guild, gruppe)
+        if not node or not self.store.is_group(node):
+            await self._reply(ctx, f"❌ Keine Gruppe mit Key `{gruppe}`.")
+            return
+        await self.store.remove_node(ctx.guild, gruppe)
+        await self._reply(ctx, f"✅ Gruppe `{gruppe}` inkl. Unterkategorien gelöscht.")
 
-    @setup_group.command(name="kategorie-liste", description="Listet alle Kategorien")
+    # ── Kategorien (finale Ebene) ───────────────────────────────────────────────
+    @setup_group.command(name="kategorie-add",
+                      description="Legt eine finale Kategorie an – optional unter einer Gruppe")
+    @app_commands.describe(name="Name der Kategorie", gruppe="Key der Gruppe (leer = Direkt-Kategorie)",
+                           emoji="Optionales Emoji", beschreibung="Optionale Kurzbeschreibung")
+    async def cat_add(self, ctx: commands.Context, name: str, gruppe: Optional[str] = None,
+                      emoji: Optional[str] = None, beschreibung: Optional[str] = None) -> None:
+        leaf, result = await self.store.add_leaf(ctx.guild, name, gruppe, emoji, beschreibung)
+        if leaf is None:
+            await self._reply(ctx, f"❌ {result}")
+            return
+        await self._reply(
+            ctx,
+            f"✅ Kategorie **{leaf['name']}** (`{result}`) angelegt – mit den Standard-Feldern "
+            "*Betreff* & *Beschreibung*.\nWeise Zuständige zu "
+            f"(`/kuhhilfe-setup rolle-add kategorie:{result} …`) und passe die Felder an "
+            f"(`/kuhhilfe-setup feld-add kategorie:{result} …`).")
+
+    @setup_group.command(name="kategorie-remove", description="Löscht eine finale Kategorie")
+    @app_commands.describe(kategorie="Pfad der Kategorie (z. B. 'spiel-fragen/wow' oder 'server')")
+    async def cat_remove(self, ctx: commands.Context, kategorie: str) -> None:
+        node = await self.store.get_node(ctx.guild, kategorie)
+        if not node or self.store.is_group(node):
+            await self._reply(ctx, f"❌ Keine finale Kategorie unter `{kategorie}`. "
+                                   "(Gruppen löschst du mit `/kuhhilfe-setup gruppe-remove`.)")
+            return
+        await self.store.remove_node(ctx.guild, kategorie)
+        await self._reply(ctx, f"✅ Kategorie `{kategorie}` gelöscht.")
+
+    @setup_group.command(name="kategorie-liste", description="Zeigt den Kategorie-Baum")
     async def cat_list(self, ctx: commands.Context) -> None:
         cats = await self.store.list_categories(ctx.guild)
         if not cats:
             await self._reply(ctx, "ℹ️ Es sind noch keine Kategorien angelegt.")
             return
-        embed = discord.Embed(title="📂 Support-Kategorien", color=COLOR_INFO)
-        for cat in cats.values():
-            roles = " ".join(f"<@&{r}>" for r in cat.get("role_ids", [])) or "_keine_"
-            users = " ".join(f"<@{u}>" for u in cat.get("user_ids", [])) or "_keine_"
-            fields = ", ".join(f["label"] for f in cat.get("fields", [])) or "_keine_"
-            emoji = (cat.get("emoji") + " ") if cat.get("emoji") else ""
-            embed.add_field(
-                name=f"{emoji}{cat['name']}  ·  `{cat['key']}`",
-                value=f"Rollen: {roles}\nUser: {users}\nFelder: {fields}",
-                inline=False)
+
+        def _leaf_value(leaf: Dict[str, Any]) -> str:
+            roles = " ".join(f"<@&{r}>" for r in leaf.get("role_ids", [])) or "_keine_"
+            users = " ".join(f"<@{u}>" for u in leaf.get("user_ids", [])) or "_keine_"
+            fields = ", ".join(f["label"] for f in leaf.get("fields", [])) or "_keine_"
+            return f"Rollen: {roles}\nUser: {users}\nFelder: {fields}"
+
+        embed = discord.Embed(title="📂 Kategorie-Baum", color=COLOR_INFO)
+        for key, node in cats.items():
+            emoji = (node.get("emoji") + " ") if node.get("emoji") else ""
+            if self.store.is_group(node):
+                children = node.get("children") or {}
+                for ck, child in children.items():
+                    cem = (child.get("emoji") + " ") if child.get("emoji") else ""
+                    embed.add_field(
+                        name=f"{emoji}{node['name']} › {cem}{child['name']}  ·  `{key}/{ck}`",
+                        value=_leaf_value(child), inline=False)
+                if not children:
+                    embed.add_field(name=f"{emoji}{node['name']}  ·  `{key}` (Gruppe)",
+                                    value="_(noch keine Unterkategorien)_", inline=False)
+            else:
+                embed.add_field(name=f"{emoji}{node['name']}  ·  `{key}`",
+                                value=_leaf_value(node), inline=False)
         await self._reply(ctx, embed=embed)
 
-    # ── Rollen / User zuweisen ─────────────────────────────────────────────────
+    # ── Rollen / User zuweisen (an finalen Kategorien) ──────────────────────────
     @setup_group.command(name="rolle-add", description="Weist einer Kategorie eine zuständige Rolle zu")
-    @app_commands.describe(key="Key der Kategorie", rolle="Zuständige Rolle")
-    async def cat_rolle_add(self, ctx: commands.Context, key: str, rolle: discord.Role) -> None:
-        res = await self.store.toggle_role(ctx.guild, key, rolle.id, add=True)
+    @app_commands.describe(kategorie="Pfad der Kategorie (z. B. 'spiel-fragen/wow')", rolle="Zuständige Rolle")
+    async def cat_rolle_add(self, ctx: commands.Context, kategorie: str, rolle: discord.Role) -> None:
+        res = await self.store.toggle_role(ctx.guild, kategorie, rolle.id, add=True)
         if res is None:
-            await self._reply(ctx, f"❌ Keine Kategorie mit Key `{key}`.")
+            await self._reply(ctx, f"❌ Keine finale Kategorie unter `{kategorie}`.")
             return
-        await self._reply(ctx, f"✅ {rolle.mention} ist jetzt für `{key}` zuständig.")
+        await self._reply(ctx, f"✅ {rolle.mention} ist jetzt für `{kategorie}` zuständig.")
 
     @setup_group.command(name="rolle-remove", description="Entfernt eine Rolle aus einer Kategorie")
-    @app_commands.describe(key="Key der Kategorie", rolle="Rolle")
-    async def cat_rolle_remove(self, ctx: commands.Context, key: str, rolle: discord.Role) -> None:
-        res = await self.store.toggle_role(ctx.guild, key, rolle.id, add=False)
+    @app_commands.describe(kategorie="Pfad der Kategorie", rolle="Rolle")
+    async def cat_rolle_remove(self, ctx: commands.Context, kategorie: str, rolle: discord.Role) -> None:
+        res = await self.store.toggle_role(ctx.guild, kategorie, rolle.id, add=False)
         if res is None:
-            await self._reply(ctx, f"❌ Keine Kategorie mit Key `{key}`.")
+            await self._reply(ctx, f"❌ Keine finale Kategorie unter `{kategorie}`.")
             return
-        await self._reply(ctx, f"✅ {rolle.mention} ist nicht mehr für `{key}` zuständig.")
+        await self._reply(ctx, f"✅ {rolle.mention} ist nicht mehr für `{kategorie}` zuständig.")
 
     @setup_group.command(name="user-add", description="Weist einer Kategorie einen zuständigen User zu")
-    @app_commands.describe(key="Key der Kategorie", user="Zuständiger User")
-    async def cat_user_add(self, ctx: commands.Context, key: str, user: discord.Member) -> None:
-        res = await self.store.toggle_user(ctx.guild, key, user.id, add=True)
+    @app_commands.describe(kategorie="Pfad der Kategorie", user="Zuständiger User")
+    async def cat_user_add(self, ctx: commands.Context, kategorie: str, user: discord.Member) -> None:
+        res = await self.store.toggle_user(ctx.guild, kategorie, user.id, add=True)
         if res is None:
-            await self._reply(ctx, f"❌ Keine Kategorie mit Key `{key}`.")
+            await self._reply(ctx, f"❌ Keine finale Kategorie unter `{kategorie}`.")
             return
-        await self._reply(ctx, f"✅ {user.mention} ist jetzt für `{key}` zuständig.")
+        await self._reply(ctx, f"✅ {user.mention} ist jetzt für `{kategorie}` zuständig.")
 
     @setup_group.command(name="user-remove", description="Entfernt einen User aus einer Kategorie")
-    @app_commands.describe(key="Key der Kategorie", user="User")
-    async def cat_user_remove(self, ctx: commands.Context, key: str, user: discord.Member) -> None:
-        res = await self.store.toggle_user(ctx.guild, key, user.id, add=False)
+    @app_commands.describe(kategorie="Pfad der Kategorie", user="User")
+    async def cat_user_remove(self, ctx: commands.Context, kategorie: str, user: discord.Member) -> None:
+        res = await self.store.toggle_user(ctx.guild, kategorie, user.id, add=False)
         if res is None:
-            await self._reply(ctx, f"❌ Keine Kategorie mit Key `{key}`.")
+            await self._reply(ctx, f"❌ Keine finale Kategorie unter `{kategorie}`.")
             return
-        await self._reply(ctx, f"✅ {user.mention} ist nicht mehr für `{key}` zuständig.")
+        await self._reply(ctx, f"✅ {user.mention} ist nicht mehr für `{kategorie}` zuständig.")
 
     # ── Modal-Felder ───────────────────────────────────────────────────────────
     @setup_group.command(name="feld-add", description="Fügt einer Kategorie ein Wizard-Feld hinzu")
-    @app_commands.describe(key="Key der Kategorie", label="Beschriftung des Feldes",
+    @app_commands.describe(kategorie="Pfad der Kategorie (z. B. 'spiel-fragen/wow')", label="Beschriftung des Feldes",
                            stil="Kurz oder Lang", pflicht="Muss ausgefüllt werden?",
                            max_laenge="Maximale Zeichenzahl", platzhalter="Optionaler Platzhaltertext")
     @app_commands.choices(stil=[
         app_commands.Choice(name="Kurz (einzeilig)", value="short"),
         app_commands.Choice(name="Lang (mehrzeilig)", value="paragraph"),
     ])
-    async def feld_add(self, ctx: commands.Context, key: str, label: str,
+    async def feld_add(self, ctx: commands.Context, kategorie: str, label: str,
                        stil: str = "short", pflicht: bool = True,
                        max_laenge: int = 1000, platzhalter: Optional[str] = None) -> None:
-        err = await self.store.add_field(ctx.guild, key, label, stil, pflicht, platzhalter, max_laenge)
+        err = await self.store.add_field(ctx.guild, kategorie, label, stil, pflicht, platzhalter, max_laenge)
         if err:
             await self._reply(ctx, f"❌ {err}")
             return
-        await self._reply(ctx, f"✅ Feld **{label}** zu `{key}` hinzugefügt "
+        await self._reply(ctx, f"✅ Feld **{label}** zu `{kategorie}` hinzugefügt "
                                f"({FIELD_STYLE_LABELS.get(stil, stil)}, "
                                f"{'Pflicht' if pflicht else 'optional'}).")
 
     @setup_group.command(name="feld-remove", description="Entfernt ein Feld einer Kategorie (Position)")
-    @app_commands.describe(key="Key der Kategorie", position="Position laut /kuhhilfe-setup feld-liste (ab 1)")
-    async def feld_remove(self, ctx: commands.Context, key: str, position: int) -> None:
-        removed = await self.store.remove_field(ctx.guild, key, position)
+    @app_commands.describe(kategorie="Pfad der Kategorie", position="Position laut /kuhhilfe-setup feld-liste (ab 1)")
+    async def feld_remove(self, ctx: commands.Context, kategorie: str, position: int) -> None:
+        removed = await self.store.remove_field(ctx.guild, kategorie, position)
         if not removed:
-            await self._reply(ctx, f"❌ Kategorie `{key}` oder Position {position} nicht gefunden.")
+            await self._reply(ctx, f"❌ Kategorie `{kategorie}` oder Position {position} nicht gefunden.")
             return
-        await self._reply(ctx, f"✅ Feld **{removed['label']}** aus `{key}` entfernt.")
+        await self._reply(ctx, f"✅ Feld **{removed['label']}** aus `{kategorie}` entfernt.")
 
     @setup_group.command(name="feld-liste", description="Zeigt die Felder einer Kategorie")
-    @app_commands.describe(key="Key der Kategorie")
-    async def feld_liste(self, ctx: commands.Context, key: str) -> None:
-        cat = await self.store.get_category(ctx.guild, key)
-        if not cat:
-            await self._reply(ctx, f"❌ Keine Kategorie mit Key `{key}`.")
+    @app_commands.describe(kategorie="Pfad der Kategorie")
+    async def feld_liste(self, ctx: commands.Context, kategorie: str) -> None:
+        leaf, label = await self.store.resolve_leaf(ctx.guild, kategorie)
+        if leaf is None:
+            await self._reply(ctx, f"❌ Keine finale Kategorie unter `{kategorie}`.")
             return
-        fields = cat.get("fields", [])
+        fields = leaf.get("fields", [])
         if not fields:
-            await self._reply(ctx, f"ℹ️ Kategorie `{key}` hat noch keine Felder.")
+            await self._reply(ctx, f"ℹ️ Kategorie `{kategorie}` hat noch keine Felder.")
             return
         lines = []
         for i, f in enumerate(fields, start=1):
@@ -627,7 +748,7 @@ class KuhHilfe(commands.Cog):
                 f"**{i}.** {f['label']} · {FIELD_STYLE_LABELS.get(f.get('style'), f.get('style'))} · "
                 f"{'Pflicht' if f.get('required') else 'optional'} · max {f.get('max_length')}")
         embed = discord.Embed(
-            title=f"📝 Felder · {cat['name']}",
+            title=f"📝 Felder · {label}",
             description="\n".join(lines),
             color=COLOR_INFO)
         embed.set_footer(text=f"{len(fields)}/{MAX_FIELDS} Feldern belegt")

@@ -77,3 +77,10 @@ DEFAULT_DELETE_DELAY  = 300    # Sekunden bis zum Löschen nach dem Schließen (
 
 # Länge/Validierung für Kategorie-Keys
 KEY_MAX_LENGTH = 32
+
+# Trennzeichen für Pfade "gruppe/kategorie" (darf nicht im Key vorkommen)
+CATEGORY_PATH_SEP = "/"
+
+# Knoten-Typen im Kategorie-Baum
+KIND_GROUP = "group"   # Oberkategorie mit Unterkategorien
+KIND_LEAF  = "leaf"    # finale Kategorie (trägt Rollen/User/Felder)

@@ -15,6 +15,7 @@ from .constants import (
     PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM,
     COLOR_PANEL, COLOR_TICKET, COLOR_PENDING, COLOR_CLOSED,
     STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STATUS_LABELS,
+    KIND_GROUP,
 )
 
 
@@ -43,10 +44,18 @@ def build_panel_embed(guild: discord.Guild, categories: Dict[str, Dict[str, Any]
     )
     if categories:
         lines = []
-        for cat in categories.values():
-            emoji = (cat.get("emoji") + " ") if cat.get("emoji") else ""
-            desc = f" – {cat['description']}" if cat.get("description") else ""
-            lines.append(f"{emoji}**{cat['name']}**{desc}")
+        for node in categories.values():
+            emoji = (node.get("emoji") + " ") if node.get("emoji") else ""
+            desc = f" – {node['description']}" if node.get("description") else ""
+            lines.append(f"{emoji}**{node['name']}**{desc}")
+            if node.get("kind") == KIND_GROUP:
+                children = node.get("children") or {}
+                if children:
+                    sub = []
+                    for child in children.values():
+                        cem = (child.get("emoji") + " ") if child.get("emoji") else ""
+                        sub.append(f"{cem}{child['name']}")
+                    lines.append("　└ " + " · ".join(sub))
         embed.add_field(name="Kategorien", value="\n".join(lines)[:1024], inline=False)
     if guild.icon:
         embed.set_thumbnail(url=guild.icon.url)
@@ -72,10 +81,12 @@ def build_panel_view(disabled: bool = False) -> discord.ui.View:
 # ─────────────────────────────────────────────────────────────────────────────
 def build_ticket_embed(ticket: Dict[str, Any], category: Dict[str, Any],
                        opener: Optional[discord.abc.User],
-                       guild: discord.Guild) -> discord.Embed:
+                       guild: discord.Guild,
+                       label: Optional[str] = None) -> discord.Embed:
     emoji = (category.get("emoji") + " ") if category.get("emoji") else ""
+    title = label or ticket.get("category_label") or category.get("name", ticket["category_key"])
     embed = discord.Embed(
-        title=f"{emoji}{category.get('name', ticket['category_key'])}",
+        title=f"{emoji}{title}",
         color=_status_color(ticket["status"]),
         timestamp=discord.utils.utcnow(),
     )
