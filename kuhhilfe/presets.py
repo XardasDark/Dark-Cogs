@@ -87,7 +87,7 @@ DEFAULT_PRESETS: List[Dict[str, Any]] = [
     },
     {
         "type": "group", "name": "Fragen zu einem Spiel", "emoji": "🎮",
-        "description": "Spielbezogene Anliegen – wähle anschließend das passende Spiel.",
+        "description": "Spielbezogene Anliegen - wähle anschließend das passende Spiel.",
         "children": [
             {
                 "name": "WoW", "emoji": "⚔️",

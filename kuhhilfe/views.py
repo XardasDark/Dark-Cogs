@@ -16,7 +16,6 @@ from .constants import (
     COLOR_PANEL, COLOR_TICKET, COLOR_PENDING, COLOR_CLOSED, COLOR_INFO,
     STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STATUS_LABELS,
     STAGE_IN_PROGRESS, STAGE_WAITING, STAGE_LABELS,
-    KIND_GROUP,
 )
 
 
@@ -67,20 +66,11 @@ def build_panel_embed(guild: discord.Guild, categories: Dict[str, Dict[str, Any]
         lines = []
         for node in categories.values():
             emoji = (node.get("emoji") + " ") if node.get("emoji") else ""
-            desc = f" – {node['description']}" if node.get("description") else ""
+            desc = f" - {node['description']}" if node.get("description") else ""
             lines.append(f"{emoji}**{node['name']}**{desc}")
-            if node.get("kind") == KIND_GROUP:
-                children = node.get("children") or {}
-                if children:
-                    sub = []
-                    for child in children.values():
-                        cem = (child.get("emoji") + " ") if child.get("emoji") else ""
-                        sub.append(f"{cem}{child['name']}")
-                    lines.append("　└ " + " · ".join(sub))
         embed.add_field(name="Kategorien", value="\n".join(lines)[:1024], inline=False)
     if guild.icon:
         embed.set_thumbnail(url=guild.icon.url)
-    embed.set_footer(text="Dein Anliegen landet in einem privaten Channel.")
     return embed
 
 
