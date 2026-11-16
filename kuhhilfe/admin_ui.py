@@ -125,7 +125,8 @@ def _settings_summary(guild: discord.Guild, s: Dict[str, Any]) -> str:
     dm_txt = "an" if s.get("dm_transcript") else "aus"
     fb_txt = "an" if s.get("feedback_enabled") else "aus"
     return (f"Panel: {ch(s.get('panel_channel_id'))} · Ablage: {ch(s.get('ticket_category_id'))} · "
-            f"Archiv: {ch(s.get('transcript_channel_id'))} · Protokoll: {ch(s.get('modlog_channel_id'))}\n"
+            f"Archiv: {ch(s.get('transcript_channel_id'))} · Protokoll: {ch(s.get('modlog_channel_id'))} · "
+            f"Dashboard: {ch(s.get('dashboard_channel_id'))}\n"
             f"Limit/Nutzer: {'unbegrenzt' if not limit else limit} · Cooldown: {cool_txt} · "
             f"Löschzeit: {delay_txt} · Bestätigungen: {'dauerhaft' if not cd else str(cd) + ' Sek.'} · "
             f"Auto-Schließen: {inact_txt} · Gesperrt: {bl}\n"
@@ -180,6 +181,11 @@ class RootView(_BaseView):
     @discord.ui.button(label="Panel", emoji="📣", style=discord.ButtonStyle.primary, row=1)
     async def panel_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         embed, view = await panel_screen(self.cog, self.guild, self.author_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Dashboard", emoji="📊", style=discord.ButtonStyle.secondary, row=2)
+    async def dashboard_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        embed, view = await dashboard_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Vorlage", emoji="📥", style=discord.ButtonStyle.secondary, row=2)
@@ -693,6 +699,55 @@ class PanelView(_BaseView):
         embed, view = await panel_screen(self.cog, self.guild, self.author_id)
         prefix = "✅ Panel aktualisiert.\n\n" if ok else "⚠️ Es ist noch kein Panel gesetzt.\n\n"
         embed.description = prefix + embed.description
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Zurück", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await _reopen_root(self, interaction)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# LIVE-DASHBOARD-SEITE
+# ═════════════════════════════════════════════════════════════════════════════
+async def dashboard_screen(cog, guild, author_id
+                           ) -> Tuple[discord.Embed, discord.ui.View]:
+    s = await cog.store.get_settings(guild)
+    cur = guild.get_channel(s.get("dashboard_channel_id")) if s.get("dashboard_channel_id") else None
+    embed = discord.Embed(
+        title="📊 Live-Dashboard",
+        description=("Eine **selbst-aktualisierende** Übersicht (offene Tickets + Statistik) in einem "
+                     "Channel – ideal fürs Team, ohne Befehle tippen zu müssen.\n"
+                     "Wähle den Channel: Die Übersicht wird sofort gepostet und automatisch aktualisiert "
+                     "(bei Ereignissen und alle 30 Sek.).\n\n"
+                     f"Aktuell: {cur.mention if cur else '_nicht aktiv_'}"),
+        color=COLOR_PANEL)
+    return embed, DashboardView(cog, guild, author_id, cur)
+
+
+class DashboardView(_BaseView):
+    def __init__(self, cog, guild, author_id, cur: Optional[discord.abc.GuildChannel]):
+        super().__init__(cog, guild, author_id)
+        ch_sel = discord.ui.ChannelSelect(
+            placeholder="📊 Channel für die Live-Übersicht wählen (postet sofort) …",
+            channel_types=[discord.ChannelType.text], min_values=1, max_values=1,
+            default_values=[cur] if cur else [], row=0)
+        ch_sel.callback = self._on_channel
+        self.add_item(ch_sel)
+
+    async def _on_channel(self, interaction: discord.Interaction) -> None:
+        channel = interaction.guild.get_channel(int(interaction.data["values"][0]))
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message("❌ Ungültiger Channel.", ephemeral=True)
+            return
+        await self.cog.setup_dashboard(self.guild, channel)
+        embed, view = await dashboard_screen(self.cog, self.guild, self.author_id)
+        embed.description = f"✅ Live-Übersicht in {channel.mention} aktiv.\n\n" + embed.description
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Deaktivieren", emoji="🚫", style=discord.ButtonStyle.secondary, row=1)
+    async def disable(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self.cog.setup_dashboard(self.guild, None)
+        embed, view = await dashboard_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Zurück", emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)

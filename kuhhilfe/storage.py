@@ -79,6 +79,11 @@ class KuhHilfeStore:
     async def set_modlog_channel(self, guild: discord.Guild, channel_id: Optional[int]) -> None:
         await self.config.guild(guild).modlog_channel_id.set(channel_id)
 
+    async def set_dashboard(self, guild: discord.Guild, channel_id: Optional[int],
+                           message_id: Optional[int]) -> None:
+        await self.config.guild(guild).dashboard_channel_id.set(channel_id)
+        await self.config.guild(guild).dashboard_message_id.set(message_id)
+
     async def set_inactivity_hours(self, guild: discord.Guild, hours: int) -> None:
         await self.config.guild(guild).inactivity_hours.set(max(0, hours))
 
@@ -100,6 +105,60 @@ class KuhHilfeStore:
 
     async def get_feedback(self, guild: discord.Guild) -> List[Dict[str, Any]]:
         return list(await self.config.guild(guild).feedback())
+
+    # ── Statistik ─────────────────────────────────────────────────────────────
+    async def get_stats(self, guild: discord.Guild) -> Dict[str, Any]:
+        return await self.config.guild(guild).stats()
+
+    async def bump_opened(self, guild: discord.Guild, path: str) -> None:
+        async with self.config.guild(guild).stats() as st:
+            st["opened"] = st.get("opened", 0) + 1
+            bc = st.setdefault("by_category", {})
+            cat = bc.setdefault(path, {"opened": 0, "closed": 0})
+            cat["opened"] = cat.get("opened", 0) + 1
+
+    async def bump_closed(self, guild: discord.Guild, path: str) -> None:
+        async with self.config.guild(guild).stats() as st:
+            st["closed"] = st.get("closed", 0) + 1
+            bc = st.setdefault("by_category", {})
+            cat = bc.setdefault(path, {"opened": 0, "closed": 0})
+            cat["closed"] = cat.get("closed", 0) + 1
+
+    async def bump_claim(self, guild: discord.Guild, user_id: int) -> None:
+        async with self.config.guild(guild).stats() as st:
+            claims = st.setdefault("claims", {})
+            claims[str(user_id)] = claims.get(str(user_id), 0) + 1
+
+    # ── Export / Import ───────────────────────────────────────────────────────
+    EXPORT_SETTING_KEYS = [
+        "max_open_per_user", "cooldown_seconds", "delete_delay_seconds",
+        "confirm_delete_seconds", "inactivity_hours", "inactivity_warn_hours",
+        "dm_transcript", "feedback_enabled",
+    ]
+
+    async def export_data(self, guild: discord.Guild) -> Dict[str, Any]:
+        """Kategorien + übertragbare Einstellungen (ohne Channel-IDs/Laufzeitdaten)."""
+        s = await self.config.guild(guild).all()
+        return {
+            "version": 1,
+            "categories": s.get("categories", {}),
+            "settings": {k: s.get(k) for k in self.EXPORT_SETTING_KEYS},
+        }
+
+    async def import_data(self, guild: discord.Guild, data: Dict[str, Any]) -> Dict[str, int]:
+        """Übernimmt Kategorien (ersetzt vorhandene) + Einstellungen. Gibt Statistik zurück."""
+        cats = data.get("categories")
+        n_cats = 0
+        if isinstance(cats, dict):
+            await self.config.guild(guild).categories.set(cats)
+            n_cats = len(cats)
+        settings = data.get("settings") or {}
+        n_set = 0
+        for key in self.EXPORT_SETTING_KEYS:
+            if key in settings:
+                await self.config.guild(guild).set_raw(key, value=settings[key])
+                n_set += 1
+        return {"categories": n_cats, "settings": n_set}
 
     # ── Blacklist (Support-Sperre) ────────────────────────────────────────────
     async def get_blacklist(self, guild: discord.Guild) -> List[int]:

@@ -43,6 +43,11 @@ def _status_label(status: str, stage=None) -> str:
     return STATUS_LABELS[STATUS_OPEN]
 
 
+def status_label(status: str, stage=None) -> str:
+    """Öffentlicher Alias (für Übersichten/Dashboards)."""
+    return _status_label(status, stage)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SUPPORT-PANEL (öffentliche Nachricht mit persistentem Button)
 # ─────────────────────────────────────────────────────────────────────────────
