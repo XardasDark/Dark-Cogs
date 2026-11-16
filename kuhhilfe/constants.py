@@ -29,6 +29,7 @@ COLOR_PENDING = 0xF1C40F   # Gelb – Schließung angefragt
 COLOR_CLOSED  = 0x95A5A6   # Grau – geschlossen
 COLOR_INFO    = 0x3498DB
 COLOR_ERROR   = 0xE74C3C
+COLOR_NOTICE  = 0xFFC0CB   # einheitliche Farbe für Bot-Hinweise im Ticket-Channel
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Ticket-IDs (verschleiern die laufende Anzahl → Buchstaben + Zahlen, zufällig)

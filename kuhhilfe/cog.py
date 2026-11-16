@@ -34,7 +34,7 @@ from .wizard import WizardSelectView, make_modal
 from .util import resolve_emoji
 from .constants import (
     PANEL_OPEN, TICKET_CLAIM, TICKET_CLOSE, TICKET_CONFIRM, TICKET_REOPEN, TICKET_MANAGE,
-    COLOR_INFO, COLOR_ERROR, COLOR_CLOSED, COLOR_TICKET, COLOR_PENDING,
+    COLOR_INFO, COLOR_ERROR, COLOR_CLOSED, COLOR_TICKET, COLOR_PENDING, COLOR_NOTICE,
     STATUS_OPEN, STATUS_CLOSE_REQUESTED, STATUS_CLOSED, STAGE_LABELS, STAGE_IN_PROGRESS,
     DEFAULT_MAX_OPEN, DEFAULT_DELETE_DELAY, DEFAULT_CONFIRM_DELETE,
     FIELD_STYLE_LABELS, MAX_FIELDS, CATEGORY_PATH_SEP,
@@ -132,6 +132,20 @@ class KuhHilfe(commands.Cog):
 
         self.bot.loop.create_task(_run())
 
+    async def _notice(self, channel: discord.abc.Messageable, description: str,
+                      ping: Optional[str] = None) -> None:
+        """Einheitlicher Bot-Hinweis im Ticket-Channel (Embed mit fester Farbe).
+
+        Mit `ping` wird zusätzlich ein Benachrichtigungs-Text (Mentions) gesendet.
+        """
+        kwargs: Dict[str, Any] = {
+            "embed": discord.Embed(description=description, color=COLOR_NOTICE)}
+        if ping:
+            kwargs["content"] = ping
+            kwargs["allowed_mentions"] = discord.AllowedMentions(
+                roles=True, users=True, everyone=False)
+        await channel.send(**kwargs)
+
     async def _modlog(self, guild: discord.Guild, description: str,
                       color: int = COLOR_INFO) -> None:
         """Postet ein Ereignis in den konfigurierten Protokoll-Channel (falls gesetzt)."""
@@ -213,7 +227,7 @@ class KuhHilfe(commands.Cog):
         open_items.sort(key=lambda x: x[0].get("created_at", 0))
 
         # 1) Statistik
-        stat = discord.Embed(title="📊 Support – Überblick", color=COLOR_INFO,
+        stat = discord.Embed(title="📊 Support - Überblick", color=COLOR_INFO,
                              timestamp=discord.utils.utcnow())
         stat.add_field(name="Aktuell offen", value=str(len(open_items)), inline=True)
         stat.add_field(name="Erstellt (gesamt)", value=str(st.get("opened", 0)), inline=True)
@@ -366,7 +380,7 @@ class KuhHilfe(commands.Cog):
         if ticket.get("status") != STATUS_CLOSED:
             await self._modlog(
                 guild,
-                f"🗑️ Ticket `{ticket['id']}` entfernt – Channel **#{channel.name}** wurde gelöscht.",
+                f"🗑️ Ticket `{ticket['id']}` entfernt und Channel **#{channel.name}** wurde gelöscht.",
                 color=COLOR_CLOSED)
         await self._refresh_dashboard(guild)
 
@@ -404,10 +418,13 @@ class KuhHilfe(commands.Cog):
         if not await self._can_open(interaction):
             return
 
+        settings = await self.store.get_settings(guild)
+        cd = settings.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE)
+
         top = list(cats.items())
         if len(top) == 1:
             key, node = top[0]
-            await self._descend_single(interaction, key, node)
+            await self._descend_single(interaction, key, node, cd)
         else:
             entries = [(key, node) for key, node in top]
             view = WizardSelectView(self, entries, interaction.user.id,
@@ -417,9 +434,10 @@ class KuhHilfe(commands.Cog):
                     description="Wähle die passende Kategorie für dein Anliegen:",
                     color=COLOR_INFO),
                 view=view, ephemeral=True)
+            self._autodelete(interaction, cd)
 
     async def _descend_single(self, interaction: discord.Interaction,
-                              path: str, node: Dict[str, Any]) -> None:
+                              path: str, node: Dict[str, Any], cd: int = 0) -> None:
         """Nur eine oberste Ebene vorhanden → direkt passend weiterleiten."""
         if not self.store.is_group(node):
             await interaction.response.send_modal(make_modal(self, node, path))
@@ -434,6 +452,7 @@ class KuhHilfe(commands.Cog):
                     description="⚠️ Der Support ist noch nicht vollständig eingerichtet.",
                     color=COLOR_ERROR),
                 ephemeral=True)
+            self._autodelete(interaction, cd)
             return
         if len(children) == 1:
             child_path, leaf = children[0]
@@ -444,9 +463,10 @@ class KuhHilfe(commands.Cog):
         emoji = (node.get("emoji") + " ") if node.get("emoji") else ""
         await interaction.response.send_message(
             embed=discord.Embed(
-                description=f"{emoji}**{node['name']}** – wähle die passende Unterkategorie:",
+                description=f"{emoji}**{node['name']}** - wähle die passende Unterkategorie:",
                 color=COLOR_INFO),
             view=view, ephemeral=True)
+        self._autodelete(interaction, cd)
 
     @staticmethod
     def _fmt_duration(seconds: int) -> str:
@@ -547,8 +567,7 @@ class KuhHilfe(commands.Cog):
 
         confirm = await interaction.followup.send(
             embed=discord.Embed(
-                description=f"✅ Dein Ticket wurde erstellt: {channel.mention}\n"
-                            f"Ticket-ID: `{ticket_id}`",
+                description=f"✅ Dein Ticket wurde erstellt: {channel.mention}",
                 color=COLOR_INFO),
             ephemeral=True, wait=True)
         self._autodelete(interaction, settings.get("confirm_delete_seconds", DEFAULT_CONFIRM_DELETE),
@@ -603,7 +622,8 @@ class KuhHilfe(commands.Cog):
         embed = views.build_ticket_embed(ticket, leaf, opener, interaction.guild, label)
         await interaction.response.edit_message(
             embed=embed, view=views.build_ticket_controls(ticket["status"]))
-        await interaction.channel.send(f"🙋 {interaction.user.mention} kümmert sich jetzt um dieses Ticket.")
+        await self._notice(interaction.channel,
+                           f"🙋 {interaction.user.mention} kümmert sich jetzt um dieses Ticket.")
         await self.store.bump_claim(interaction.guild, interaction.user.id)
         await self._modlog(
             interaction.guild,
@@ -629,14 +649,11 @@ class KuhHilfe(commands.Cog):
         await interaction.response.edit_message(
             embed=embed, view=views.build_ticket_controls(STATUS_CLOSE_REQUESTED))
         ping = views.build_ping_content(leaf, interaction.user)
-        await interaction.channel.send(
-            content=ping,
-            embed=discord.Embed(
-                description=(f"🔒 {interaction.user.mention} möchte dieses Ticket schließen.\n"
-                             "Ein Support-Mitglied muss die Schließung über **Schließen bestätigen** freigeben."),
-                color=COLOR_INFO),
-            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
-        )
+        await self._notice(
+            interaction.channel,
+            f"🔒 {interaction.user.mention} möchte dieses Ticket schließen.\n"
+            "Ein Support-Mitglied muss die Schließung über **Schließen bestätigen** freigeben.",
+            ping=ping)
         await self._modlog(
             interaction.guild,
             f"🟡 Ticket `{ticket['id']}`: Schließung angefragt von {interaction.user.mention}.",
@@ -672,9 +689,9 @@ class KuhHilfe(commands.Cog):
         embed = views.build_ticket_embed(ticket, leaf, opener, interaction.guild, label)
         await interaction.response.edit_message(
             embed=embed, view=views.build_ticket_controls(STATUS_OPEN))
-        await interaction.channel.send(
-            f"♻️ {interaction.user.mention} hat dieses Ticket wieder geöffnet – "
-            "die geplante Löschung wurde abgebrochen.")
+        await self._notice(
+            interaction.channel,
+            f"♻️ {interaction.user.mention} hat dieses Ticket wieder geöffnet.")
         await self._modlog(
             interaction.guild,
             f"♻️ Ticket `{ticket['id']}` wieder geöffnet von {interaction.user.mention}.",
@@ -739,8 +756,8 @@ class KuhHilfe(commands.Cog):
         ticket = await self.store.update_ticket(interaction.guild, interaction.channel_id, stage=stage)
         channel = interaction.channel
         await self._refresh_ticket_message(interaction.guild, channel, ticket)
-        label = STAGE_LABELS.get(stage, "Offen")
-        await channel.send(f"🔧 {interaction.user.mention} setzt den Status auf **{label}**.")
+        label = STAGE_LABELS.get(stage, "🟢 Offen")
+        await self._notice(channel, f"🔧 Status: **{label}**")
         await self._modlog(interaction.guild,
                            f"🔧 Ticket `{ticket['id']}`: Status → {label} (von {interaction.user.mention}).",
                            color=COLOR_INFO)
@@ -772,8 +789,10 @@ class KuhHilfe(commands.Cog):
         await self._refresh_ticket_message(interaction.guild, channel, ticket)
         if newly:
             mentions = " ".join(m.mention for m in newly)
-            await channel.send(f"➕ {mentions} wurde(n) von {interaction.user.mention} zum Ticket hinzugefügt.",
-                               allowed_mentions=discord.AllowedMentions(users=True))
+            await self._notice(
+                channel,
+                f"➕ {interaction.user.mention} hat {mentions} zum Ticket hinzugefügt.",
+                ping=mentions)
             await self._modlog(interaction.guild,
                                f"➕ Ticket `{ticket['id']}`: {mentions} hinzugefügt (von {interaction.user.mention}).",
                                color=COLOR_INFO)
@@ -796,7 +815,8 @@ class KuhHilfe(commands.Cog):
         ticket = await self.store.update_ticket(interaction.guild, interaction.channel_id,
                                                 added_members=added)
         await self._refresh_ticket_message(interaction.guild, channel, ticket)
-        await channel.send(f"➖ <@{member_id}> wurde aus dem Ticket entfernt.")
+        await self._notice(
+            channel, f"➖ {interaction.user.mention} hat <@{member_id}> aus dem Ticket entfernt.")
         await self._modlog(interaction.guild,
                            f"➖ Ticket `{ticket['id']}`: <@{member_id}> entfernt (von {interaction.user.mention}).",
                            color=COLOR_INFO)
@@ -825,13 +845,9 @@ class KuhHilfe(commands.Cog):
         ticket = await self.store.update_ticket(interaction.guild, interaction.channel_id,
                                                 category_key=new_path, category_label=new_label)
         await self._refresh_ticket_message(guild, channel, ticket)
-        ping = views.build_ping_content(new_leaf, opener) if opener else ""
-        await channel.send(
-            content=ping or None,
-            embed=discord.Embed(
-                description=f"🔀 Ticket umgeleitet nach **{new_label}** (von {interaction.user.mention}).",
-                color=COLOR_INFO),
-            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False))
+        await self._notice(
+            channel,
+            f"🔀 Ticket umgeleitet nach **{new_label}** (von {interaction.user.mention}).")
         await self._modlog(guild,
                            f"🔀 Ticket `{ticket['id']}` umgeleitet nach **{new_label}** "
                            f"(von {interaction.user.mention}).", color=COLOR_INFO)
@@ -904,19 +920,17 @@ class KuhHilfe(commands.Cog):
         settings = await self.store.get_settings(guild)
         delay = settings.get("delete_delay_seconds", DEFAULT_DELETE_DELAY)
         if delay is None:
-            await channel.send(embed=discord.Embed(
-                description=(f"✅ Ticket {closer_text} geschlossen. "
-                             "Dieser Channel bleibt bestehen (keine automatische Löschung) – "
-                             "mit **♻️ Wieder öffnen** reaktivieren oder manuell löschen."),
-                color=COLOR_CLOSED))
+            await self._notice(
+                channel,
+                f"✅ Ticket {closer_text} geschlossen.")
         elif delay <= 0:
             await self._delete_ticket_channel(guild, channel, ticket)
         else:
             minutes = max(1, round(delay / 60))
-            await channel.send(embed=discord.Embed(
-                description=(f"✅ Ticket {closer_text} geschlossen. "
-                             f"Dieser Channel wird in **{minutes} Min** automatisch gelöscht."),
-                color=COLOR_CLOSED))
+            await self._notice(
+                channel,
+                f"✅ Ticket {closer_text} geschlossen. "
+                f"Dieser Channel wird in **{minutes} Min** automatisch gelöscht.")
         await self._refresh_dashboard(guild)
 
     async def _maybe_feedback(self, guild: discord.Guild, ticket: Dict[str, Any]) -> None:
@@ -1079,14 +1093,12 @@ class KuhHilfe(commands.Cog):
                     opener = guild.get_member(ticket["opener_id"])
                     mention = opener.mention if opener else f"<@{ticket['opener_id']}>"
                     try:
-                        await channel.send(
-                            content=mention,
-                            embed=discord.Embed(
-                                description=(f"⏰ Hier war länger nichts los. Dieses Ticket wird in "
-                                             f"ca. **{remaining_h} Std.** automatisch geschlossen, wenn keine "
-                                             "Antwort kommt. Schreib einfach etwas, um es offen zu halten."),
-                                color=COLOR_PENDING),
-                            allowed_mentions=discord.AllowedMentions(users=True))
+                        await self._notice(
+                            channel,
+                            f"⏰ Hier war länger nichts los. Dieses Ticket wird in ca. "
+                            f"**{remaining_h} Std.** automatisch geschlossen, wenn keine Antwort kommt. "
+                            "Schreib einfach etwas, um es offen zu halten.",
+                            ping=mention)
                         await self.store.update_ticket(guild, channel.id, inactivity_warned=True)
                     except discord.DiscordException:
                         log.debug("Inaktivitäts-Warnung fehlgeschlagen", exc_info=True)
@@ -1112,7 +1124,7 @@ class KuhHilfe(commands.Cog):
     # ═════════════════════════════════════════════════════════════════════════
     # ADMIN-BEFEHLE
     # ═════════════════════════════════════════════════════════════════════════
-    @commands.hybrid_group(name="kuhhilfe-setup", description="KuhHilfe – Support-System einrichten (nur Admins)")
+    @commands.hybrid_group(name="kuhhilfe-setup", description="KuhHilfe - Support-System einrichten (nur Admins)")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     @app_commands.default_permissions(manage_guild=True)
@@ -1212,7 +1224,7 @@ class KuhHilfe(commands.Cog):
         if ablage:
             await self._reply(ctx, f"✅ Neue Ticket-Channels werden unter **{ablage.name}** einsortiert.")
         else:
-            await self._reply(ctx, "✅ Ablage entfernt – neue Ticket-Channels landen ohne Kanalkategorie.")
+            await self._reply(ctx, "✅ Ablage entfernt, neue Ticket-Channels landen ohne Kanalkategorie.")
 
     @setup_group.command(name="archiv",
                       description="Channel für Transcripts beim Schließen (ohne Angabe: deaktivieren)")
@@ -1245,7 +1257,7 @@ class KuhHilfe(commands.Cog):
 
     @setup_group.command(name="feedback",
                       description="Ersteller nach dem Schließen per DM um eine Bewertung bitten")
-    @app_commands.describe(aktiv="An = 1–5-Sterne-Abfrage per DM nach dem Schließen")
+    @app_commands.describe(aktiv="An = 1-5-Sterne-Abfrage per DM nach dem Schließen")
     async def set_feedback(self, ctx: commands.Context, aktiv: bool) -> None:
         await self.store.set_feedback_enabled(ctx.guild, aktiv)
         await self._reply(ctx, f"✅ Feedback-Abfrage nach dem Schließen ist jetzt **{'an' if aktiv else 'aus'}**.")
@@ -1258,7 +1270,7 @@ class KuhHilfe(commands.Cog):
         all_t = await self.store.all_tickets(ctx.guild)
         open_now = sum(1 for t in all_t.values() if t.get("status") != STATUS_CLOSED)
 
-        embed = discord.Embed(title="📊 KuhHilfe – Statistik", color=COLOR_INFO)
+        embed = discord.Embed(title="📊 KuhHilfe - Statistik", color=COLOR_INFO)
         embed.add_field(name="Erstellt", value=str(st.get("opened", 0)), inline=True)
         embed.add_field(name="Geschlossen", value=str(st.get("closed", 0)), inline=True)
         embed.add_field(name="Aktuell offen", value=str(open_now), inline=True)
@@ -1332,7 +1344,7 @@ class KuhHilfe(commands.Cog):
             await self._reply(ctx, "❌ Datei konnte nicht gelesen oder nicht als JSON geparst werden.")
             return
         if not isinstance(data, dict) or "categories" not in data:
-            await self._reply(ctx, "❌ Ungültiges Format – das sieht nicht nach einem KuhHilfe-Export aus.")
+            await self._reply(ctx, "❌ Ungültiges Format! Das sieht nicht nach einem KuhHilfe-Export aus.")
             return
         summary = await self.store.import_data(ctx.guild, data)
         await self.refresh_panel(ctx.guild)
@@ -1340,7 +1352,7 @@ class KuhHilfe(commands.Cog):
             ctx,
             f"✅ Import übernommen: **{summary['categories']}** Kategorie-Einträge (oberste Ebene) und "
             f"**{summary['settings']}** Einstellungen.\n"
-            "⚠️ Rollen/User/Channels sind serverspezifisch – ggf. über `/kuhhilfe-setup verwalten` neu zuweisen.")
+            "⚠️ Rollen/User/Channels sind serverspezifisch. ggf. über `/kuhhilfe-setup verwalten` neu zuweisen.")
 
     @setup_group.command(name="limit",
                       description="Max. gleichzeitig offene Tickets pro Nutzer (0 = unbegrenzt)")
@@ -1431,7 +1443,7 @@ class KuhHilfe(commands.Cog):
             ch = ctx.guild.get_channel(cid) if cid else None
             return ch.mention if ch else "_(nicht gesetzt)_"
 
-        embed = discord.Embed(title="⚙️ KuhHilfe – Einstellungen", color=COLOR_INFO)
+        embed = discord.Embed(title="⚙️ KuhHilfe - Einstellungen", color=COLOR_INFO)
         embed.add_field(name="Panel-Channel", value=_ch(s.get("panel_channel_id")), inline=True)
         embed.add_field(name="Ticket-Ablage", value=_ch(s.get("ticket_category_id")), inline=True)
         embed.add_field(name="Archiv", value=_ch(s.get("transcript_channel_id")), inline=True)
@@ -1466,14 +1478,14 @@ class KuhHilfe(commands.Cog):
             for key, node in cats.items():
                 if self.store.is_group(node):
                     children = node.get("children") or {}
-                    lines.append(f"📦 `{key}` · {node['name']} – {len(children)} Unterkategorie(n)")
+                    lines.append(f"📦 `{key}` · {node['name']} - {len(children)} Unterkategorie(n)")
                     for ck, child in children.items():
-                        lines.append(f"　└ `{key}/{ck}` · {child['name']} – "
+                        lines.append(f"　└ `{key}/{ck}` · {child['name']} - "
                                      f"{len(child.get('role_ids', []))}R/"
                                      f"{len(child.get('user_ids', []))}U/"
                                      f"{len(child.get('fields', []))}F")
                 else:
-                    lines.append(f"🏷️ `{key}` · {node['name']} – "
+                    lines.append(f"🏷️ `{key}` · {node['name']} - "
                                  f"{len(node.get('role_ids', []))}R/"
                                  f"{len(node.get('user_ids', []))}U/"
                                  f"{len(node.get('fields', []))}F")
@@ -1488,14 +1500,14 @@ class KuhHilfe(commands.Cog):
         summary = await presets.apply_presets(self.store, ctx.guild)
         await self.refresh_panel(ctx.guild)
         if not summary["groups"] and not summary["categories"]:
-            await self._reply(ctx, "ℹ️ Alle Standard-Einträge sind bereits vorhanden – nichts hinzugefügt.")
+            await self._reply(ctx, "ℹ️ Alle Standard-Einträge sind bereits vorhanden!")
             return
         extra = f" · {summary['skipped']} bereits vorhanden" if summary["skipped"] else ""
         await self._reply(
             ctx,
             f"✅ Standard-Vorlage geladen: **{summary['groups']}** Gruppe(n), "
             f"**{summary['categories']}** Kategorie(n) hinzugefügt{extra}.\n"
-            "Weise den Kategorien jetzt Rollen/User zu – am einfachsten über "
+            "Weise den Kategorien jetzt Rollen/User zu - am einfachsten über "
             "`/kuhhilfe-setup verwalten`.")
 
     # ── Gruppen (Oberkategorien) ───────────────────────────────────────────────
@@ -1528,7 +1540,7 @@ class KuhHilfe(commands.Cog):
 
     # ── Kategorien (finale Ebene) ───────────────────────────────────────────────
     @kategorie_group.command(name="add",
-                      description="Legt eine finale Kategorie an – optional unter einer Gruppe")
+                      description="Legt eine finale Kategorie an - optional unter einer Gruppe")
     @app_commands.describe(name="Name der Kategorie", gruppe="Key der Gruppe (leer = Direkt-Kategorie)",
                            emoji="Optionales Emoji", beschreibung="Optionale Kurzbeschreibung")
     async def cat_add(self, ctx: commands.Context, name: str, gruppe: Optional[str] = None,
@@ -1541,7 +1553,7 @@ class KuhHilfe(commands.Cog):
         hint = f"\n⚠️ {emoji_err} (ohne Emoji gespeichert)" if emoji_err else ""
         await self._reply(
             ctx,
-            f"✅ Kategorie **{leaf['name']}** (`{result}`) angelegt – mit den Standard-Feldern "
+            f"✅ Kategorie **{leaf['name']}** (`{result}`) angelegt - mit den Standard-Feldern "
             f"*Betreff* & *Beschreibung*.{hint}\nWeise Zuständige zu "
             f"(`/kuhhilfe-setup rolle add kategorie:{result} …`) und passe die Felder an "
             f"(`/kuhhilfe-setup feld add kategorie:{result} …`).")
@@ -1730,5 +1742,5 @@ class _StatsResetView(discord.ui.View):
         self.clear_items()
         self.stop()
         await interaction.response.edit_message(
-            embed=discord.Embed(description="Abgebrochen – nichts geändert.", color=COLOR_INFO),
+            embed=discord.Embed(description="Abgebrochen - nichts geändert.", color=COLOR_INFO),
             view=None)

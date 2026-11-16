@@ -33,7 +33,6 @@ async def build_manage(cog, guild: discord.Guild, channel_id: int,
                      f"Status: {STAGE_LABELS.get(stage, '—')}\n"
                      f"Hinzugefügt: " + (" ".join(f'<@{u}>' for u in added) if added else "_niemand_")),
         color=COLOR_INFO)
-    embed.set_footer(text="Nur für dich sichtbar. Änderungen greifen sofort.")
 
     leaves = await cog.store.iter_leaves(guild)
     view = TicketManageView(cog, guild, channel_id, author_id, ticket, leaves)
