@@ -88,6 +88,19 @@ class KuhHilfeStore:
     async def set_cooldown(self, guild: discord.Guild, seconds: int) -> None:
         await self.config.guild(guild).cooldown_seconds.set(max(0, seconds))
 
+    async def set_dm_transcript(self, guild: discord.Guild, enabled: bool) -> None:
+        await self.config.guild(guild).dm_transcript.set(bool(enabled))
+
+    async def set_feedback_enabled(self, guild: discord.Guild, enabled: bool) -> None:
+        await self.config.guild(guild).feedback_enabled.set(bool(enabled))
+
+    async def add_feedback(self, guild: discord.Guild, entry: Dict[str, Any]) -> None:
+        async with self.config.guild(guild).feedback() as fb:
+            fb.append(entry)
+
+    async def get_feedback(self, guild: discord.Guild) -> List[Dict[str, Any]]:
+        return list(await self.config.guild(guild).feedback())
+
     # ── Blacklist (Support-Sperre) ────────────────────────────────────────────
     async def get_blacklist(self, guild: discord.Guild) -> List[int]:
         return list(await self.config.guild(guild).blacklist())
@@ -459,6 +472,7 @@ class KuhHilfeStore:
             "inactivity_warned": False,
             "stage": None,
             "added_members": [],
+            "feedback_requested": False,
         }
         async with self.config.guild(guild).tickets() as tickets:
             tickets[str(channel_id)] = ticket

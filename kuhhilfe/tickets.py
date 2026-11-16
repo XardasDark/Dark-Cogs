@@ -8,7 +8,7 @@ Text-Transcript des Verlaufs.
 
 import datetime
 import io
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import discord
 
@@ -86,8 +86,13 @@ async def create_ticket_channel(guild: discord.Guild, opener: discord.Member,
 
 
 async def generate_transcript(channel: discord.TextChannel,
-                              ticket: Dict[str, Any]) -> discord.File:
-    """Baut ein einfaches Text-Transcript des gesamten Channel-Verlaufs."""
+                              ticket: Dict[str, Any]) -> Tuple[bytes, str]:
+    """Baut ein einfaches Text-Transcript; gibt (bytes, dateiname) zurück.
+
+    Als Bytes (statt fertiger ``discord.File``), damit dieselbe Datei an mehrere
+    Ziele (Archiv UND Ersteller-DM) gesendet werden kann – ein File-Objekt lässt
+    sich nur einmal verschicken.
+    """
     lines = [
         f"Transcript – Ticket {ticket.get('id')}",
         f"Kategorie:  {ticket.get('category_key')}",
@@ -115,4 +120,4 @@ async def generate_transcript(channel: discord.TextChannel,
         lines.append("")
 
     data = "\n".join(lines).encode("utf-8")
-    return discord.File(io.BytesIO(data), filename=f"transcript-{ticket.get('id')}.txt")
+    return data, f"transcript-{ticket.get('id')}.txt"

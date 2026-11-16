@@ -122,11 +122,14 @@ def _settings_summary(guild: discord.Guild, s: Dict[str, Any]) -> str:
     cool = s.get("cooldown_seconds") or 0
     cool_txt = "aus" if cool <= 0 else f"{cool}s"
     bl = len(s.get("blacklist") or [])
+    dm_txt = "an" if s.get("dm_transcript") else "aus"
+    fb_txt = "an" if s.get("feedback_enabled") else "aus"
     return (f"Panel: {ch(s.get('panel_channel_id'))} · Ablage: {ch(s.get('ticket_category_id'))} · "
             f"Archiv: {ch(s.get('transcript_channel_id'))} · Protokoll: {ch(s.get('modlog_channel_id'))}\n"
             f"Limit/Nutzer: {'unbegrenzt' if not limit else limit} · Cooldown: {cool_txt} · "
             f"Löschzeit: {delay_txt} · Bestätigungen: {'dauerhaft' if not cd else str(cd) + ' Sek.'} · "
-            f"Auto-Schließen: {inact_txt} · Gesperrt: {bl}")
+            f"Auto-Schließen: {inact_txt} · Gesperrt: {bl}\n"
+            f"Transcript-DM: {dm_txt} · Feedback: {fb_txt}")
 
 
 class RootView(_BaseView):
@@ -570,6 +573,21 @@ class SettingsView(_BaseView):
         log_sel.callback = self._on_modlog
         self.add_item(log_sel)
 
+        # Toggles (row 4): Transcript-DM & Feedback
+        dm_on = bool(s.get("dm_transcript"))
+        dm_btn = discord.ui.Button(
+            label=f"Transcript-DM: {'An' if dm_on else 'Aus'}", emoji="📨", row=4,
+            style=discord.ButtonStyle.success if dm_on else discord.ButtonStyle.secondary)
+        dm_btn.callback = self._toggle_dm
+        self.add_item(dm_btn)
+
+        fb_on = bool(s.get("feedback_enabled"))
+        fb_btn = discord.ui.Button(
+            label=f"Feedback: {'An' if fb_on else 'Aus'}", emoji="⭐", row=4,
+            style=discord.ButtonStyle.success if fb_on else discord.ButtonStyle.secondary)
+        fb_btn.callback = self._toggle_feedback
+        self.add_item(fb_btn)
+
     async def _on_ablage(self, interaction: discord.Interaction) -> None:
         vals = interaction.data.get("values", [])
         await self.cog.store.set_ticket_category(self.guild, int(vals[0]) if vals else None)
@@ -585,6 +603,18 @@ class SettingsView(_BaseView):
     async def _on_modlog(self, interaction: discord.Interaction) -> None:
         vals = interaction.data.get("values", [])
         await self.cog.store.set_modlog_channel(self.guild, int(vals[0]) if vals else None)
+        embed, view = await settings_screen(self.cog, self.guild, self.author_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def _toggle_dm(self, interaction: discord.Interaction) -> None:
+        s = await self.cog.store.get_settings(self.guild)
+        await self.cog.store.set_dm_transcript(self.guild, not s.get("dm_transcript"))
+        embed, view = await settings_screen(self.cog, self.guild, self.author_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def _toggle_feedback(self, interaction: discord.Interaction) -> None:
+        s = await self.cog.store.get_settings(self.guild)
+        await self.cog.store.set_feedback_enabled(self.guild, not s.get("feedback_enabled"))
         embed, view = await settings_screen(self.cog, self.guild, self.author_id)
         await interaction.response.edit_message(embed=embed, view=view)
 

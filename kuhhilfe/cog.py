@@ -17,6 +17,7 @@ on_interaction geroutet (übersteht Neustarts; keine View-Registrierung nötig).
 """
 
 import asyncio
+import io
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -26,7 +27,7 @@ from discord import app_commands
 from redbot.core import Config, commands
 from redbot.core.bot import Red
 
-from . import views, tickets, admin_ui, presets, manage
+from . import views, tickets, admin_ui, presets, manage, feedback
 from .storage import KuhHilfeStore
 from .wizard import WizardSelectView, make_modal
 from .util import resolve_emoji
@@ -63,6 +64,9 @@ class KuhHilfe(commands.Cog):
             cooldown_seconds=0,
             blacklist=[],
             cooldowns={},
+            dm_transcript=False,
+            feedback_enabled=False,
+            feedback=[],
             categories={},
             tickets={},
         )
@@ -703,6 +707,7 @@ class KuhHilfe(commands.Cog):
         await self._modlog(
             guild, f"⚪ Ticket `{ticket['id']}` geschlossen von {interaction.user.mention} · "
                    f"**{label}**", color=COLOR_CLOSED)
+        await self._maybe_feedback(guild, ticket)
         await self._post_close_outcome(guild, channel, ticket, f"von {interaction.user.mention}")
 
     async def _auto_close(self, guild: discord.Guild, channel: discord.abc.GuildChannel,
@@ -728,6 +733,7 @@ class KuhHilfe(commands.Cog):
         await self._modlog(
             guild, f"⏰ Ticket `{ticket['id']}` automatisch wegen Inaktivität geschlossen · "
                    f"**{label}**", color=COLOR_CLOSED)
+        await self._maybe_feedback(guild, ticket)
         await self._post_close_outcome(guild, channel, ticket, "automatisch wegen Inaktivität")
 
     async def _post_close_outcome(self, guild: discord.Guild,
@@ -752,40 +758,94 @@ class KuhHilfe(commands.Cog):
             minutes = max(1, round(delay / 60))
             await channel.send(embed=discord.Embed(
                 description=(f"✅ Ticket {closer_text} geschlossen. "
-                             f"Dieser Channel wird in **{minutes} Min** automatisch gelöscht "
-                             "(das Transcript wird dann erstellt)."),
+                             f"Dieser Channel wird in **{minutes} Min** automatisch gelöscht."),
                 color=COLOR_CLOSED))
+
+    async def _maybe_feedback(self, guild: discord.Guild, ticket: Dict[str, Any]) -> None:
+        """Schickt dem Ersteller (einmalig, optional) eine DM-Feedback-Abfrage."""
+        settings = await self.store.get_settings(guild)
+        if not settings.get("feedback_enabled") or ticket.get("feedback_requested"):
+            return
+        opener = guild.get_member(ticket["opener_id"])
+        if opener is None or opener.bot:
+            return
+        _, label = await self.store.resolve_leaf(guild, ticket["category_key"])
+        label = label or ticket.get("category_label") or ticket["category_key"]
+        view = feedback.FeedbackView(self, guild.id, opener.id, ticket["id"],
+                                     ticket["category_key"], label)
+        try:
+            await opener.send(embed=feedback.build_feedback_dm(guild.name, label), view=view)
+        except discord.Forbidden:
+            return  # DMs zu
+        except discord.DiscordException:
+            log.debug("Feedback-DM fehlgeschlagen", exc_info=True)
+            return
+        await self.store.update_ticket(guild, ticket["channel_id"], feedback_requested=True)
+
+    async def store_feedback(self, guild_id: int, user_id: int, ticket_id: str,
+                             category_key: str, label: str, rating: int) -> None:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        await self.store.add_feedback(guild, {
+            "ticket_id": ticket_id, "user_id": user_id, "category_key": category_key,
+            "label": label, "rating": int(rating), "ts": int(time.time())})
 
     async def _write_transcript(self, guild: discord.Guild,
                                 channel: discord.abc.GuildChannel,
                                 ticket: Dict[str, Any]) -> None:
-        """Erzeugt EINMAL ein Transcript ins Archiv – unmittelbar vor dem Löschen."""
+        """Erzeugt EINMAL ein Transcript – ins Archiv und/oder als DM an den Ersteller.
+
+        Läuft unmittelbar vor dem Löschen des Channels.
+        """
         settings = await self.store.get_settings(guild)
         archive_id = settings.get("transcript_channel_id")
-        if not archive_id:
-            return
-        archive = guild.get_channel(archive_id)
+        dm_opener = settings.get("dm_transcript")
+        archive = guild.get_channel(archive_id) if archive_id else None
         if not isinstance(archive, (discord.TextChannel, discord.Thread)):
+            archive = None
+        if archive is None and not dm_opener:
             return
+
         _, label = await self.store.resolve_leaf(guild, ticket["category_key"])
+        label = label or ticket.get("category_label") or ticket["category_key"]
         opener = guild.get_member(ticket["opener_id"])
         closed_by = ticket.get("closed_by")
+
         try:
-            transcript = await tickets.generate_transcript(channel, ticket)
+            data, fname = await tickets.generate_transcript(channel, ticket)
+        except discord.DiscordException:
+            log.exception("Transcript konnte nicht erzeugt werden")
+            return
+
+        if archive is not None:
             summary = discord.Embed(
                 title=f"📄 Transcript · Ticket {ticket['id']}",
                 color=COLOR_CLOSED, timestamp=discord.utils.utcnow())
-            summary.add_field(
-                name="Kategorie",
-                value=(label or ticket.get("category_label") or ticket["category_key"]), inline=True)
+            summary.add_field(name="Kategorie", value=label, inline=True)
             summary.add_field(
                 name="Ersteller",
                 value=(opener.mention if opener else f"<@{ticket['opener_id']}>"), inline=True)
             if closed_by:
                 summary.add_field(name="Geschlossen von", value=f"<@{closed_by}>", inline=True)
-            await archive.send(embed=summary, file=transcript)
-        except discord.DiscordException:
-            log.exception("Transcript konnte nicht gespeichert werden")
+            try:
+                await archive.send(embed=summary, file=discord.File(io.BytesIO(data), filename=fname))
+            except discord.DiscordException:
+                log.exception("Transcript konnte nicht ins Archiv geschrieben werden")
+
+        if dm_opener and opener is not None:
+            try:
+                await opener.send(
+                    embed=discord.Embed(
+                        title=f"📄 Dein Ticket-Transcript · {label}",
+                        description=f"Dein Ticket `{ticket['id']}` auf **{guild.name}** wurde geschlossen. "
+                                    "Anbei das Protokoll des Gesprächs.",
+                        color=COLOR_CLOSED),
+                    file=discord.File(io.BytesIO(data), filename=fname))
+            except discord.Forbidden:
+                pass  # DMs des Nutzers sind zu
+            except discord.DiscordException:
+                log.debug("Transcript-DM fehlgeschlagen", exc_info=True)
 
     async def _delete_ticket_channel(self, guild: discord.Guild,
                                      channel: Optional[discord.abc.GuildChannel],
@@ -1010,6 +1070,20 @@ class KuhHilfe(commands.Cog):
         else:
             await self._reply(ctx, "✅ Protokoll deaktiviert.")
 
+    @setup_group.command(name="transcript-dm",
+                      description="Dem Ersteller beim Schließen das Transcript per DM schicken")
+    @app_commands.describe(aktiv="An = Transcript zusätzlich als DM an den Ersteller")
+    async def set_dm_transcript(self, ctx: commands.Context, aktiv: bool) -> None:
+        await self.store.set_dm_transcript(ctx.guild, aktiv)
+        await self._reply(ctx, f"✅ Transcript-DM an den Ersteller ist jetzt **{'an' if aktiv else 'aus'}**.")
+
+    @setup_group.command(name="feedback",
+                      description="Ersteller nach dem Schließen per DM um eine Bewertung bitten")
+    @app_commands.describe(aktiv="An = 1–5-Sterne-Abfrage per DM nach dem Schließen")
+    async def set_feedback(self, ctx: commands.Context, aktiv: bool) -> None:
+        await self.store.set_feedback_enabled(ctx.guild, aktiv)
+        await self._reply(ctx, f"✅ Feedback-Abfrage nach dem Schließen ist jetzt **{'an' if aktiv else 'aus'}**.")
+
     @setup_group.command(name="limit",
                       description="Max. gleichzeitig offene Tickets pro Nutzer (0 = unbegrenzt)")
     @app_commands.describe(anzahl="Anzahl (0 = unbegrenzt)")
@@ -1123,6 +1197,8 @@ class KuhHilfe(commands.Cog):
         else:
             inact_txt = f"{inact} Std." + (f" (Warnung {warn_h}h vorher)" if 0 < warn_h < inact else "")
         embed.add_field(name="Auto-Schließen (Inaktiv.)", value=inact_txt, inline=True)
+        embed.add_field(name="Transcript-DM", value=("an" if s.get("dm_transcript") else "aus"), inline=True)
+        embed.add_field(name="Feedback", value=("an" if s.get("feedback_enabled") else "aus"), inline=True)
         leaves = await self.store.iter_leaves(ctx.guild)
         groups = await self.store.iter_groups(ctx.guild)
         embed.add_field(name="Struktur",
