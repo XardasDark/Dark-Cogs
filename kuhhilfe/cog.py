@@ -399,16 +399,16 @@ class KuhHilfe(commands.Cog):
     # ═════════════════════════════════════════════════════════════════════════
     # ADMIN-BEFEHLE
     # ═════════════════════════════════════════════════════════════════════════
-    @commands.hybrid_group(name="kuhhilfe", description="KuhHilfe – Support-System einrichten")
+    @commands.hybrid_group(name="kuhhilfe-setup", description="KuhHilfe – Support-System einrichten (nur Admins)")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     @app_commands.default_permissions(manage_guild=True)
-    async def kuhhilfe(self, ctx: commands.Context) -> None:
+    async def setup_group(self, ctx: commands.Context) -> None:
         if ctx.invoked_subcommand is None:
             await ctx.send_help(ctx.command)
 
     # ── Setup ────────────────────────────────────────────────────────────────
-    @kuhhilfe.command(name="panel", description="Postet das Support-Panel in einen Channel")
+    @setup_group.command(name="panel", description="Postet das Support-Panel in einen Channel")
     @app_commands.describe(channel="Channel, in dem das Panel mit dem Button erscheinen soll")
     async def panel_cmd(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
         cats = await self.store.list_categories(ctx.guild)
@@ -421,13 +421,13 @@ class KuhHilfe(commands.Cog):
         await self.store.set_panel(ctx.guild, channel.id, msg.id)
         await self._reply(ctx, f"✅ Support-Panel in {channel.mention} gepostet.")
 
-    @kuhhilfe.command(name="panel-aktualisieren", description="Aktualisiert das bestehende Panel")
+    @setup_group.command(name="panel-aktualisieren", description="Aktualisiert das bestehende Panel")
     async def panel_refresh(self, ctx: commands.Context) -> None:
         settings = await self.store.get_settings(ctx.guild)
         ch_id, msg_id = settings.get("panel_channel_id"), settings.get("panel_message_id")
         channel = ctx.guild.get_channel(ch_id) if ch_id else None
         if not channel or not msg_id:
-            await self._reply(ctx, "❌ Es ist noch kein Panel gesetzt. Nutze `/kuhhilfe panel`.")
+            await self._reply(ctx, "❌ Es ist noch kein Panel gesetzt. Nutze `/kuhhilfe-setup panel`.")
             return
         cats = await self.store.list_categories(ctx.guild)
         embed = views.build_panel_embed(ctx.guild, cats)
@@ -439,7 +439,7 @@ class KuhHilfe(commands.Cog):
             await self.store.set_panel(ctx.guild, channel.id, msg.id)
         await self._reply(ctx, "✅ Panel aktualisiert.")
 
-    @kuhhilfe.command(name="ticketkategorie",
+    @setup_group.command(name="ticketkategorie",
                       description="Discord-Kategorie, unter der Ticket-Channels erstellt werden")
     @app_commands.describe(kategorie="Channel-Kategorie für neue Ticket-Channels")
     async def set_ticket_category(self, ctx: commands.Context,
@@ -447,7 +447,7 @@ class KuhHilfe(commands.Cog):
         await self.store.set_ticket_category(ctx.guild, kategorie.id)
         await self._reply(ctx, f"✅ Neue Tickets werden unter **{kategorie.name}** erstellt.")
 
-    @kuhhilfe.command(name="archiv",
+    @setup_group.command(name="archiv",
                       description="Channel für Transcripts beim Schließen (ohne Angabe: deaktivieren)")
     @app_commands.describe(channel="Archiv-Channel für Transcripts (leer = aus)")
     async def set_archive(self, ctx: commands.Context,
@@ -458,7 +458,7 @@ class KuhHilfe(commands.Cog):
         else:
             await self._reply(ctx, "✅ Transcript-Archiv deaktiviert.")
 
-    @kuhhilfe.command(name="limit",
+    @setup_group.command(name="limit",
                       description="Max. gleichzeitig offene Tickets pro Nutzer (0 = unbegrenzt)")
     @app_commands.describe(anzahl="Anzahl (0 = unbegrenzt)")
     async def set_limit(self, ctx: commands.Context, anzahl: int) -> None:
@@ -466,7 +466,7 @@ class KuhHilfe(commands.Cog):
         txt = "unbegrenzt" if anzahl <= 0 else str(anzahl)
         await self._reply(ctx, f"✅ Offene Tickets pro Nutzer: **{txt}**.")
 
-    @kuhhilfe.command(name="loeschzeit",
+    @setup_group.command(name="loeschzeit",
                       description="Minuten bis zum Löschen eines geschlossenen Channels (Default 5)")
     @app_commands.describe(minuten="Minuten bis zum Löschen (0 = sofort)")
     async def set_delete_delay(self, ctx: commands.Context, minuten: int) -> None:
@@ -474,7 +474,7 @@ class KuhHilfe(commands.Cog):
         txt = "sofort" if minuten <= 0 else f"{minuten} Min"
         await self._reply(ctx, f"✅ Geschlossene Channels werden **{txt}** nach dem Schließen gelöscht.")
 
-    @kuhhilfe.command(name="status", description="Zeigt die aktuelle KuhHilfe-Konfiguration")
+    @setup_group.command(name="status", description="Zeigt die aktuelle KuhHilfe-Konfiguration")
     async def status_cmd(self, ctx: commands.Context) -> None:
         s = await self.store.get_settings(ctx.guild)
         cats = await self.store.list_categories(ctx.guild)
@@ -504,7 +504,7 @@ class KuhHilfe(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     # ── Kategorien ─────────────────────────────────────────────────────────────
-    @kuhhilfe.command(name="kategorie-add", description="Legt eine neue Support-Kategorie an")
+    @setup_group.command(name="kategorie-add", description="Legt eine neue Support-Kategorie an")
     @app_commands.describe(name="Name der Kategorie", emoji="Optionales Emoji",
                            beschreibung="Optionale Kurzbeschreibung")
     async def cat_add(self, ctx: commands.Context, name: str,
@@ -516,17 +516,17 @@ class KuhHilfe(commands.Cog):
         await self._reply(
             ctx,
             f"✅ Kategorie **{cat['name']}** (`{cat['key']}`) angelegt – mit den Standard-Feldern "
-            "*Betreff* & *Beschreibung*.\nWeise nun Rollen/User zu (`/kuhhilfe rolle-add`) und "
-            "passe die Felder an (`/kuhhilfe feld-add`).")
+            "*Betreff* & *Beschreibung*.\nWeise nun Rollen/User zu (`/kuhhilfe-setup rolle-add`) und "
+            "passe die Felder an (`/kuhhilfe-setup feld-add`).")
 
-    @kuhhilfe.command(name="kategorie-remove", description="Löscht eine Support-Kategorie")
+    @setup_group.command(name="kategorie-remove", description="Löscht eine Support-Kategorie")
     @app_commands.describe(key="Key der Kategorie")
     async def cat_remove(self, ctx: commands.Context, key: str) -> None:
         ok = await self.store.remove_category(ctx.guild, key)
         await self._reply(ctx, f"✅ Kategorie `{key}` gelöscht." if ok
                           else f"❌ Keine Kategorie mit Key `{key}`.")
 
-    @kuhhilfe.command(name="kategorie-liste", description="Listet alle Kategorien")
+    @setup_group.command(name="kategorie-liste", description="Listet alle Kategorien")
     async def cat_list(self, ctx: commands.Context) -> None:
         cats = await self.store.list_categories(ctx.guild)
         if not cats:
@@ -545,7 +545,7 @@ class KuhHilfe(commands.Cog):
         await self._reply(ctx, embed=embed)
 
     # ── Rollen / User zuweisen ─────────────────────────────────────────────────
-    @kuhhilfe.command(name="rolle-add", description="Weist einer Kategorie eine zuständige Rolle zu")
+    @setup_group.command(name="rolle-add", description="Weist einer Kategorie eine zuständige Rolle zu")
     @app_commands.describe(key="Key der Kategorie", rolle="Zuständige Rolle")
     async def cat_rolle_add(self, ctx: commands.Context, key: str, rolle: discord.Role) -> None:
         res = await self.store.toggle_role(ctx.guild, key, rolle.id, add=True)
@@ -554,7 +554,7 @@ class KuhHilfe(commands.Cog):
             return
         await self._reply(ctx, f"✅ {rolle.mention} ist jetzt für `{key}` zuständig.")
 
-    @kuhhilfe.command(name="rolle-remove", description="Entfernt eine Rolle aus einer Kategorie")
+    @setup_group.command(name="rolle-remove", description="Entfernt eine Rolle aus einer Kategorie")
     @app_commands.describe(key="Key der Kategorie", rolle="Rolle")
     async def cat_rolle_remove(self, ctx: commands.Context, key: str, rolle: discord.Role) -> None:
         res = await self.store.toggle_role(ctx.guild, key, rolle.id, add=False)
@@ -563,7 +563,7 @@ class KuhHilfe(commands.Cog):
             return
         await self._reply(ctx, f"✅ {rolle.mention} ist nicht mehr für `{key}` zuständig.")
 
-    @kuhhilfe.command(name="user-add", description="Weist einer Kategorie einen zuständigen User zu")
+    @setup_group.command(name="user-add", description="Weist einer Kategorie einen zuständigen User zu")
     @app_commands.describe(key="Key der Kategorie", user="Zuständiger User")
     async def cat_user_add(self, ctx: commands.Context, key: str, user: discord.Member) -> None:
         res = await self.store.toggle_user(ctx.guild, key, user.id, add=True)
@@ -572,7 +572,7 @@ class KuhHilfe(commands.Cog):
             return
         await self._reply(ctx, f"✅ {user.mention} ist jetzt für `{key}` zuständig.")
 
-    @kuhhilfe.command(name="user-remove", description="Entfernt einen User aus einer Kategorie")
+    @setup_group.command(name="user-remove", description="Entfernt einen User aus einer Kategorie")
     @app_commands.describe(key="Key der Kategorie", user="User")
     async def cat_user_remove(self, ctx: commands.Context, key: str, user: discord.Member) -> None:
         res = await self.store.toggle_user(ctx.guild, key, user.id, add=False)
@@ -582,7 +582,7 @@ class KuhHilfe(commands.Cog):
         await self._reply(ctx, f"✅ {user.mention} ist nicht mehr für `{key}` zuständig.")
 
     # ── Modal-Felder ───────────────────────────────────────────────────────────
-    @kuhhilfe.command(name="feld-add", description="Fügt einer Kategorie ein Wizard-Feld hinzu")
+    @setup_group.command(name="feld-add", description="Fügt einer Kategorie ein Wizard-Feld hinzu")
     @app_commands.describe(key="Key der Kategorie", label="Beschriftung des Feldes",
                            stil="Kurz oder Lang", pflicht="Muss ausgefüllt werden?",
                            max_laenge="Maximale Zeichenzahl", platzhalter="Optionaler Platzhaltertext")
@@ -601,8 +601,8 @@ class KuhHilfe(commands.Cog):
                                f"({FIELD_STYLE_LABELS.get(stil, stil)}, "
                                f"{'Pflicht' if pflicht else 'optional'}).")
 
-    @kuhhilfe.command(name="feld-remove", description="Entfernt ein Feld einer Kategorie (Position)")
-    @app_commands.describe(key="Key der Kategorie", position="Position laut /kuhhilfe feld-liste (ab 1)")
+    @setup_group.command(name="feld-remove", description="Entfernt ein Feld einer Kategorie (Position)")
+    @app_commands.describe(key="Key der Kategorie", position="Position laut /kuhhilfe-setup feld-liste (ab 1)")
     async def feld_remove(self, ctx: commands.Context, key: str, position: int) -> None:
         removed = await self.store.remove_field(ctx.guild, key, position)
         if not removed:
@@ -610,7 +610,7 @@ class KuhHilfe(commands.Cog):
             return
         await self._reply(ctx, f"✅ Feld **{removed['label']}** aus `{key}` entfernt.")
 
-    @kuhhilfe.command(name="feld-liste", description="Zeigt die Felder einer Kategorie")
+    @setup_group.command(name="feld-liste", description="Zeigt die Felder einer Kategorie")
     @app_commands.describe(key="Key der Kategorie")
     async def feld_liste(self, ctx: commands.Context, key: str) -> None:
         cat = await self.store.get_category(ctx.guild, key)
