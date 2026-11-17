@@ -40,22 +40,16 @@ class CowSpirit(commands.Cog):
     async def cog_unload(self):
         if hasattr(self, 'scheduler') and self.scheduler is not None:
             try:
-                if self.scheduler.get_jobs():
-                    await self.scheduler.remove_all_jobs()  # Remove all scheduled jobs
+                self.scheduler.remove_all_jobs()  # Remove all scheduled jobs
             except Exception as e:
                 print(f"Error while removing jobs: {e}")
             try:
-                #await self.scheduler.shutdown()  # Shutdown the scheduler
-                pass
+                if self.scheduler.running:
+                    self.scheduler.shutdown(wait=False)  # Shutdown the scheduler
             except Exception as e:
                 print(f"Error while shutting down scheduler: {e}")
         else:
             print("Scheduler was not initialized or already cleaned up.")
-
-        try:
-            await self.bot.shutdown()  # Shutdown the bot
-        except Exception as e:
-            print(f"Error while shutting down bot: {e}")
 
 #     sched.add_job(myFunc, 'cron', minute='*', start_date=datetime(2023,1,1), end_date=datetime(2023,1,3))
 # for job in sched.get_jobs():
