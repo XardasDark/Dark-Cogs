@@ -37,7 +37,7 @@ import logging
 import discord
 from discord import app_commands, ui
 from redbot.core import commands
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from datetime import datetime, timezone
 
 log = logging.getLogger("red.ro_groupfinder")
@@ -604,10 +604,12 @@ class ROGroupFinder(commands.Cog):
         )
 
     def _resolve_profile_channel_id(self, guild_id: int,
-                                    channel: Optional[discord.TextChannel]) -> Optional[int]:
+                                    channel: Optional[discord.TextChannel],
+                                    current_channel_id: Optional[int] = None) -> Optional[int]:
         """
         Liefert die Gruppen-Channel-ID des gemeinten Spiel-Profils:
           - explizit angegebener Channel (muss ein konfigurierter Spiel-Channel sein),
+          - sonst der Channel, in dem der Befehl ausgeführt wird (falls Spiel-Channel),
           - sonst das einzige Profil der Guild,
           - sonst None (mehrdeutig/keins).
         """
@@ -616,6 +618,9 @@ class ROGroupFinder(commands.Cog):
             if any(p.get("group_channel_id") == channel.id for p in profiles):
                 return channel.id
             return None
+        if current_channel_id is not None and \
+                any(p.get("group_channel_id") == current_channel_id for p in profiles):
+            return current_channel_id
         if len(profiles) == 1:
             return profiles[0].get("group_channel_id")
         return None
@@ -639,7 +644,9 @@ class ROGroupFinder(commands.Cog):
     async def gruppe_config_pingrolle(self, ctx: commands.Context,
                                       channel: Optional[discord.TextChannel] = None,
                                       rolle: Optional[discord.Role] = None) -> None:
-        target = self._resolve_profile_channel_id(ctx.guild.id, channel)
+        target = self._resolve_profile_channel_id(
+            ctx.guild.id, channel, current_channel_id=ctx.channel.id if ctx.channel else None,
+        )
         if target is None:
             await self._reply(ctx, self._profile_channel_hint(ctx.guild.id))
             return
@@ -752,7 +759,9 @@ class ROGroupFinder(commands.Cog):
     async def gruppe_config_archiv(self, ctx: commands.Context,
                                    archiv_channel: discord.TextChannel,
                                    channel: Optional[discord.TextChannel] = None) -> None:
-        target = self._resolve_profile_channel_id(ctx.guild.id, channel)
+        target = self._resolve_profile_channel_id(
+            ctx.guild.id, channel, current_channel_id=ctx.channel.id if ctx.channel else None,
+        )
         if target is None:
             await self._reply(ctx, self._profile_channel_hint(ctx.guild.id))
             return
@@ -2556,6 +2565,10 @@ class _ProfileSetupView(ui.View):
     als Spiel-Profil speichern. Mehrfach nutzbar, um mehrere Spiele einzurichten.
     """
 
+    # Sentinel: Ping-Rolle wurde in dieser Sitzung nicht angefasst (→ beim Speichern
+    # unverändert lassen, statt eine bestehende Rolle zu überschreiben).
+    _PING_UNSET = object()
+
     def __init__(self, cog: "ROGroupFinder", guild_id: int, presets: List[Dict]):
         super().__init__(timeout=300)
         self.cog      = cog
@@ -2564,6 +2577,8 @@ class _ProfileSetupView(ui.View):
         self.sel_game_key: Optional[str]      = None
         self.sel_group_channel_id: Optional[int] = None
         self.sel_forum_channel_id: Optional[int] = None
+        # None = Ping aus, int = Rollen-ID, _PING_UNSET = nicht angefasst.
+        self.sel_ping_role_id: Any = self._PING_UNSET
         self._status: str = ""
 
         game_opts = [
@@ -2589,12 +2604,20 @@ class _ProfileSetupView(ui.View):
         self.forum_select.callback = self._on_forum
         self.add_item(self.forum_select)
 
-        save_btn = ui.Button(label="💾 Speichern", style=discord.ButtonStyle.success, row=3)
+        # Leere Auswahl erlaubt (min_values=0) → bedeutet „Ping aus".
+        self.ping_select = ui.RoleSelect(
+            placeholder="4) Ping-Rolle wählen (optional, leer = aus)…",
+            min_values=0, max_values=1, row=3,
+        )
+        self.ping_select.callback = self._on_ping
+        self.add_item(self.ping_select)
+
+        save_btn = ui.Button(label="💾 Speichern", style=discord.ButtonStyle.success, row=4)
         save_btn.callback = self._on_save
         self.add_item(save_btn)
 
         remove_btn = ui.Button(label="🗑️ Channel-Zuordnung entfernen",
-                               style=discord.ButtonStyle.danger, row=3)
+                               style=discord.ButtonStyle.danger, row=4)
         remove_btn.callback = self._on_remove
         self.add_item(remove_btn)
 
@@ -2618,11 +2641,19 @@ class _ProfileSetupView(ui.View):
         fch = guild.get_channel(self.sel_forum_channel_id) if (guild and self.sel_forum_channel_id) else None
         gch_m = gch.mention if gch else dash
         fch_m = fch.mention if fch else dash
+        if self.sel_ping_role_id is self._PING_UNSET:
+            ping_m = "(unverändert)"
+        elif self.sel_ping_role_id is None:
+            ping_m = "aus"
+        else:
+            prole = guild.get_role(self.sel_ping_role_id) if guild else None
+            ping_m = prole.mention if prole else f"<@&{self.sel_ping_role_id}>"
         embed.add_field(
             name="Aktuelle Auswahl",
             value=(f"Spiel: **{sel_game}**\n"
                    f"Gruppen-Channel: {gch_m}\n"
-                   f"Forum: {fch_m}"),
+                   f"Forum: {fch_m}\n"
+                   f"Ping-Rolle: {ping_m}"),
             inline=False,
         )
         # Bereits konfigurierte Profile
@@ -2632,10 +2663,12 @@ class _ProfileSetupView(ui.View):
             for p in profiles:
                 c = guild.get_channel(p.get("group_channel_id") or 0) if guild else None
                 f = guild.get_channel(p.get("forum_channel_id") or 0) if guild else None
+                r = guild.get_role(p.get("ping_role_id") or 0) if guild else None
                 game_name = p.get("game_name", p.get("game_key", "?"))
                 c_m = c.mention if c else dash
                 f_m = f.mention if f else dash
-                lines.append(f"**{game_name}** → {c_m} (Forum: {f_m})")
+                r_m = r.mention if r else dash
+                lines.append(f"**{game_name}** → {c_m} (Forum: {f_m}, Ping: {r_m})")
             embed.add_field(name="Eingerichtete Spiele", value="\n".join(lines), inline=False)
         if self._status:
             embed.add_field(name="​", value=self._status, inline=False)
@@ -2656,6 +2689,12 @@ class _ProfileSetupView(ui.View):
 
     async def _on_forum(self, interaction: discord.Interaction) -> None:
         self.sel_forum_channel_id = self.forum_select.values[0].id
+        self._status = ""
+        await self._refresh(interaction)
+
+    async def _on_ping(self, interaction: discord.Interaction) -> None:
+        # Leere Auswahl → Ping aus (None); sonst die gewählte Rollen-ID.
+        self.sel_ping_role_id = self.ping_select.values[0].id if self.ping_select.values else None
         self._status = ""
         await self._refresh(interaction)
 
@@ -2683,6 +2722,12 @@ class _ProfileSetupView(ui.View):
             await self._refresh(interaction)
             return
 
+        # Ping-Rolle nur übernehmen, wenn sie in dieser Sitzung angefasst wurde –
+        # sonst bleibt eine bereits gesetzte Rolle des Profils erhalten.
+        if self.sel_ping_role_id is not self._PING_UNSET:
+            set_profile_field(self.guild_id, self.sel_group_channel_id,
+                              "ping_role_id", self.sel_ping_role_id)
+
         # Readonly anwenden (falls serverweit aktiv) und Übersicht posten.
         guild = interaction.guild
         channel = guild.get_channel(self.sel_group_channel_id) if guild else None
@@ -2698,6 +2743,7 @@ class _ProfileSetupView(ui.View):
         self.sel_game_key = None
         self.sel_group_channel_id = None
         self.sel_forum_channel_id = None
+        self.sel_ping_role_id = self._PING_UNSET
         await self._refresh(interaction)
 
     async def _on_remove(self, interaction: discord.Interaction) -> None:
