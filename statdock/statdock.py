@@ -29,7 +29,7 @@ sichtbar und nutzbar:
   /statdock lock      – bestehenden Channel sperren (sichtbar, nicht betretbar)
 
 Die Vorlage darf den Platzhalter {count} enthalten (z. B. "🟢 Ragnarok X: {count}").
-Fehlt der Platzhalter, wird die Zahl als "Name: {count}" angehängt.
+Fehlt der Platzhalter, wird nur die Zahl angehängt (z. B. "Name 123").
 
 Hinweis: Für den Rollen-Modus muss das Members-Intent aktiv sein (bei Red standardmäßig an).
 """
@@ -88,7 +88,8 @@ class Statdock(commands.Cog):
         if "{count}" in template:
             name = template.replace("{count}", str(count))
         else:
-            name = f"{template}: {count}"
+            # Ohne Platzhalter wird nur die Zahl angehängt (mit Leerzeichen, ohne ": ").
+            name = f"{template} {count}"
         # Channel-Namen dürfen max. 100 Zeichen lang sein.
         return name[:100]
 
