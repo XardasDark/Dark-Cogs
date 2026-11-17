@@ -44,8 +44,9 @@ def build_interface_embed(guild: discord.Guild) -> discord.Embed:
             f"{C.BTN_KICK[1]} **{C.BTN_KICK[0]}** – Mitglied entfernen & aussperren\n"
             f"{C.BTN_CLAIM[1]} **{C.BTN_CLAIM[0]}** – Besitz übernehmen (wenn Besitzer weg)\n"
             f"{C.BTN_TRANSFER[1]} **{C.BTN_TRANSFER[0]}** – Besitz an anderes Mitglied geben\n"
-            f"{C.BTN_BITRATE[1]} **{C.BTN_BITRATE[0]}** – Audio-Qualität\n"
-            f"{C.BTN_REGION[1]} **{C.BTN_REGION[0]}** – Voice-Region\n"
+            # Vorübergehend deaktiviert – für spätere Reaktivierung erhalten:
+            # f"{C.BTN_BITRATE[1]} **{C.BTN_BITRATE[0]}** – Audio-Qualität\n"
+            # f"{C.BTN_REGION[1]} **{C.BTN_REGION[0]}** – Voice-Region\n"
             f"{C.BTN_WAITING[1]} **{C.BTN_WAITING[0]}** – Warteraum an/aus (Bot holt Wartende rein)"
         ),
         inline=False,
@@ -138,25 +139,27 @@ class TempVoicePanel(discord.ui.View):
 
     # ── Zeile 2 ────────────────────────────────────────────────────────────────
 
-    @discord.ui.button(label=C.BTN_BITRATE[0], emoji=C.BTN_BITRATE[1],
-                       style=discord.ButtonStyle.primary, custom_id=C.CID_BITRATE, row=2)
-    async def btn_bitrate(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction, "bitrate")
-        if channel is None:
-            return
-        await interaction.response.send_message(
-            "Wähle die Bitrate (Audio-Qualität):",
-            view=BitrateSelectView(self.cog, channel), ephemeral=True)
+    # Vorübergehend deaktiviert – Buttons werden aktuell nicht angezeigt, der Code
+    # bleibt für eine spätere Reaktivierung erhalten.
+    # @discord.ui.button(label=C.BTN_BITRATE[0], emoji=C.BTN_BITRATE[1],
+    #                    style=discord.ButtonStyle.primary, custom_id=C.CID_BITRATE, row=2)
+    # async def btn_bitrate(self, interaction: discord.Interaction, button: discord.ui.Button):
+    #     channel = await self.cog.resolve_owned(interaction, "bitrate")
+    #     if channel is None:
+    #         return
+    #     await interaction.response.send_message(
+    #         "Wähle die Bitrate (Audio-Qualität):",
+    #         view=BitrateSelectView(self.cog, channel), ephemeral=True)
 
-    @discord.ui.button(label=C.BTN_REGION[0], emoji=C.BTN_REGION[1],
-                       style=discord.ButtonStyle.primary, custom_id=C.CID_REGION, row=2)
-    async def btn_region(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = await self.cog.resolve_owned(interaction, "region")
-        if channel is None:
-            return
-        await interaction.response.send_message(
-            "Wähle die Voice-Region:",
-            view=RegionSelectView(self.cog, channel), ephemeral=True)
+    # @discord.ui.button(label=C.BTN_REGION[0], emoji=C.BTN_REGION[1],
+    #                    style=discord.ButtonStyle.primary, custom_id=C.CID_REGION, row=2)
+    # async def btn_region(self, interaction: discord.Interaction, button: discord.ui.Button):
+    #     channel = await self.cog.resolve_owned(interaction, "region")
+    #     if channel is None:
+    #         return
+    #     await interaction.response.send_message(
+    #         "Wähle die Voice-Region:",
+    #         view=RegionSelectView(self.cog, channel), ephemeral=True)
 
     @discord.ui.button(label=C.BTN_WAITING[0], emoji=C.BTN_WAITING[1],
                        style=discord.ButtonStyle.secondary, custom_id=C.CID_WAITING, row=2)
