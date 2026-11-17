@@ -193,6 +193,23 @@ class Statdock(commands.Cog):
 
         Die Game-Channels darunter registrierst du wie gewohnt mit /statdock addroles.
         """
+        # Dem Bot auf der Kategorie manage_channels geben, sonst scheitert das
+        # Umbenennen still (nur Log-Warnung). Gelingt schon das nicht, fehlt die
+        # Berechtigung serverweit – dann hat auch die Lauf-Schleife keine Chance.
+        try:
+            await category.set_permissions(
+                ctx.guild.me,
+                view_channel=True,
+                manage_channels=True,
+                reason="Statdock: Bot-Zugriff auf Kategorie sicherstellen",
+            )
+        except discord.Forbidden:
+            await ctx.send(
+                "❌ Mir fehlt die Berechtigung, die Kategorie zu verwalten (`Kanäle verwalten`). "
+                "Gib dem Bot diese Rolle/Berechtigung und versuch es erneut.",
+                ephemeral=True,
+            )
+            return
         await self._set_dock(ctx.guild, category.id, template=name, mode="total", roles=[])
         await self._update_dock(ctx.guild, category.id, await self._get_dock(ctx.guild, category.id))
         await ctx.send(
