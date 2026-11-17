@@ -4,16 +4,19 @@ storage.py – Persistenz-Schicht über Reds Config
 Guild-Daten:
   generators           = {gen_id(str): {category_id, name, limit, bitrate,
                                         region, locked, hidden}}
+  games                = {anchor_id(str): {name, emoji}}   # persistente Spiel-Channel,
+                                        # unter die Temp-Channel einsortiert werden
   interface_channel_id = int | None                # Textkanal mit dem Panel
   interface_message_id = int | None                # Panel-Nachricht
   temp_channels        = {channel_id(str): {owner_id, created_at,
                                             generator_id, guests[], waiting_room_id}}
 
 Member-Daten (pro Server & Mitglied):
-  profiles = {gen_id(str): {name?, limit?, bitrate?, region?, locked?, hidden?,
-                            permit?[], reject?[]}}
-             – Partial-Overrides je Generator; was nicht gesetzt ist, kommt aus
-               den Generator-Defaults.
+  profiles      = {gen_id(str): {name?, limit?, bitrate?, region?, locked?, hidden?,
+                                 permit?[], reject?[]}}
+                  – Partial-Overrides je Generator; was nicht gesetzt ist, kommt aus
+                    den Generator-Defaults.
+  selected_game = int | None    # Anker-Channel-ID des gewählten Spiels (None = keines)
 """
 
 from typing import Any, Dict, List, Optional
@@ -86,6 +89,31 @@ class TempVoiceStore:
     async def remove_generator(self, guild: discord.Guild, channel_id: int) -> None:
         async with self.config.guild(guild).generators() as gens:
             gens.pop(str(channel_id), None)
+
+    # ── Spiele (persistente Anker-Voice-Channel zum Einsortieren) ───────────────
+
+    async def all_games(self, guild: discord.Guild) -> Dict[str, Dict[str, Any]]:
+        return await self.config.guild(guild).games()
+
+    async def get_game(self, guild: discord.Guild, anchor_id: int) -> Optional[Dict[str, Any]]:
+        games = await self.config.guild(guild).games()
+        return games.get(str(anchor_id))
+
+    async def add_game(self, guild: discord.Guild, anchor_id: int, name: str,
+                       emoji: Optional[str] = None) -> None:
+        async with self.config.guild(guild).games() as games:
+            games[str(anchor_id)] = {"name": name, "emoji": emoji}
+
+    async def remove_game(self, guild: discord.Guild, anchor_id: int) -> bool:
+        async with self.config.guild(guild).games() as games:
+            return games.pop(str(anchor_id), None) is not None
+
+    async def get_selected_game(self, member: discord.Member) -> Optional[int]:
+        return await self.config.member(member).selected_game()
+
+    async def set_selected_game(self, member: discord.Member,
+                                anchor_id: Optional[int]) -> None:
+        await self.config.member(member).selected_game.set(anchor_id)
 
     # ── Button-Rollenbeschränkung ───────────────────────────────────────────────
 

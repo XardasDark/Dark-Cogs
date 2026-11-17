@@ -31,6 +31,7 @@ CID_BITRATE  = f"{CID_PREFIX}:bitrate"
 CID_REGION   = f"{CID_PREFIX}:region"
 CID_KNOCK    = f"{CID_PREFIX}:knock"
 CID_WAITING  = f"{CID_PREFIX}:waiting"
+CID_GAME     = f"{CID_PREFIX}:game"
 
 # Button-Beschriftungen (Label, Emoji) – rein deutsch
 BTN_RENAME   = ("Name",       "✏️")
@@ -47,6 +48,7 @@ BTN_KNOCK    = ("Anklopfen",  "✋")
 BTN_KNOCK_ACCEPT = ("Reinlassen", "✅")
 BTN_KNOCK_REJECT = ("Ablehnen",   "❌")
 BTN_WAITING  = ("Warteraum",  "⏳")
+BTN_GAME     = ("Spiel",      "🎮")
 BTN_ADMIT    = ("Reinholen",   "✅")
 BTN_DISMISS  = ("Wegschicken", "❌")
 

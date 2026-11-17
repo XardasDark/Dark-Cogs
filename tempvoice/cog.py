@@ -11,6 +11,9 @@ und beim nächsten Channel wieder angewendet.
 Befehle (alle deutsch):
   /tempvoice setup                     (Admin) – Kategorie, Generator & Panel anlegen
   /tempvoice generator <voice>         (Admin) – Generator-Channel hinzufügen/entfernen
+  /tempvoice spiel-add <name> <voice>  (Admin) – Spiel mit Anker-Channel verknüpfen
+  /tempvoice spiel-remove <voice>      (Admin) – Spiel aus der Auswahl entfernen
+  /tempvoice spiel-list                (Admin) – wählbare Spiele anzeigen
   /tempvoice kategorie [kategorie]     (Admin) – Zielkategorie für neue Channel
   /tempvoice interface [#kanal]        (Admin) – Steuer-Panel (neu) posten
   /tempvoice defaults ...              (Admin) – Standardwerte für neue Channel
@@ -45,12 +48,16 @@ class TempVoice(commands.Cog):
         self.config = Config.get_conf(self, identifier=0x7E_4_0_17_01, force_registration=True)
         self.config.register_guild(
             generators={},               # {gen_id: {category_id, name, limit, bitrate, region, locked, hidden}}
+            games={},                    # {anchor_id: {name, emoji}} – persistente Spiel-Channel
             interface_channel_id=None,
             interface_message_id=None,
             temp_channels={},
             button_roles={},             # {action_key: [role_id, ...]} – leer = für alle
         )
-        self.config.register_member(profiles={})   # {gen_id: partial-override}
+        self.config.register_member(
+            profiles={},                 # {gen_id: partial-override}
+            selected_game=None,          # Anker-Channel-ID des gewählten Spiels
+        )
         self.store = TempVoiceStore(self.config)
         self._delete_tasks: Dict[int, asyncio.Task] = {}
         self._pending_knocks: set = set()  # (channel_id, knocker_id)
@@ -165,6 +172,12 @@ class TempVoice(commands.Cog):
         if not isinstance(category, discord.CategoryChannel):
             category = generator.category
 
+        # Hat das Mitglied ein Spiel gewählt und existiert dessen Anker-Channel noch?
+        # Dann wird der neue Channel in dessen Kategorie erstellt und darunter einsortiert.
+        anchor = await self._resolve_anchor(member, guild)
+        if anchor is not None:
+            category = anchor.category
+
         # Name auflösen ({user}/{count}/{game})
         count = await self.store.count_channels_for_generator(guild, gen_id) + 1
         name = C.resolve_channel_name(settings.get("name"), member, count,
@@ -199,6 +212,10 @@ class TempVoice(commands.Cog):
         await self.store.add_temp_channel(
             guild, channel.id, member.id, datetime.now(timezone.utc).isoformat(),
             generator_id=gen_id)
+
+        # Direkt unter den gewählten Spiel-Anker einsortieren (best effort)
+        if anchor is not None:
+            await self._sort_under_anchor(channel, anchor)
 
         # Anklopf-Button in den Text-Chat des neuen Channels posten
         try:
@@ -240,6 +257,64 @@ class TempVoice(commands.Cog):
         except discord.HTTPException:
             pass
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # SPIEL-AUSWAHL  (Temp-Channel unter einen persistenten Spiel-Channel sortieren)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _resolve_anchor(self, member: discord.Member,
+                              guild: discord.Guild) -> Optional[discord.VoiceChannel]:
+        """Liefert den Anker-Voice-Channel des vom Mitglied gewählten Spiels – oder None,
+        wenn keines gewählt ist bzw. der Channel nicht mehr existiert."""
+        anchor_id = await self.store.get_selected_game(member)
+        if not anchor_id:
+            return None
+        anchor = guild.get_channel(anchor_id)
+        return anchor if isinstance(anchor, discord.VoiceChannel) else None
+
+    async def _sort_under_anchor(self, channel: discord.VoiceChannel,
+                                 anchor: discord.VoiceChannel) -> None:
+        """Verschiebt einen Channel in die Kategorie des Ankers und direkt darunter.
+        Best effort – braucht nur „Kanäle verwalten"; Fehler werden geschluckt."""
+        try:
+            await channel.edit(category=anchor.category, position=anchor.position + 1,
+                               reason="TempVoice: unter Spiel-Channel einsortiert")
+        except discord.HTTPException:
+            pass
+
+    async def set_game(self, interaction: discord.Interaction, raw_value: str) -> None:
+        """Speichert die Spielwahl des Mitglieds und sortiert einen bereits besessenen
+        Channel sofort um."""
+        member = interaction.user
+        guild = interaction.guild
+        anchor_id = None if raw_value == "none" else int(raw_value)
+        await self.store.set_selected_game(member, anchor_id)
+
+        anchor = guild.get_channel(anchor_id) if anchor_id else None
+        if anchor_id and not isinstance(anchor, discord.VoiceChannel):
+            await interaction.response.edit_message(
+                content="⚠️ Der Spiel-Channel existiert nicht mehr. Bitte sag einem Admin Bescheid.",
+                view=None)
+            return
+
+        # Sitzt das Mitglied gerade in seinem eigenen Channel? Dann live umsortieren.
+        vc = member.voice.channel if (member and member.voice) else None
+        resorted = False
+        if anchor is not None and vc is not None \
+                and await self.store.is_temp_channel(guild, vc.id) \
+                and await self.store.get_owner_id(guild, vc.id) == member.id:
+            await self._sort_under_anchor(vc, anchor)
+            resorted = True
+
+        if anchor is None:
+            msg = ("➖ Spiel-Zuordnung entfernt – neue Channel landen wieder in der "
+                   "Standard-Kategorie.")
+        elif resorted:
+            msg = f"🎮 Spiel gesetzt: **{anchor.name}** – dein Channel wurde dorthin einsortiert."
+        else:
+            msg = (f"🎮 Spiel gesetzt: **{anchor.name}** – dein nächster Channel landet dort "
+                   f"direkt darunter.")
+        await interaction.response.edit_message(content=msg, view=None)
+
     def _schedule_empty_check(self, channel: discord.VoiceChannel) -> None:
         if channel.id in self._delete_tasks:
             return
@@ -278,6 +353,8 @@ class TempVoice(commands.Cog):
                 main_id, _ = await self.store.find_main_by_waiting(channel.guild, channel.id)
                 if main_id is not None:
                     await self.store.set_waiting_room(channel.guild, main_id, None)
+                # War es ein Spiel-Anker? Dann aus der Auswahl entfernen.
+                await self.store.remove_game(channel.guild, channel.id)
 
     # ─────────────────────────────────────────────────────────────────────────
     # HILFEN FÜR DIE VIEWS  (Besitz auflösen, Aktion ausführen)
@@ -728,6 +805,60 @@ class TempVoice(commands.Cog):
         if verborgen is not None:
             changes["hidden"] = verborgen
         return changes
+
+    # ── Spiele (persistente Anker-Channel zum Einsortieren) ─────────────────────
+
+    @tempvoice.command(name="spiel-add",
+                       description="Verknüpft einen Spielnamen mit einem persistenten Voice-Channel")
+    @commands.has_permissions(manage_guild=True)
+    @app_commands.describe(
+        name="Anzeigename des Spiels (z. B. WoW)",
+        channel="Der persistente Voice-Channel, unter dem die Channel einsortiert werden",
+        emoji="Optionales Emoji für die Auswahl",
+    )
+    async def tv_spiel_add(self, ctx: commands.Context, name: str,
+                           channel: discord.VoiceChannel,
+                           emoji: Optional[str] = None) -> None:
+        if await self.store.is_generator(ctx.guild, channel.id):
+            await ctx.send(f"❌ {channel.mention} ist ein Generator und kann kein Spiel-Anker sein.")
+            return
+        name = name.strip()[:C.MAX_CHANNEL_NAME]
+        if not name:
+            await ctx.send("❌ Bitte gib einen Spielnamen an.")
+            return
+        emoji = emoji.strip() if emoji else None
+        await self.store.add_game(ctx.guild, channel.id, name, emoji or None)
+        await ctx.send(f"✅ Spiel **{name}** ist jetzt mit {channel.mention} verknüpft. "
+                       f"Mitglieder können es über 🎮 **Spiel** im Panel wählen.")
+
+    @tempvoice.command(name="spiel-remove", description="Entfernt ein Spiel aus der Auswahl")
+    @commands.has_permissions(manage_guild=True)
+    @app_commands.describe(channel="Der Spiel-Anker-Channel")
+    async def tv_spiel_remove(self, ctx: commands.Context,
+                              channel: discord.VoiceChannel) -> None:
+        if await self.store.remove_game(ctx.guild, channel.id):
+            await ctx.send(f"✅ {channel.mention} ist kein wählbares Spiel mehr "
+                           f"(der Voice-Channel selbst bleibt bestehen).")
+        else:
+            await ctx.send(f"ℹ️ {channel.mention} ist kein eingerichtetes Spiel.")
+
+    @tempvoice.command(name="spiel-list", description="Listet alle wählbaren Spiele")
+    @commands.has_permissions(manage_guild=True)
+    async def tv_spiel_list(self, ctx: commands.Context) -> None:
+        games = await self.store.all_games(ctx.guild)
+        if not games:
+            await ctx.send("ℹ️ Es sind noch keine Spiele eingerichtet. Lege welche mit "
+                           "`/tempvoice spiel-add` an.")
+            return
+        embed = discord.Embed(title="🎮 TempVoice-Spiele", color=C.COLOR_INFO)
+        lines = []
+        for anchor_id, data in games.items():
+            chan = ctx.guild.get_channel(int(anchor_id))
+            emoji = f"{data['emoji']} " if data.get("emoji") else ""
+            target = chan.mention if chan else f"_(gelöscht: {anchor_id})_"
+            lines.append(f"{emoji}**{data.get('name', anchor_id)}** → {target}")
+        embed.description = "\n".join(lines)
+        await ctx.send(embed=embed)
 
     @tempvoice.command(name="interface",
                        description="Postet das Steuer-Panel oder aktualisiert das bestehende")

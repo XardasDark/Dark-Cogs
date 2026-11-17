@@ -47,6 +47,7 @@ def build_interface_embed(guild: discord.Guild) -> discord.Embed:
             # Vorübergehend deaktiviert – für spätere Reaktivierung erhalten:
             # f"{C.BTN_BITRATE[1]} **{C.BTN_BITRATE[0]}** – Audio-Qualität\n"
             # f"{C.BTN_REGION[1]} **{C.BTN_REGION[0]}** – Voice-Region\n"
+            f"{C.BTN_GAME[1]} **{C.BTN_GAME[0]}** – Spiel wählen (Channel unter den Spiel-Channel einsortieren)\n"
             f"{C.BTN_WAITING[1]} **{C.BTN_WAITING[0]}** – Warteraum an/aus (Bot holt Wartende rein)"
         ),
         inline=False,
@@ -160,6 +161,21 @@ class TempVoicePanel(discord.ui.View):
     #     await interaction.response.send_message(
     #         "Wähle die Voice-Region:",
     #         view=RegionSelectView(self.cog, channel), ephemeral=True)
+
+    @discord.ui.button(label=C.BTN_GAME[0], emoji=C.BTN_GAME[1],
+                       style=discord.ButtonStyle.primary, custom_id=C.CID_GAME, row=2)
+    async def btn_game(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Persönliche Vorliebe – auch ohne eigenen Channel setzbar, daher kein resolve_owned.
+        games = await self.cog.store.all_games(interaction.guild)
+        if not games:
+            await interaction.response.send_message(
+                "ℹ️ Es sind noch keine Spiele eingerichtet. Ein Admin legt sie mit "
+                "`/tempvoice spiel-add` an.", ephemeral=True)
+            return
+        current = await self.cog.store.get_selected_game(interaction.user)
+        await interaction.response.send_message(
+            "Wähle ein Spiel – dein Channel wird unter den passenden Spiel-Channel einsortiert:",
+            view=GameSelectView(self.cog, games, current), ephemeral=True)
 
     @discord.ui.button(label=C.BTN_WAITING[0], emoji=C.BTN_WAITING[1],
                        style=discord.ButtonStyle.secondary, custom_id=C.CID_WAITING, row=2)
@@ -406,3 +422,28 @@ class RegionSelectView(_ActionSelectView):
         region: Optional[str] = None if raw == "auto" else raw
         await self.cog.apply_submit(interaction, self.channel, controls.set_region, region,
                                     edit=True)
+
+
+class GameSelectView(discord.ui.View):
+    """Ephemere Auswahl des Spiels, unter dessen Anker-Channel der eigene Temp-Channel
+    einsortiert wird. Die Wahl wird pro Mitglied gemerkt."""
+
+    def __init__(self, cog: "TempVoice", games: dict, current: Optional[int]):
+        super().__init__(timeout=120)
+        self.cog = cog
+        options: List[discord.SelectOption] = [
+            discord.SelectOption(label="Kein Spiel / Standard", value="none",
+                                 emoji="➖", default=(current is None))
+        ]
+        # Discord erlaubt max. 25 Optionen (inkl. der „Kein Spiel\"-Option).
+        for anchor_id, data in list(games.items())[:24]:
+            options.append(discord.SelectOption(
+                label=str(data.get("name", anchor_id))[:100], value=str(anchor_id),
+                emoji=data.get("emoji") or None,
+                default=(current is not None and str(current) == str(anchor_id))))
+        self.select = discord.ui.Select(placeholder="Spiel wählen …", options=options)
+        self.select.callback = self._callback
+        self.add_item(self.select)
+
+    async def _callback(self, interaction: discord.Interaction):
+        await self.cog.set_game(interaction, self.select.values[0])
