@@ -1,7 +1,7 @@
 {
     "name": "Statdock",
     "short": "Zeigt Mitglieder-/Spielerzahlen im Namen eines Voice-Channels an.",
-    "description": "Erstellt 'Statdocks' – gesperrte Voice-Channels, deren Name automatisch eine Live-Zahl anzeigt. Modi: Gesamt-Mitgliederzahl (wie 'All Members: 4885') oder Rollen-Summe (zählt Mitglieder mit einer beliebigen der angegebenen Rollen, dedupliziert) mit frei wählbarem Namen wie 'Ragnarok X' oder 'Ragnarok Zero'. Der Name wird alle 6 Minuten aktualisiert und respektiert Discords Rate-Limit für Channel-Umbenennungen.",
+    "description": "Erstellt 'Statdocks' – gesperrte Voice-Channels oder Kategorien, deren Name automatisch eine Live-Zahl anzeigt. Modi: Gesamt-Mitgliederzahl (wie 'All Members: 4885') oder Rollen-Summe (zählt Mitglieder mit einer beliebigen der angegebenen Rollen, dedupliziert) mit frei wählbarem Namen wie 'Ragnarok X' oder 'Ragnarok Zero'. Auch eine ganze Kategorie kann die Gesamt-Mitgliederzahl im Namen tragen (z. B. '🐄 Kühe auf der Weide: 123'), während die gesperrten Game-Channels darunter die jeweilige Rollen-Spielerzahl anzeigen. Der Name wird alle 6 Minuten aktualisiert und respektiert Discords Rate-Limit für Channel-Umbenennungen.",
     "end_user_data_statement": "Dieser Cog speichert keine personenbezogenen Enduser-Daten. Gespeichert werden lediglich pro Server die Channel-IDs, Namensvorlagen und ausgewählten Rollen-IDs der konfigurierten Statdocks.",
     "install_msg": "Danke für die Installation von Statdock! 📊 Lege ein Dock an mit `[p]statdock create 👥 All Members: {count}` oder ein Rollen-Dock mit `[p]statdock addroles #channel \"🟢 Ragnarok X: {count}\" @RolleA @RolleB`.",
     "author": [

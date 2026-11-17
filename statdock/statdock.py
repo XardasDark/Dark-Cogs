@@ -10,11 +10,17 @@ Zählmodi:
   roles  – Mitglieder, die IRGENDEINE der angegebenen Rollen besitzen
            (dedupliziert: wer mehrere der Rollen hat, wird nur einmal gezählt)
 
+Neben einzelnen Voice-Channels kann auch eine ganze KATEGORIE als Gesamt-Dock
+registriert werden: Der Kategorie-Name zeigt dann die komplette Mitgliederzahl an
+(z. B. "🐄 Kühe auf der Weide: 123"), während die gesperrten Game-Channels darunter
+die jeweilige Rollen-Spielerzahl anzeigen (z. B. "Aion 2: 22", "WoW: 65").
+
 Befehle sind Slash-Commands unter /statdock und nur für Admins ("Server verwalten")
 sichtbar und nutzbar:
-  /statdock create    – neuen gesperrten Voice-Channel anlegen + als Gesamt-Dock registrieren
-  /statdock addtotal  – bestehenden Channel als Gesamt-Dock registrieren
-  /statdock addroles  – als Rollen-Dock registrieren (bis zu 6 Rollen)
+  /statdock create      – neuen gesperrten Voice-Channel anlegen + als Gesamt-Dock registrieren
+  /statdock addtotal    – bestehenden Channel als Gesamt-Dock registrieren
+  /statdock addcategory – bestehende Kategorie als Gesamt-Dock registrieren
+  /statdock addroles    – als Rollen-Dock registrieren (bis zu 6 Rollen)
   /statdock name      – Anzeigenamen/Vorlage ändern
   /statdock roles     – Rollen eines Rollen-Docks neu setzen
   /statdock remove    – Dock entfernen (Channel bleibt bestehen)
@@ -175,6 +181,24 @@ class Statdock(commands.Cog):
         await self._update_dock(ctx.guild, channel.id, await self._get_dock(ctx.guild, channel.id))
         await ctx.send(f"✅ {channel.mention} zählt jetzt alle Mitglieder.", ephemeral=True)
 
+    @statdock.command(name="addcategory", description="Bestehende Kategorie als Gesamt-Dock registrieren")
+    @app_commands.describe(
+        category="Die Kategorie, deren Name die Zahl anzeigt",
+        name="Anzeigename, Platzhalter {count} (z. B. '🐄 Kühe auf der Weide: {count}')",
+    )
+    async def sd_addcategory(
+        self, ctx: commands.Context, category: discord.CategoryChannel, *, name: str
+    ) -> None:
+        """Registriert eine bestehende Kategorie als Gesamt-Mitglieder-Dock.
+
+        Die Game-Channels darunter registrierst du wie gewohnt mit /statdock addroles.
+        """
+        await self._set_dock(ctx.guild, category.id, template=name, mode="total", roles=[])
+        await self._update_dock(ctx.guild, category.id, await self._get_dock(ctx.guild, category.id))
+        await ctx.send(
+            f"✅ Kategorie **{category.name}** zählt jetzt alle Mitglieder.", ephemeral=True
+        )
+
     @statdock.command(name="addroles", description="Voice-Channel als Rollen-Dock registrieren (bis zu 6 Rollen)")
     @app_commands.describe(
         channel="Der Voice-Channel, der die Zahl anzeigt",
@@ -269,27 +293,55 @@ class Statdock(commands.Cog):
             del docks[str(channel.id)]
         await ctx.send("✅ Dock entfernt. Den Channel kannst du bei Bedarf manuell löschen.", ephemeral=True)
 
+    def _dock_line(self, guild: discord.Guild, channel_id_str: str, dock: dict) -> str:
+        """Rendert eine einzelne Übersichtszeile für ein Dock."""
+        channel = guild.get_channel(int(channel_id_str))
+        where = channel.name if channel else f"(gelöscht: {channel_id_str})"
+        if dock.get("mode") == "roles":
+            roles = ", ".join(
+                (r.name if (r := guild.get_role(rid)) else str(rid))
+                for rid in dock.get("roles", [])
+            )
+            detail = f"Rollen: {roles}"
+        else:
+            detail = "alle Mitglieder"
+        count = self._count(guild, dock)
+        return f"{where} → `{dock['template']}` [{detail}] = **{count}**"
+
     @statdock.command(name="list", description="Alle konfigurierten Docks anzeigen")
     async def sd_list(self, ctx: commands.Context) -> None:
-        """Zeigt alle konfigurierten Docks."""
+        """Zeigt alle konfigurierten Docks, gruppiert nach Kategorie."""
         docks = await self.config.guild(ctx.guild).docks()
         if not docks:
             await ctx.send("Es sind keine Statdocks konfiguriert.", ephemeral=True)
             return
-        lines = []
-        for channel_id_str, dock in docks.items():
-            channel = ctx.guild.get_channel(int(channel_id_str))
-            where = channel.mention if channel else f"(gelöscht: {channel_id_str})"
-            if dock.get("mode") == "roles":
-                roles = ", ".join(
-                    (r.name if (r := ctx.guild.get_role(rid)) else str(rid))
-                    for rid in dock.get("roles", [])
-                )
-                detail = f"Rollen: {roles}"
-            else:
-                detail = "alle Mitglieder"
-            count = self._count(ctx.guild, dock)
-            lines.append(f"{where} → `{dock['template']}` [{detail}] = **{count}**")
+
+        # Kategorie-Docks als Gruppen-Köpfe; Voice-Docks werden unter ihrer
+        # (registrierten) Kategorie einsortiert, der Rest landet unter "Sonstige".
+        category_ids = {
+            cid
+            for cid in docks
+            if isinstance(ctx.guild.get_channel(int(cid)), discord.CategoryChannel)
+        }
+        lines: List[str] = []
+        used: set = set()
+
+        for cid in category_ids:
+            lines.append(f"📂 {self._dock_line(ctx.guild, cid, docks[cid])}")
+            used.add(cid)
+            for child_id, child_dock in docks.items():
+                channel = ctx.guild.get_channel(int(child_id))
+                if channel is not None and str(getattr(channel, "category_id", None)) == cid:
+                    lines.append(f"　└ {self._dock_line(ctx.guild, child_id, child_dock)}")
+                    used.add(child_id)
+
+        rest = [cid for cid in docks if cid not in used]
+        if rest:
+            if used:
+                lines.append("— Sonstige —")
+            for cid in rest:
+                lines.append(self._dock_line(ctx.guild, cid, docks[cid]))
+
         await ctx.send("\n".join(lines), ephemeral=True)
 
     @statdock.command(name="refresh", description="Sofortiges Update aller Docks erzwingen")
