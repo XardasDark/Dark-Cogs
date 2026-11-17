@@ -1,0 +1,23 @@
+{
+    "name": "Herdbuch",
+    "short": "Verwaltet Gildenzugehörigkeiten: Bewerbung, Freigabe durch die Gildenorga und automatische Gildenrollen – zentral statt über Discord-Rechte.",
+    "description": "Mitglieder bewerben sich über ein öffentliches Button-Panel für eine oder mehrere Gilden. Die jeweilige Gildenorganisation prüft Anträge in ihrem eigenen privaten Orga-Channel und vergibt bzw. entzieht die Gildenrolle ausschließlich über den Bot – ohne eigene Discord-Rechte zum Rollen­verwalten. Jede Gilde verwaltet nur ihre eigenen Mitglieder; die zentrale Serveradministration registriert Gilden, Rollen und Channels. Mehrfach-Mitgliedschaften sind möglich, jede Zugehörigkeit wird separat bestätigt.",
+    "end_user_data_statement": "Dieser Cog speichert pro Mitgliedschaftsantrag die Discord-User-ID, den angegebenen Ingame-Charakternamen und eine optionale Nachricht sowie Audit-Einträge (wer welche Verwaltungsaktion ausgeführt hat) in der Bot-Datenbank. Diese Daten werden entfernt, wenn der zugehörige Antrag oder die Gilde gelöscht wird.",
+    "install_msg": "Danke für die Installation von Herdbuch! 🐄 Starte mit `/gildenadmin setup`, um Kategorie und Channels anzulegen, und lege dann mit `/gildenadmin erstellen` deine erste Gilde an. Hilfe gibt es über `[p]help Herdbuch`.",
+    "author": [
+        "XardasDark"
+    ],
+    "required_cogs": {},
+    "requirements": [],
+    "tags": [
+        "guild",
+        "clan",
+        "membership",
+        "roles",
+        "application"
+    ],
+    "min_bot_version": "3.5.0",
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}
