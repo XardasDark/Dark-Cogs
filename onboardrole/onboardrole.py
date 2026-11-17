@@ -2,10 +2,14 @@
 onboardrole.py – Vergibt Rollen nach abgeschlossenem Onboarding / Regel-Zustimmung.
 
 Erkennung:
-  Discord markiert ein Mitglied, das noch im Onboarding/Regel-Gate hängt, mit
-  `pending = True`. Sobald es die Regeln bestätigt bzw. das Onboarding abschließt,
-  setzt Discord `pending = False` und schickt `GUILD_MEMBER_UPDATE`
-  (on_member_update). Genau diesen Übergang nutzt dieser Cog als Signal.
+  Discord kennt zwei getrennte Abschluss-Signale, die beide über
+  `GUILD_MEMBER_UPDATE` (on_member_update) kommen:
+    1. Membership Screening ("Regeln bestätigen"-Gate): `pending` wechselt
+       True → False.
+    2. Onboarding (die Fragen/Rollen-Auswahl für neue Mitglieder): der
+       Member-Flag `completed_onboarding` wechselt False → True.
+  Je nach Server-Konfiguration feuert nur eines von beiden, deshalb wertet
+  dieser Cog beide Übergänge als Onboarding-Abschluss.
 
 Voraussetzungen:
   - Community-Server mit Membership Screening / Onboarding
@@ -77,9 +81,14 @@ class OnboardRole(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
-        # Nur der Übergang „pending: True → False" ist der Onboarding-Abschluss
-        if before.pending == after.pending or after.pending:
+        # Zwei mögliche Abschluss-Signale – es reicht, wenn eines davon umschlägt.
+        screening_done = before.pending and not after.pending
+        onboarding_done = (not before.flags.completed_onboarding
+                           and after.flags.completed_onboarding)
+        if not (screening_done or onboarding_done):
             return
+        log.debug("OnboardRole: Abschluss erkannt für %s (screening=%s, onboarding=%s)",
+                  after, screening_done, onboarding_done)
         await self._complete(after)
 
     @commands.Cog.listener()
